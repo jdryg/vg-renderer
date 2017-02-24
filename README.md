@@ -1,5 +1,6 @@
-# bgfx-vg-renderer
-A vector graphics renderer for bgfx
+# vg-renderer
+
+A vector graphics renderer for bgfx, based on ideas from both NanoVG and ImDrawList (Dear ImGUI)
 
 **WIP** and doesn't compile as is! Requires structs and functions from my codebase which aren't present in this repo. Nothing too complicated (it needs a Vec2 struct and several math/utility functions) so if you really want to make it compile, you can try writing/using your own version of those.
 
