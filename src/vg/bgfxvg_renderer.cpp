@@ -271,7 +271,7 @@ struct Context
 #endif
 #if BATCH_PATH_DIRECTIONS
 		m_PathDirections(nullptr),
-		m_PathDirectionsCapacity(0)
+		m_PathDirectionsCapacity(0),
 #endif
 		m_SubPaths(nullptr),
 		m_NumSubPaths(0),
@@ -726,24 +726,25 @@ void BGFXVGRenderer::EndFrame()
 		vb->m_Vertices = nullptr;
 	}
 
+	// Update bgfx index buffer...
+	bgfx::TransientIndexBuffer tib;
+	uint32_t totalIndices = bgfx::getAvailTransientIndexBuffer(m_Context->m_IndexBuffer->m_Count);
+	assert(totalIndices == m_Context->m_IndexBuffer->m_Count);
+	bgfx::allocTransientIndexBuffer(&tib, totalIndices);
+	memcpy(tib.data, &m_Context->m_IndexBuffer->m_Indices[0], sizeof(uint16_t) * totalIndices);
+
 	float viewMtx[16];
 	float projMtx[16];
 	bx::mtxIdentity(viewMtx);
 	bx::mtxOrtho(projMtx, 0.0f, m_Context->m_WinWidth, m_Context->m_WinHeight, 0.0f, 0.0f, 1.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
 	bgfx::setViewTransform(m_Context->m_ViewID, viewMtx, projMtx);
-	bgfx::setViewScissor(m_Context->m_ViewID, 0, 0, m_Context->m_WinWidth, m_Context->m_WinHeight);
 
 	const uint32_t numCommands = m_Context->m_NumDrawCommands;
 	for (uint32_t iCmd = 0; iCmd < numCommands; ++iCmd) {
 		DrawCommand* cmd = &m_Context->m_DrawCommands[iCmd];
 
 		bgfx::setVertexBuffer(m_Context->m_VertexBuffers[cmd->m_VertexBufferID].m_bgfxHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
-
-		bgfx::TransientIndexBuffer tib;
-		bgfx::allocTransientIndexBuffer(&tib, cmd->m_NumIndices);
-		memcpy(tib.data, &m_Context->m_IndexBuffer->m_Indices[cmd->m_FirstIndexID], sizeof(uint16_t) * cmd->m_NumIndices);
-		bgfx::setIndexBuffer(&tib);
-
+		bgfx::setIndexBuffer(&tib, cmd->m_FirstIndexID, cmd->m_NumIndices);
 		bgfx::setScissor((uint16_t)cmd->m_ScissorRect[0], (uint16_t)cmd->m_ScissorRect[1], (uint16_t)cmd->m_ScissorRect[2], (uint16_t)cmd->m_ScissorRect[3]);
 
 		if (cmd->m_Type == DrawCommand::Type_TexturedVertexColor) {
@@ -2849,11 +2850,6 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 		return;
 	}
 
-#if BATCH_PATH_DIRECTIONS
-	Vec2* dir = allocPathDirections(numPathVertices);
-	calcPathDirectionsSSE(vtx, numPathVertices, dir, isClosed);
-#endif
-
 	const Vec2 uv = getWhitePixelUV();
 
 	const uint32_t numSegments = numPathVertices - (isClosed ? 0 : 1);
@@ -2877,19 +2873,16 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 		cmd->m_NumVertices += numDrawVertices;
 		cmd->m_NumIndices += numDrawIndices;
 
+#if BATCH_PATH_DIRECTIONS
+		Vec2* dir = allocPathDirections(numPathVertices);
+		calcPathDirectionsSSE(vtx, numPathVertices, dir, isClosed);
+
 		Vec2 d01;
 		if (!isClosed) {
 			// First segment of an open path
 			const Vec2& p0 = vtx[0];
 
-#if BATCH_PATH_DIRECTIONS
 			d01 = dir[0];
-#else
-			const Vec2& p1 = vtx[1];
-
-			d01 = p1 - p0;
-			vec2Normalize(&d01);
-#endif
 
 			const Vec2 l01Scaled = d01.perpCCW() * halfStrokeWidth;
 
@@ -2911,12 +2904,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, rightPointAA.x, rightPointAA.y, uv.x, uv.y, c0); ++dstVertex;
 		} else {
-#if BATCH_PATH_DIRECTIONS
 			d01 = dir[numPathVertices - 1];
-#else
-			d01 = vtx[0] - vtx[numPathVertices - 1];
-			vec2Normalize(&d01);
-#endif
 		}
 
 		// Generate draw vertices...
@@ -2924,14 +2912,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 		for (uint32_t iSegment = firstSegmentID; iSegment < numSegments; ++iSegment) {
 			const Vec2& p1 = vtx[iSegment];
 
-#if BATCH_PATH_DIRECTIONS
 			const Vec2 d12 = dir[iSegment];
-#else
-			const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
-
-			Vec2 d12 = p2 - p1;
-			vec2Normalize(&d12);
-#endif
 
 			const Vec2 v = calcExtrusionVector(d01, d12);
 
@@ -2950,6 +2931,67 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 
 			d01 = d12;
 		}
+#else 
+		Vec2 d01;
+		if (!isClosed) {
+			// First segment of an open path
+			const Vec2& p0 = vtx[0];
+			const Vec2& p1 = vtx[1];
+
+			d01 = p1 - p0;
+			vec2Normalize(&d01);
+
+			const Vec2 l01Scaled = d01.perpCCW() * halfStrokeWidth;
+
+			Vec2 leftPoint = p0 + l01Scaled;
+			Vec2 rightPoint = p0 - l01Scaled;
+			if (lineCap == LineCap::Square) {
+				leftPoint -= d01 * halfStrokeWidth;
+				rightPoint -= d01 * halfStrokeWidth;
+			} else if (lineCap == LineCap::Round) {
+				// TODO: Even if lineCap == Round assume Butt.
+			}
+
+			const Vec2 pScaled = p0 * middlePointFactor;
+			const Vec2 leftPointAA = leftPoint * sidePointFactor - pScaled;
+			const Vec2 rightPointAA = rightPoint * sidePointFactor - pScaled;
+
+			SET_DRAW_VERTEX(dstVertex, leftPointAA.x, leftPointAA.y, uv.x, uv.y, c0); ++dstVertex;
+			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
+			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
+			SET_DRAW_VERTEX(dstVertex, rightPointAA.x, rightPointAA.y, uv.x, uv.y, c0); ++dstVertex;
+		} else {
+			d01 = vtx[0] - vtx[numPathVertices - 1];
+			vec2Normalize(&d01);
+		}
+
+		// Generate draw vertices...
+		const uint32_t firstSegmentID = isClosed ? 0 : 1;
+		for (uint32_t iSegment = firstSegmentID; iSegment < numSegments; ++iSegment) {
+			const Vec2& p1 = vtx[iSegment];
+			const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
+
+			Vec2 d12 = p2 - p1;
+			vec2Normalize(&d12);
+
+			const Vec2 v = calcExtrusionVector(d01, d12);
+
+			const Vec2 v_hsw = v * halfStrokeWidth;
+			const Vec2 v_hsw_aa = v * (halfStrokeWidth + m_FringeWidth);
+
+			const Vec2 leftPointAA = p1 + v_hsw_aa;
+			const Vec2 leftPoint = p1 + v_hsw;
+			const Vec2 rightPoint = p1 - v_hsw;
+			const Vec2 rightPointAA = p1 - v_hsw_aa;
+
+			SET_DRAW_VERTEX(dstVertex, leftPointAA.x, leftPointAA.y, uv.x, uv.y, c0); ++dstVertex;
+			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
+			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
+			SET_DRAW_VERTEX(dstVertex, rightPointAA.x, rightPointAA.y, uv.x, uv.y, c0); ++dstVertex;
+
+			d01 = d12;
+		}
+#endif
 
 		if (!isClosed) {
 			const Vec2& p1 = vtx[numPathVertices - 1];
@@ -3038,18 +3080,16 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 		cmd->m_NumVertices += numDrawVertices;
 		cmd->m_NumIndices += numDrawIndices;
 
+#if BATCH_PATH_DIRECTIONS
+		Vec2* dir = allocPathDirections(numPathVertices);
+		calcPathDirectionsSSE(vtx, numPathVertices, dir, isClosed);
+
 		Vec2 d01;
 		if (!isClosed) {
 			// First segment of an open path
 			const Vec2& p0 = vtx[0];
 
-#if BATCH_PATH_DIRECTIONS
 			d01 = dir[0];
-#else
-			const Vec2& p1 = vtx[1];
-			d01 = p1 - p0;
-			vec2Normalize(&d01);
-#endif
 
 			Vec2 l01Scaled = d01.perpCCW() * halfStrokeWidth;
 
@@ -3066,12 +3106,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 			SET_DRAW_VERTEX(dstVertex, p0.x, p0.y, uv.x, uv.y, c); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c0); ++dstVertex;
 		} else {
-#if BATCH_PATH_DIRECTIONS
 			d01 = dir[numPathVertices - 1];
-#else
-			d01 = vtx[0] - vtx[numPathVertices - 1];
-			vec2Normalize(&d01);
-#endif
 		}
 
 		// Generate draw vertices...
@@ -3079,14 +3114,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 		for (uint32_t iSegment = firstSegmentID; iSegment < numSegments; ++iSegment) {
 			const Vec2& p1 = vtx[iSegment];
 
-#if BATCH_PATH_DIRECTIONS
 			const Vec2 d12 = dir[iSegment];
-#else
-			const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
-
-			Vec2 d12 = p2 - p1;
-			vec2Normalize(&d12);
-#endif
 
 			const Vec2 v = calcExtrusionVector(d01, d12);
 
@@ -3101,6 +3129,58 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 
 			d01 = d12;
 		}
+#else
+		Vec2 d01;
+		if (!isClosed) {
+			// First segment of an open path
+			const Vec2& p0 = vtx[0];
+			const Vec2& p1 = vtx[1];
+
+			d01 = p1 - p0;
+			vec2Normalize(&d01);
+
+			Vec2 l01Scaled = d01.perpCCW() * halfStrokeWidth;
+
+			Vec2 leftPoint = p0 + l01Scaled;
+			Vec2 rightPoint = p0 - l01Scaled;
+			if (lineCap == LineCap::Square) {
+				leftPoint -= d01 * halfStrokeWidth;
+				rightPoint -= d01 * halfStrokeWidth;
+			} else if (lineCap == LineCap::Round) {
+				// TODO: Even if lineCap == Round assume Butt.
+			}
+
+			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c0); ++dstVertex;
+			SET_DRAW_VERTEX(dstVertex, p0.x, p0.y, uv.x, uv.y, c); ++dstVertex;
+			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c0); ++dstVertex;
+		} else {
+			d01 = vtx[0] - vtx[numPathVertices - 1];
+			vec2Normalize(&d01);
+		}
+
+		// Generate draw vertices...
+		const uint32_t firstSegmentID = isClosed ? 0 : 1;
+		for (uint32_t iSegment = firstSegmentID; iSegment < numSegments; ++iSegment) {
+			const Vec2& p1 = vtx[iSegment];
+			const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
+
+			Vec2 d12 = p2 - p1;
+			vec2Normalize(&d12);
+
+			const Vec2 v = calcExtrusionVector(d01, d12);
+
+			const Vec2 v_hsw = v * halfStrokeWidth;
+
+			const Vec2 leftPoint = p1 + v_hsw;
+			const Vec2 rightPoint = p1 - v_hsw;
+
+			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c0); ++dstVertex;
+			SET_DRAW_VERTEX(dstVertex, p1.x, p1.y, uv.x, uv.y, c); ++dstVertex;
+			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c0); ++dstVertex;
+
+			d01 = d12;
+		}
+#endif
 
 		if (!isClosed) {
 			const Vec2& p1 = vtx[numPathVertices - 1];
