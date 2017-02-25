@@ -11,6 +11,7 @@
 #pragma warning(disable: 4706) // assignment withing conditional expression
 
 #include "bgfxvg_renderer.h"
+#include "shape.h"
 
 //#define FONTSTASH_IMPLEMENTATION 
 #include "../nanovg/fontstash.h"
@@ -229,10 +230,10 @@ struct Context
 	uint32_t m_NextFontID;
 
 	Gradient m_Gradients[MAX_GRADIENTS];
-	bx::HandleAllocT<MAX_GRADIENTS> m_GradientAlloc;
+	bx::HandleAllocT<MAX_GRADIENTS> m_GradientAlloc; // TODO: Remove. This isn't needed!
 
 	ImagePattern m_ImagePatterns[MAX_IMAGE_PATTERNS];
-	bx::HandleAllocT<MAX_IMAGE_PATTERNS> m_ImagePatternAlloc;
+	bx::HandleAllocT<MAX_IMAGE_PATTERNS> m_ImagePatternAlloc; // TODO: Remove. This isn't needed!
 
 	bgfx::VertexDecl m_DrawVertexDecl;
 	bgfx::ProgramHandle m_ProgramHandle[DrawCommand::NumTypes];
@@ -2422,6 +2423,181 @@ Font BGFXVGRenderer::CreateFontWithSize(const char* name, float size)
 	return f;
 }
 
+Shape* BGFXVGRenderer::CreateShape()
+{
+	bx::AllocatorI* allocator = m_Context->m_Allocator;
+
+	bx::MemoryBlock* memBlock = BX_NEW(allocator, bx::MemoryBlock)(allocator);
+	Shape* shape = BX_NEW(allocator, Shape)(memBlock);
+
+	// TODO: Keep the shape ptr to make sure we aren't leaking any memory 
+	// even if the owner of the shape forgets to destroy it.
+
+	return shape;
+}
+
+void BGFXVGRenderer::DestroyShape(Shape* shape)
+{
+	bx::AllocatorI* allocator = m_Context->m_Allocator;
+
+	BX_DELETE(allocator, shape->m_CmdList);
+	BX_DELETE(allocator, shape);
+}
+
+void BGFXVGRenderer::SubmitShape(Shape* shape)
+{
+	const uint8_t* cmdList = (uint8_t*)shape->m_CmdList->more(0);
+	const uint32_t cmdListSize = shape->m_CmdList->getSize();
+
+	const uint8_t* cmdListEnd = cmdList + cmdListSize;
+
+	// TODO: Temporary allocation of shape->m_NumGradients GradientHandle(s) and shape->m_NumImagePatterns ImagePatternHandle(s).
+
+	while (cmdList < cmdListEnd) {
+		ShapeCommand::Enum cmdType = *(ShapeCommand::Enum*)cmdList;
+		cmdList += sizeof(ShapeCommand::Enum);
+
+		switch (cmdType) {
+		case ShapeCommand::BeginPath:
+		{
+			BeginPath();
+			break;
+		}
+		case ShapeCommand::ClosePath:
+		{
+			ClosePath();
+			break;
+		}
+		case ShapeCommand::MoveTo:
+		{
+			float* coords = (float*)cmdList;
+			MoveTo(coords[0], coords[1]);
+			cmdList += sizeof(float) * 2;
+			break;
+		}
+		case ShapeCommand::LineTo:
+		{
+			float* coords = (float*)cmdList;
+			LineTo(coords[0], coords[1]);
+			cmdList += sizeof(float) * 2;
+			break;
+		}
+		case ShapeCommand::BezierTo:
+		{
+			float* coords = (float*)cmdList;
+			BezierTo(coords[0], coords[1], coords[2], coords[3], coords[4], coords[5]);
+			cmdList += sizeof(float) * 6;
+			break;
+		}
+		case ShapeCommand::ArcTo:
+		{
+			float* coords = (float*)cmdList;
+			ArcTo(coords[0], coords[1], coords[2], coords[3], coords[4]);
+			cmdList += sizeof(float) * 5;
+			break;
+		}
+		case ShapeCommand::Rect:
+		{
+			float* coords = (float*)cmdList;
+			Rect(coords[0], coords[1], coords[2], coords[3]);
+			cmdList += sizeof(float) * 4;
+			break;
+		}
+		case ShapeCommand::RoundedRect:
+		{
+			float* coords = (float*)cmdList;
+			RoundedRect(coords[0], coords[1], coords[2], coords[3], coords[4]);
+			cmdList += sizeof(float) * 5;
+			break;
+		}
+		case ShapeCommand::Circle:
+		{
+			float* coords = (float*)cmdList;
+			Circle(coords[0], coords[1], coords[2]);
+			cmdList += sizeof(float) * 3;
+			break;
+		}
+		case ShapeCommand::FillConvexColor:
+		{
+			Color col = *(Color*)cmdList;
+			bool aa = *(bool*)(cmdList + sizeof(Color));
+			FillConvexPath(col, aa);
+			cmdList += sizeof(Color) + sizeof(bool);
+			break;
+		}
+		case ShapeCommand::FillConvexGradient:
+		{
+			// TODO: 
+			assert(false);
+			break;
+		}
+		case ShapeCommand::FillConvexImage:
+		{
+			// TODO: 
+			assert(false);
+			break;
+		}
+		case ShapeCommand::FillConcaveColor:
+		{
+			Color col = *(Color*)cmdList;
+			bool aa = *(bool*)(cmdList + sizeof(Color));
+			FillConcavePath(col, aa);
+			cmdList += sizeof(Color) + sizeof(bool);
+			break;
+		}
+		case ShapeCommand::Stroke:
+		{
+			Color col = *(Color*)cmdList; cmdList += sizeof(Color);
+			float width = *(float*)cmdList; cmdList += sizeof(float);
+			bool aa = *(bool*)cmdList; cmdList += sizeof(bool);
+			LineCap::Enum lineCap = *(LineCap::Enum*)cmdList; cmdList += sizeof(LineCap::Enum);
+			LineJoin::Enum lineJoin = *(LineJoin::Enum*)cmdList; cmdList += sizeof(LineJoin::Enum);
+			StrokePath(col, width, aa, lineCap, lineJoin);
+			break;
+		}
+		case ShapeCommand::LinearGradient:
+		{
+			// TODO: 
+			assert(false);
+			break;
+		}
+		case ShapeCommand::BoxGradient:
+		{
+			// TODO: 
+			assert(false);
+			break;
+		}
+		case ShapeCommand::RadialGradient:
+		{
+			// TODO: 
+			assert(false);
+			break;
+		}
+		case ShapeCommand::ImagePattern:
+		{
+			// TODO: 
+			assert(false);
+			break;
+		}
+		case ShapeCommand::Text:
+		{
+			Font font = *(Font*)cmdList; cmdList += sizeof(Font);
+			uint32_t alignment = *(uint32_t*)cmdList; cmdList += sizeof(uint32_t);
+			Color col = *(Color*)cmdList; cmdList += sizeof(Color);
+			float x = *(float*)cmdList; cmdList += sizeof(float);
+			float y = *(float*)cmdList; cmdList += sizeof(float);
+			uint32_t len = *(uint32_t*)cmdList; cmdList += sizeof(uint32_t);
+			const char* text = (const char*)cmdList; cmdList += len;
+			Text(font, alignment, col, x, y, text, text + len);
+			break;
+		}
+		}
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Context
+//
 void Context::getImageSize(ImageHandle image, int* w, int* h)
 {
 	if (!isValid(image)) {

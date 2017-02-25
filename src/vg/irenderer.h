@@ -14,6 +14,8 @@
 
 namespace vg
 {
+struct Shape;
+
 typedef uint32_t Color;
 
 struct ColorRGBA
@@ -200,6 +202,10 @@ public:
 	virtual float GetTextLineHeight(const Font& font, uint32_t alignment) = 0;
 	virtual int TextBreakLines(const Font& font, uint32_t alignment, const char* text, const char* end, float breakWidth, TextRow* rows, int numRows, uint32_t flags) = 0;
 	virtual int TextGlyphPositions(const Font& font, uint32_t alignment, float x, float y, const char* text, const char* end, GlyphPosition* glyphs, int maxGlyphs) = 0;
+
+	virtual Shape* CreateShape() = 0;
+	virtual void DestroyShape(Shape* shape) = 0;
+	virtual void SubmitShape(Shape* shape) = 0;
 };
 }
 
