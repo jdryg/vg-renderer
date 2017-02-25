@@ -128,7 +128,6 @@ struct ImagePattern
 {
 	float m_Matrix[6];
 	float m_Alpha;
-	float m_Extend[2];
 	ImageHandle m_ImageHandle;
 };
 
@@ -364,12 +363,12 @@ struct Context
 	ImageHandle createImageRGBA(uint32_t width, uint32_t height, uint32_t flags, const uint8_t* data);
 	bool updateImage(ImageHandle img, int x, int y, int w, int h, const uint8_t* data);
 	bool deleteImage(ImageHandle img);
-	void getImageSize(ImageHandle image, int* w, int* h); // TODO: Rename to getTextureSize and pass the texture index.
+	void getImageSize(ImageHandle image, int* w, int* h);
 
 	// Fonts
 	FontHandle loadFontFromMemory(const char* name, const uint8_t* data, uint32_t size);
 	bool allocTextAtlas();
-	void flushTextTexture();
+	void flushTextAtlasTexture();
 
 	// Rendering
 	void renderPathStrokeNoAA(const Vec2* vtx, uint32_t numVertices, bool isClosed, float thickness, Color color, LineCap::Enum lineCap, LineJoin::Enum lineJoin);
@@ -710,7 +709,7 @@ void BGFXVGRenderer::EndFrame()
 		return;
 	}
 
-	m_Context->flushTextTexture();
+	m_Context->flushTextAtlasTexture();
 
 	// Update bgfx vertex buffers...
 	for (uint32_t iVB = 0; iVB < m_Context->m_NumVertexBuffers; ++iVB) {
@@ -1688,6 +1687,8 @@ ImagePatternHandle BGFXVGRenderer::ImagePattern(float cx, float cy, float w, flo
 		return handle;
 	}
 
+	State* state = m_Context->getState();
+
 	const float cs = cosf(angle);
 	const float sn = sinf(angle);
 
@@ -1699,12 +1700,23 @@ ImagePatternHandle BGFXVGRenderer::ImagePattern(float cx, float cy, float w, flo
 	mtx[4] = cx;
 	mtx[5] = cy;
 
+	float patternMatrix[6];
+	multiplyMatrix3(state->m_TransformMtx, mtx, patternMatrix);
+
+	float inversePatternMatrix[6];
+	invertMatrix3(patternMatrix, inversePatternMatrix);
+
+	inversePatternMatrix[0] /= w;
+	inversePatternMatrix[1] /= h;
+	inversePatternMatrix[2] /= w;
+	inversePatternMatrix[3] /= h;
+	inversePatternMatrix[4] /= w;
+	inversePatternMatrix[5] /= h;
+
 	vg::ImagePattern* pattern = &m_Context->m_ImagePatterns[handle.idx];
-	memcpy(pattern->m_Matrix, mtx, sizeof(float) * 6);
+	memcpy(pattern->m_Matrix, inversePatternMatrix, sizeof(float) * 6);
 	pattern->m_ImageHandle = image;
 	pattern->m_Alpha = alpha;
-	pattern->m_Extend[0] = w;
-	pattern->m_Extend[1] = h;
 	
 	return handle;
 }
@@ -2430,7 +2442,7 @@ void Context::getImageSize(ImageHandle image, int* w, int* h)
 
 bool Context::allocTextAtlas()
 {
-	flushTextTexture();
+	flushTextAtlasTexture();
 
 	if (m_FontImageID + 1 >= MAX_FONT_IMAGES) {
 		return false;
@@ -2744,21 +2756,12 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 	assert(isValid(handle));
 
 	ImagePattern* img = &m_ImagePatterns[handle.idx];
-	const State* state = getState();
 	uint32_t c = ColorRGBA::fromFloat(1.0f, 1.0f, 1.0f, img->m_Alpha);
+	if (ColorRGBA::getAlpha(c) == 0) {
+		return;
+	}
 
-	float patternMatrix[6];
-	multiplyMatrix3(state->m_TransformMtx, img->m_Matrix, patternMatrix);
-
-	float mtx[6];
-	invertMatrix3(patternMatrix, mtx);
-
-	mtx[0] /= img->m_Extend[0];
-	mtx[1] /= img->m_Extend[1];
-	mtx[2] /= img->m_Extend[0];
-	mtx[3] /= img->m_Extend[1];
-	mtx[4] /= img->m_Extend[0];
-	mtx[5] /= img->m_Extend[1];
+	const float* mtx = img->m_Matrix;
 
 	uint32_t numTris = numPathVertices - 2;
 	uint32_t numDrawVertices = numPathVertices;
@@ -3175,13 +3178,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 		return;
 	}
 
-#if BATCH_PATH_DIRECTIONS
-	Vec2* dir = allocPathDirections(numPathVertices);
-	calcPathDirectionsSSE(vtx, numPathVertices, dir, isClosed);
-#endif
-
-	uint32_t c = ColorRGBA::setAlpha(color, newAlpha);
-
+	const uint32_t c = ColorRGBA::setAlpha(color, newAlpha);
 	const Vec2 uv = getWhitePixelUV();
 
 	const uint32_t numSegments = numPathVertices - (isClosed ? 0 : 1);
@@ -3202,18 +3199,15 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 	cmd->m_NumVertices += numDrawVertices;
 	cmd->m_NumIndices += numDrawIndices;
 
+#if BATCH_PATH_DIRECTIONS
+	Vec2* dir = allocPathDirections(numPathVertices);
+	calcPathDirectionsSSE(vtx, numPathVertices, dir, isClosed);
+
 	Vec2 d01;
 	if (!isClosed) {
 		// First segment of an open path
 		const Vec2& p0 = vtx[0];
-
-#if BATCH_PATH_DIRECTIONS
 		d01 = dir[0];
-#else
-		const Vec2& p1 = vtx[1];
-		d01 = p1 - p0;
-		vec2Normalize(&d01);
-#endif
 
 		Vec2 l01Scaled = d01.perpCCW() * halfStrokeWidth;
 
@@ -3229,27 +3223,14 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 		SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
 		SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
 	} else {
-#if BATCH_PATH_DIRECTIONS
 		d01 = dir[numPathVertices - 1];
-#else
-		d01 = vtx[0] - vtx[numPathVertices - 1];
-		vec2Normalize(&d01);
-#endif
 	}
 
-	// Generate draw vertices...
 	const uint32_t firstSegmentID = isClosed ? 0 : 1;
 	for (uint32_t iSegment = firstSegmentID; iSegment < numSegments; ++iSegment) {
 		const Vec2& p1 = vtx[iSegment];
 
-#if BATCH_PATH_DIRECTIONS
 		const Vec2 d12 = dir[iSegment];
-#else
-		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
-
-		Vec2 d12 = p2 - p1;
-		vec2Normalize(&d12);
-#endif
 
 		const Vec2 v = calcExtrusionVector(d01, d12);
 
@@ -3263,6 +3244,55 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 
 		d01 = d12;
 	}
+#else
+	Vec2 d01;
+	if (!isClosed) {
+		// First segment of an open path
+		const Vec2& p0 = vtx[0];
+		const Vec2& p1 = vtx[1];
+
+		d01 = p1 - p0;
+		vec2Normalize(&d01);
+
+		Vec2 l01Scaled = d01.perpCCW() * halfStrokeWidth;
+
+		Vec2 leftPoint = p0 + l01Scaled;
+		Vec2 rightPoint = p0 - l01Scaled;
+		if (lineCap == LineCap::Square) {
+			leftPoint -= d01 * halfStrokeWidth;
+			rightPoint -= d01 * halfStrokeWidth;
+		} else if (lineCap == LineCap::Round) {
+			// TODO: Even if lineCap == Round assume Butt.
+		}
+
+		SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
+		SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
+	} else {
+		d01 = vtx[0] - vtx[numPathVertices - 1];
+		vec2Normalize(&d01);
+	}
+
+	const uint32_t firstSegmentID = isClosed ? 0 : 1;
+	for (uint32_t iSegment = firstSegmentID; iSegment < numSegments; ++iSegment) {
+		const Vec2& p1 = vtx[iSegment];
+		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
+
+		Vec2 d12 = p2 - p1;
+		vec2Normalize(&d12);
+
+		const Vec2 v = calcExtrusionVector(d01, d12);
+
+		const Vec2 v_hsw = v * halfStrokeWidth;
+
+		const Vec2 leftPoint = p1 + v_hsw;
+		const Vec2 rightPoint = p1 - v_hsw;
+
+		SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
+		SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
+
+		d01 = d12;
+	}
+#endif
 
 	if (!isClosed) {
 		const Vec2& p1 = vtx[numPathVertices - 1];
@@ -3539,9 +3569,9 @@ FontHandle Context::loadFontFromMemory(const char* name, const uint8_t* data, ui
 	return { (uint16_t)fonsHandle };
 }
 
-void convertA8_to_RGBA8(uint32_t* rgba, const uint8_t* a8, int w, int h, uint32_t rgbColor)
+void convertA8_to_RGBA8(uint32_t* rgba, const uint8_t* a8, uint32_t w, uint32_t h, uint32_t rgbColor)
 {
-	uint32_t rgb0 = rgbColor & 0x00FFFFFF;
+	const uint32_t rgb0 = rgbColor & 0x00FFFFFF;
 
 	int numPixels = w * h;
 	for (int i = 0; i < numPixels; ++i) {
@@ -3550,31 +3580,35 @@ void convertA8_to_RGBA8(uint32_t* rgba, const uint8_t* a8, int w, int h, uint32_
 	}
 }
 
-void Context::flushTextTexture()
+void Context::flushTextAtlasTexture()
 {
 	int dirty[4];
-
-	if (fonsValidateTexture(m_FontStashContext, dirty)) {
-		ImageHandle fontImage = m_FontImages[m_FontImageID];
-
-		// Update texture
-		if (isValid(fontImage)) {
-			int iw, ih;
-			const uint8_t* a8Data = fonsGetTextureData(m_FontStashContext, &iw, &ih);
-			
-			// TODO: Convert only the dirty part of the texture (it's the only part that will be uploaded to the backend)
-			uint32_t* rgbaData = (uint32_t*)BX_ALLOC(m_Allocator, sizeof(uint32_t) * iw * ih);
-			convertA8_to_RGBA8(rgbaData, a8Data, iw, ih, 0x00FFFFFF);
-			
-			int x = dirty[0];
-			int y = dirty[1];
-			int w = dirty[2] - dirty[0];
-			int h = dirty[3] - dirty[1];
-			updateImage(fontImage, x, y, w, h, (const uint8_t*)rgbaData);
-
-			BX_FREE(m_Allocator, rgbaData);
-		}
+	if (!fonsValidateTexture(m_FontStashContext, dirty)) {
+		return;
 	}
+
+	ImageHandle fontImage = m_FontImages[m_FontImageID];
+
+	// Update texture
+	if (!isValid(fontImage)) {
+		return;
+	}
+	
+	int iw, ih;
+	const uint8_t* a8Data = fonsGetTextureData(m_FontStashContext, &iw, &ih);
+	assert(iw > 0 && ih > 0);
+
+	// TODO: Convert only the dirty part of the texture (it's the only part that will be uploaded to the backend)
+	uint32_t* rgbaData = (uint32_t*)BX_ALLOC(m_Allocator, sizeof(uint32_t) * iw * ih);
+	convertA8_to_RGBA8(rgbaData, a8Data, (uint32_t)iw, (uint32_t)ih, 0x00FFFFFF);
+
+	int x = dirty[0];
+	int y = dirty[1];
+	int w = dirty[2] - dirty[0];
+	int h = dirty[3] - dirty[1];
+	updateImage(fontImage, x, y, w, h, (const uint8_t*)rgbaData);
+
+	BX_FREE(m_Allocator, rgbaData);
 }
 
 bool Context::updateImage(ImageHandle image, int x, int y, int w, int h, const uint8_t* data)
