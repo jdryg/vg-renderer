@@ -957,9 +957,10 @@ void BGFXVGRenderer::RoundedRect(float x, float y, float w, float h, float r)
 	if (r < 0.1f) {
 		Rect(x, y, w, h);
 	} else {
-		// TODO: Arcs instead of Beziers? Maybe, if Circle() works correctly with arcs :)
 		float rx = min2(r, fabsf(w) * 0.5f) * sign(w);
 		float ry = min2(r, fabsf(h) * 0.5f) * sign(h);
+
+#if BEZIER_CIRCLE
 		MoveTo(x, y + ry);
 		LineTo(x, y + h - ry);
 		BezierTo(x, y + h - ry*(1 - NVG_KAPPA90), x + rx*(1 - NVG_KAPPA90), y + h, x + rx, y + h);
@@ -970,6 +971,133 @@ void BGFXVGRenderer::RoundedRect(float x, float y, float w, float h, float r)
 		LineTo(x + rx, y);
 		BezierTo(x + rx*(1 - NVG_KAPPA90), y, x, y + ry*(1 - NVG_KAPPA90), x, y + ry);
 		ClosePath();
+#else
+		r = min2(rx, ry);
+
+		State* state = m_Context->getState();
+
+		const float scale = state->m_AvgScale;
+#if APPROXIMATE_MATH
+		const float da = approxAcos((scale * r) / ((scale * r) + m_Context->m_TesselationTolerance)) * 2.0f;
+#else
+		const float da = acos((scale * r) / ((scale * r) + m_Context->m_TesselationTolerance)) * 2.0f;
+#endif
+		const uint32_t numPointsHalfCircle = max2(2, (int)ceilf(PI / da));
+		const uint32_t numPointsQuarterCircle = (numPointsHalfCircle >> 1) + 1;
+
+		MoveTo(x, y + ry);
+		LineTo(x, y + h - ry);
+
+		SubPath* path = m_Context->getSubPath();
+
+		// Bottom left quarter circle
+		{
+			float cx = x + rx;
+			float cy = y + h - ry;
+			Vec2* circleVertices = m_Context->allocPathVertices(numPointsQuarterCircle - 1);
+			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
+				const float a = -PI - (PI * 0.5f) * ((float)i / (float)(numPointsQuarterCircle - 1));
+
+#if APPROXIMATE_MATH
+				const float ca = approxCos(a);
+				const float sa = approxSin(a);
+#else
+				const float ca = cosf(a);
+				const float sa = sinf(a);
+#endif
+
+#if BATCH_TRANSFORM
+				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
+#else
+				*circleVertices++ = transformPos2D(cx + r * ca, cy + r * sa, mtx);
+#endif
+			}
+			path->m_NumVertices += (numPointsQuarterCircle - 1);
+		}
+
+		LineTo(x + w - rx, y + h);
+
+		// Bottom right quarter circle
+		{
+			float cx = x + w - rx;
+			float cy = y + h - ry;
+			Vec2* circleVertices = m_Context->allocPathVertices(numPointsQuarterCircle - 1);
+			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
+				const float a = -1.5f * PI - (PI * 0.5f) * ((float)i / (float)(numPointsQuarterCircle - 1));
+
+#if APPROXIMATE_MATH
+				const float ca = approxCos(a);
+				const float sa = approxSin(a);
+#else
+				const float ca = cosf(a);
+				const float sa = sinf(a);
+#endif
+
+#if BATCH_TRANSFORM
+				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
+#else
+				*circleVertices++ = transformPos2D(cx + r * ca, cy + r * sa, mtx);
+#endif
+			}
+			path->m_NumVertices += (numPointsQuarterCircle - 1);
+		}
+
+		LineTo(x + w, y + ry);
+
+		// Top right quarter circle
+		{
+			float cx = x + w - rx;
+			float cy = y + ry;
+			Vec2* circleVertices = m_Context->allocPathVertices(numPointsQuarterCircle - 1);
+			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
+				const float a = -(PI * 0.5f) * ((float)i / (float)(numPointsQuarterCircle - 1));
+
+#if APPROXIMATE_MATH
+				const float ca = approxCos(a);
+				const float sa = approxSin(a);
+#else
+				const float ca = cosf(a);
+				const float sa = sinf(a);
+#endif
+
+#if BATCH_TRANSFORM
+				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
+#else
+				*circleVertices++ = transformPos2D(cx + r * ca, cy + r * sa, mtx);
+#endif
+			}
+			path->m_NumVertices += (numPointsQuarterCircle - 1);
+		}
+
+		LineTo(x + rx, y);
+
+		// Top left quarter circle
+		{
+			float cx = x + rx;
+			float cy = y + ry;
+			Vec2* circleVertices = m_Context->allocPathVertices(numPointsQuarterCircle - 1);
+			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
+				const float a = -PI * 0.5f - (PI * 0.5f) * ((float)i / (float)(numPointsQuarterCircle - 1));
+
+#if APPROXIMATE_MATH
+				const float ca = approxCos(a);
+				const float sa = approxSin(a);
+#else
+				const float ca = cosf(a);
+				const float sa = sinf(a);
+#endif
+
+#if BATCH_TRANSFORM
+				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
+#else
+				*circleVertices++ = transformPos2D(cx + r * ca, cy + r * sa, mtx);
+#endif
+			}
+			path->m_NumVertices += (numPointsQuarterCircle - 1);
+		}
+
+		ClosePath();
+#endif
 	}
 }
 
