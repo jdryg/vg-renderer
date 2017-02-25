@@ -42,13 +42,8 @@ using namespace Util;
 
 namespace vg
 {
-// See: http://spencermortensen.com/articles/bezier-circle/
-// TODO: Check if the better approximation gives better results (better == same or better quality with less vertices).
-#define NVG_KAPPA90              0.5522847493f // Length proportional to radius of a cubic bezier handle for 90deg arcs.
-
 #define MAX_STATE_STACK_SIZE     16
 #define MAX_VB_VERTICES          65536
-#define MAX_FONTIMAGE_SIZE       2048
 #define MAX_GRADIENTS            64
 #define MAX_IMAGE_PATTERNS       64
 #define MAX_TEXTURES             64
@@ -59,6 +54,12 @@ namespace vg
 #define BATCH_PATH_DIRECTIONS    0
 #define APPROXIMATE_MATH         1
 #define BEZIER_CIRCLE            0
+
+#if BEZIER_CIRCLE
+// See: http://spencermortensen.com/articles/bezier-circle/
+// TODO: Check if the better approximation gives better results (better == same or better quality with less vertices).
+#define NVG_KAPPA90              0.5522847493f // Length proportional to radius of a cubic bezier handle for 90deg arcs.
+#endif
 
 static const bgfx::EmbeddedShader s_EmbeddedShaders[] =
 {
@@ -486,6 +487,54 @@ inline void vec2Normalize(Vec2* v)
 
 	v->x *= invLen;
 	v->y *= invLen;
+}
+
+inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
+{
+	// Calculate vector 'v' from the equation P = p1 + v * w, where 'P' is the extruded point,
+	// 'p1' is the current path vertex (see decl above) and 'w' is the extrusion width.
+	// NanoVG calculates 'v' using the average of the 2 segment normals. BUT I DON'T UNDERSTAND
+	// HOW ITS LENGTH IS DERIVED!!! ImDrawList seems to do the same thing.
+	// 
+	// So, in this case 'v' is calculated by the intersection of the 2 translated/extruded line segments.
+	// Line segment 'p01' (from 'p0' to 'p1') is translated 'k' units to the left. Line segment 'p12' is also 
+	// translated 'k' units to the left. The intersection point 'P' is then calculated from the 2 segments.
+	// Since both strokes have the same width, equations can be simplified a lot. I ended up with the 
+	// following equation for 'v':
+	//
+	// v = perpCCW(d01) + d01 * [(1.0 - dot(d12, d01)) / cross(d12, d01)]
+	// 
+	// where dxx are the unit direction vectors defined above.
+	//
+	// In the special case where d01 is parallel to d12, the cross product is zero and the 2nd term
+	// is omitted (1.0 - dot() is also 0.0).
+	//
+	// Note that the above equation can be simplified further by expanding all 3 functions (dot/cross/perpCCW).
+	// The final equation seems to be:
+	// 
+	// v = (d01 - d12) / cross(d12, d01)
+#if 0
+	Vec2 v = d01.perpCCW();
+	const float cross = d12.cross(d01);
+
+	// TODO: fabs() shouldn't be necessary here if the polygon has correct winding. Leave it until I manage
+	// to fix/enforce ordering.
+	if (fabsf(cross) > 1e-5f) {
+		const float dot = d12.dot(d01);
+		const float f = (1.0f - dot) / cross;
+		v += d01 * f;
+	}
+#else
+	Vec2 v;
+	const float cross = d12.cross(d01);
+	if (fabsf(cross) > 1e-5f) {
+		v = (d01 - d12) * (1.0f / cross);
+	} else {
+		v = d01.perpCCW();
+	}
+#endif
+
+	return v;
 }
 
 BGFXVGRenderer::BGFXVGRenderer() : m_Context(nullptr)
@@ -2394,14 +2443,17 @@ bool Context::allocTextAtlas()
 	} else {
 		// calculate the new font image size and create it.
 		getImageSize(m_FontImages[m_FontImageID], &iw, &ih);
+		assert(iw != -1 && ih != -1);
+
 		if (iw > ih) {
 			ih *= 2;
 		} else {
 			iw *= 2;
 		}
 
-		if (iw > MAX_FONTIMAGE_SIZE || ih > MAX_FONTIMAGE_SIZE) {
-			iw = ih = MAX_FONTIMAGE_SIZE;
+		const int maxTextureSize = (int)bgfx::getCaps()->limits.maxTextureSize;
+		if (iw > maxTextureSize || ih > maxTextureSize) {
+			iw = ih = maxTextureSize;
 		}
 
 		m_FontImages[m_FontImageID + 1] = createImageRGBA(iw, ih, ImageFlags::Filter_Bilinear, nullptr);
@@ -2550,13 +2602,17 @@ void Context::renderTextQuads(FONSquad* quads, uint32_t numQuads, Color color)
 void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices, Color color)
 {
 	const State* state = getState();
+
 	const uint32_t c = ColorRGBA::setAlpha(color, (uint8_t)(state->m_GlobalAlpha * ColorRGBA::getAlpha(color)));
+	if (ColorRGBA::getAlpha(c) == 0) {
+		return;
+	}
+
+	const Vec2 uv = getWhitePixelUV();
 
 	uint32_t numTris = numPathVertices - 2;
 	const uint32_t numDrawVertices = numPathVertices;
 	const uint32_t numDrawIndices = numTris * 3; // N - 2 triangles in a N pt fan, 3 indices per triangle
-
-	const Vec2 uv = getWhitePixelUV();
 
 	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
 
@@ -2589,15 +2645,18 @@ void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, C
 	const float aa = m_FringeWidth * 0.5f;
 
 	const uint32_t c = ColorRGBA::setAlpha(color, (uint8_t)(state->m_GlobalAlpha * ColorRGBA::getAlpha(color)));
+	if (ColorRGBA::getAlpha(c) == 0) {
+		return;
+	}
+
 	const uint32_t c0 = ColorRGBA::setAlpha(color, 0);
+	const Vec2 uv = getWhitePixelUV();
 
 	const uint32_t numTris = 
 		(numPathVertices - 2) + // Triangle fan
 		(numPathVertices * 2); // AA fringes
 	const uint32_t numDrawVertices = numPathVertices * 2; // original polygon point + AA fringe point.
 	const uint32_t numDrawIndices = numTris * 3;
-
-	const Vec2 uv = getWhitePixelUV();
 
 	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
 
@@ -2609,77 +2668,18 @@ void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, C
 	cmd->m_NumVertices += numDrawVertices;
 	cmd->m_NumIndices += numDrawIndices;
 
+	// TODO: Assumes CCW order (otherwise fringes are generated on the wrong side of the polygon)
 #if BATCH_PATH_DIRECTIONS
 	Vec2* dir = allocPathDirections(numPathVertices);
 	calcPathDirectionsSSE(vtx, numPathVertices, dir, true);
-#endif
 
-	// TODO: Assumes CCW order (otherwise fringes are generated on the wrong side of the polygon)
-#if BATCH_PATH_DIRECTIONS
 	Vec2 d01 = dir[numPathVertices - 1];
-#else
-	Vec2 d01 = vtx[0] - vtx[numPathVertices - 1];
-	vec2Normalize(&d01);
-#endif
 
 	for (uint32_t iSegment = 0; iSegment < numPathVertices; ++iSegment) {
 		const Vec2& p1 = vtx[iSegment];
-
-#if BATCH_PATH_DIRECTIONS
 		const Vec2 d12 = dir[iSegment];
-#else
-		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
-		Vec2 d12 = p2 - p1;
-		vec2Normalize(&d12);
-#endif
 
-		// Calculate vector 'v' from the equation P = p1 + v * w, where 'P' is the extruded point,
-		// 'p1' is the current path vertex (see decl above) and 'w' is the extrusion width.
-		// NanoVG calculates 'v' using the average of the 2 segment normals. BUT I DON'T UNDERSTAND
-		// HOW ITS LENGTH IS DERIVED!!! ImDrawList seems to do the same thing.
-		// 
-		// So, in this case 'v' is calculated by the intersection of the 2 translated/extruded line segments.
-		// Line segment 'p01' (from 'p0' to 'p1') is translated 'k' units to the left. Line segment 'p12' is also 
-		// translated 'k' units to the left. The intersection point 'P' is then calculated from the 2 segments.
-		// Since both strokes have the same width, equations can be simplified a lot. I ended up with the 
-		// following equation for 'v':
-		//
-		// v = perpCCW(d01) + d01 * [(1.0 - dot(d12, d01)) / cross(d12, d01)]
-		// 
-		// where dxx are the unit direction vectors defined above.
-		//
-		// In the special case where d01 is parallel to d12, the cross product is zero and the 2nd term
-		// is omitted (1.0 - dot() is also 0.0).
-		//
-		// Note that the above equation can be simplified further by expanding all 3 functions (dot/cross/perpCCW).
-		// The final equation seems to be:
-		// 
-		// v = (d01 - d12) / cross(d12, d01)
-		// 
-		// Again, THIS ISN'T SIMILAR TO WHAT NanoVG/ImDrawList DOES.
-		//
-		// TODO: Use the simplified equation.
-#if 1
-		Vec2 v = d01.perpCCW();
-		const float cross = d12.cross(d01);
-
-		// TODO: fabs() shouldn't be necessary here if the polygon has correct winding. Leave it until I manage
-		// to fix/enforce ordering.
-		if (fabsf(cross) > 1e-5f) {
-			const float dot = d12.dot(d01);
-			const float f = (1.0f - dot) / cross;
-			v += d01 * f;
-		}
-#else
-		Vec2 v;
-		const float cross = d12.cross(d01);
-		if (fabsf(cross) > 1e-5f) {
-			v = (d01 - d12) * (1.0f / cross);
-		} else {
-			v = d01.perpCCW();
-		}
-#endif
-
+		const Vec2 v = calcExtrusionVector(d01, d12);
 		const Vec2 v_aa = v * aa;
 
 		SET_DRAW_VERTEX(dstVertex, p1.x - v_aa.x, p1.y - v_aa.y, uv.x, uv.y, c); ++dstVertex;
@@ -2687,6 +2687,26 @@ void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, C
 
 		d01 = d12;
 	}
+#else
+	Vec2 d01 = vtx[0] - vtx[numPathVertices - 1];
+	vec2Normalize(&d01);
+
+	for (uint32_t iSegment = 0; iSegment < numPathVertices; ++iSegment) {
+		const Vec2& p1 = vtx[iSegment];
+		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
+
+		Vec2 d12 = p2 - p1;
+		vec2Normalize(&d12);
+
+		const Vec2 v = calcExtrusionVector(d01, d12);
+		const Vec2 v_aa = v * aa;
+
+		SET_DRAW_VERTEX(dstVertex, p1.x - v_aa.x, p1.y - v_aa.y, uv.x, uv.y, c); ++dstVertex;
+		SET_DRAW_VERTEX(dstVertex, p1.x + v_aa.x, p1.y + v_aa.y, uv.x, uv.y, c0); ++dstVertex;
+
+		d01 = d12;
+	}
+#endif
 
 	// Generate the triangle fan (original polygon)
 	const uint32_t numFanTris = numPathVertices - 2;
@@ -2910,25 +2930,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 			vec2Normalize(&d12);
 #endif
 
-			// See renderConvexPolygonAA() for a short explanation on the equation.
-#if 1
-			Vec2 v = d01.perpCCW();
-			const float cross = d12.cross(d01);
-			if (fabsf(cross) > 1e-5f) {
-				const float dot = d12.dot(d01);
-
-				const float f = (1.0f - dot) / cross;
-				v += d01 * f;
-			}
-#else
-			Vec2 v;
-			const float cross = d12.cross(d01);
-			if (fabsf(cross) > 1e-5f) {
-				v = (d01 - d12) * (1.0f / cross);
-			} else {
-				v = d01.perpCCW();
-			}
-#endif
+			const Vec2 v = calcExtrusionVector(d01, d12);
 
 			const Vec2 v_hsw = v * halfStrokeWidth;
 			const Vec2 v_hsw_aa = v * (halfStrokeWidth + m_FringeWidth);
@@ -3083,25 +3085,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 			vec2Normalize(&d12);
 #endif
 
-			// See renderConvexPolygonAA() for a short explanation on the equation.
-#if 1
-			Vec2 v = d01.perpCCW();
-			const float cross = d12.cross(d01);
-			if (fabsf(cross) > 1e-5f) {
-				const float dot = d12.dot(d01);
-
-				const float f = (1.0f - dot) / cross;
-				v += d01 * f;
-			}
-#else
-			Vec2 v;
-			const float cross = d12.cross(d01);
-			if (fabsf(cross) > 1e-5f) {
-				v = (d01 - d12) * (1.0f / cross);
-			} else {
-				v = d01.perpCCW();
-			}
-#endif
+			const Vec2 v = calcExtrusionVector(d01, d12);
 
 			const Vec2 v_hsw = v * halfStrokeWidth;
 
@@ -3267,25 +3251,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 		vec2Normalize(&d12);
 #endif
 
-		// See renderConvexPolygonAA() for a short explanation on the equation.
-#if 1
-		Vec2 v = d01.perpCCW();
-		const float cross = d12.cross(d01);
-		if (fabsf(cross) > 1e-5f) {
-			const float dot = d12.dot(d01);
-
-			const float f = (1.0f - dot) / cross;
-			v += d01 * f;
-		}
-#else
-		Vec2 v;
-		const float cross = d12.cross(d01);
-		if (fabsf(cross) > 1e-5f) {
-			v = (d01 - d12) * (1.0f / cross);
-		} else {
-			v = d01.perpCCW();
-		}
-#endif
+		const Vec2 v = calcExtrusionVector(d01, d12);
 
 		const Vec2 v_hsw = v * halfStrokeWidth;
 
