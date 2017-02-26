@@ -1245,7 +1245,7 @@ void calcPathDirectionsSSE(const Vec2* __restrict v, uint32_t n, Vec2* __restric
 		bx::simd128_t d31_20_31_20_sqr = bx::simd_swiz_yxzw(d20_31_20_31_sqr);
 		bx::simd128_t l2 = bx::simd_add(d20_31_20_31_sqr, d31_20_31_20_sqr);
 		bx::simd128_t mask = bx::simd_cmpgt(l2, eps);
-#if APPROXIMATE_MATH
+#if 0 && APPROXIMATE_MATH
 		bx::simd128_t inv_l = bx::simd_rsqrt_carmack(l2);
 #else
 		bx::simd128_t inv_l = bx::simd_rsqrt(l2);
@@ -1289,7 +1289,7 @@ void calcPathDirectionsSSE(const Vec2* __restrict v, uint32_t n, Vec2* __restric
 			bx::simd128_t l2 = bx::simd_add(d20_42_64_86_sqr, d31_53_75_97_sqr);
 
 			bx::simd128_t mask = bx::simd_cmpgt(l2, eps);
-#if APPROXIMATE_MATH
+#if 0 && APPROXIMATE_MATH
 			bx::simd128_t inv_l = bx::simd_rsqrt_carmack(l2);
 #else
 			bx::simd128_t inv_l = bx::simd_rsqrt(l2);
@@ -2446,6 +2446,8 @@ void BGFXVGRenderer::DestroyShape(Shape* shape)
 
 void BGFXVGRenderer::SubmitShape(Shape* shape)
 {
+#define READ(type, buffer) *(type*)buffer; buffer += sizeof(type);
+
 	const uint8_t* cmdList = (uint8_t*)shape->m_CmdList->more(0);
 	const uint32_t cmdListSize = shape->m_CmdList->getSize();
 
@@ -2519,10 +2521,9 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 		}
 		case ShapeCommand::FillConvexColor:
 		{
-			Color col = *(Color*)cmdList;
-			bool aa = *(bool*)(cmdList + sizeof(Color));
+			Color col = READ(Color, cmdList);
+			bool aa = READ(bool, cmdList);
 			FillConvexPath(col, aa);
-			cmdList += sizeof(Color) + sizeof(bool);
 			break;
 		}
 		case ShapeCommand::FillConvexGradient:
@@ -2539,19 +2540,18 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 		}
 		case ShapeCommand::FillConcaveColor:
 		{
-			Color col = *(Color*)cmdList;
-			bool aa = *(bool*)(cmdList + sizeof(Color));
+			Color col = READ(Color, cmdList);
+			bool aa = READ(bool, cmdList);
 			FillConcavePath(col, aa);
-			cmdList += sizeof(Color) + sizeof(bool);
 			break;
 		}
 		case ShapeCommand::Stroke:
 		{
-			Color col = *(Color*)cmdList; cmdList += sizeof(Color);
-			float width = *(float*)cmdList; cmdList += sizeof(float);
-			bool aa = *(bool*)cmdList; cmdList += sizeof(bool);
-			LineCap::Enum lineCap = *(LineCap::Enum*)cmdList; cmdList += sizeof(LineCap::Enum);
-			LineJoin::Enum lineJoin = *(LineJoin::Enum*)cmdList; cmdList += sizeof(LineJoin::Enum);
+			Color col = READ(Color, cmdList);
+			float width = READ(float, cmdList);
+			bool aa = READ(bool, cmdList);
+			LineCap::Enum lineCap = READ(LineCap::Enum, cmdList);
+			LineJoin::Enum lineJoin = READ(LineJoin::Enum, cmdList);
 			StrokePath(col, width, aa, lineCap, lineJoin);
 			break;
 		}
@@ -2581,18 +2581,21 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 		}
 		case ShapeCommand::Text:
 		{
-			Font font = *(Font*)cmdList; cmdList += sizeof(Font);
-			uint32_t alignment = *(uint32_t*)cmdList; cmdList += sizeof(uint32_t);
-			Color col = *(Color*)cmdList; cmdList += sizeof(Color);
-			float x = *(float*)cmdList; cmdList += sizeof(float);
-			float y = *(float*)cmdList; cmdList += sizeof(float);
-			uint32_t len = *(uint32_t*)cmdList; cmdList += sizeof(uint32_t);
-			const char* text = (const char*)cmdList; cmdList += len;
+			Font font = READ(Font, cmdList);
+			uint32_t alignment = READ(uint32_t, cmdList);
+			Color col = READ(Color, cmdList);
+			float x = READ(float, cmdList);
+			float y = READ(float, cmdList);
+			uint32_t len = READ(uint32_t, cmdList);
+			const char* text = (const char*)cmdList; 
+			cmdList += len;
 			Text(font, alignment, col, x, y, text, text + len);
 			break;
 		}
 		}
 	}
+
+#undef READ
 }
 
 //////////////////////////////////////////////////////////////////////////
