@@ -56,6 +56,12 @@ namespace vg
 #define APPROXIMATE_MATH         1
 #define BEZIER_CIRCLE            0
 
+#if BATCH_TRANSFORM
+#if !defined(FONS_QUAD_SIMD) || !FONS_QUAD_SIMD
+#error "FONS_QUAD_SIMD should be set to 1 to use BATCH_TRANSFORM"
+#endif
+#endif
+
 #if BEZIER_CIRCLE
 // See: http://spencermortensen.com/articles/bezier-circle/
 // TODO: Check if the better approximation gives better results (better == same or better quality with less vertices).
@@ -230,10 +236,10 @@ struct Context
 	uint32_t m_NextFontID;
 
 	Gradient m_Gradients[MAX_GRADIENTS];
-	bx::HandleAllocT<MAX_GRADIENTS> m_GradientAlloc; // TODO: Remove. This isn't needed!
+	uint32_t m_NextGradientID;
 
 	ImagePattern m_ImagePatterns[MAX_IMAGE_PATTERNS];
-	bx::HandleAllocT<MAX_IMAGE_PATTERNS> m_ImagePatternAlloc; // TODO: Remove. This isn't needed!
+	uint32_t m_NextImagePatternID;
 
 	bgfx::VertexDecl m_DrawVertexDecl;
 	bgfx::ProgramHandle m_ProgramHandle[DrawCommand::NumTypes];
@@ -700,6 +706,9 @@ void BGFXVGRenderer::BeginFrame(uint32_t windowWidth, uint32_t windowHeight, flo
 	m_Context->m_IndexBuffer->reset();
 	m_Context->m_NumDrawCommands = 0;
 	m_Context->m_ForceNewDrawCommand = true;
+
+	m_Context->m_NextGradientID = 0;
+	m_Context->m_NextImagePatternID = 0;
 }
 
 void BGFXVGRenderer::EndFrame()
@@ -815,9 +824,6 @@ void BGFXVGRenderer::EndFrame()
 			}
 		}
 	}
-
-	m_Context->m_ImagePatternAlloc.reset();
-	m_Context->m_GradientAlloc.reset();
 }
 
 void BGFXVGRenderer::BeginPath()
@@ -1521,11 +1527,11 @@ void BGFXVGRenderer::StrokePath(Color col, float width, bool aa, LineCap::Enum l
 // NOTE: In contrast to NanoVG these Gradients are State dependent (the current transformation matrix is baked in the Gradient matrix).
 GradientHandle BGFXVGRenderer::LinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol)
 {
-	// nvgLinearGradient()
-	GradientHandle handle = { m_Context->m_GradientAlloc.alloc() };
-	if (handle.idx == bx::HandleAlloc::invalid) {
-		return handle;
+	if (m_Context->m_NextGradientID >= MAX_GRADIENTS) {
+		return BGFX_INVALID_HANDLE;
 	}
+
+	GradientHandle handle = { (uint16_t)m_Context->m_NextGradientID++ };
 
 	State* state = m_Context->getState();
 
@@ -1583,10 +1589,11 @@ GradientHandle BGFXVGRenderer::LinearGradient(float sx, float sy, float ex, floa
 
 GradientHandle BGFXVGRenderer::BoxGradient(float x, float y, float w, float h, float r, float f, Color icol, Color ocol)
 {
-	GradientHandle handle = { m_Context->m_GradientAlloc.alloc() };
-	if (handle.idx == bx::HandleAlloc::invalid) {
-		return handle;
+	if (m_Context->m_NextGradientID >= MAX_GRADIENTS) {
+		return BGFX_INVALID_HANDLE;
 	}
+
+	GradientHandle handle = { (uint16_t)m_Context->m_NextGradientID++ };
 
 	State* state = m_Context->getState();
 
@@ -1632,10 +1639,11 @@ GradientHandle BGFXVGRenderer::BoxGradient(float x, float y, float w, float h, f
 
 GradientHandle BGFXVGRenderer::RadialGradient(float cx, float cy, float inr, float outr, Color icol, Color ocol)
 {
-	GradientHandle handle = { m_Context->m_GradientAlloc.alloc() };
-	if (handle.idx == bx::HandleAlloc::invalid) {
-		return handle;
+	if (m_Context->m_NextGradientID >= MAX_GRADIENTS) {
+		return BGFX_INVALID_HANDLE;
 	}
+
+	GradientHandle handle = { (uint16_t)m_Context->m_NextGradientID++ };
 
 	State* state = m_Context->getState();
 
@@ -1684,10 +1692,11 @@ GradientHandle BGFXVGRenderer::RadialGradient(float cx, float cy, float inr, flo
 
 ImagePatternHandle BGFXVGRenderer::ImagePattern(float cx, float cy, float w, float h, float angle, ImageHandle image, float alpha)
 {
-	ImagePatternHandle handle = { m_Context->m_ImagePatternAlloc.alloc() };
-	if (handle.idx == bx::HandleAlloc::invalid) {
-		return handle;
+	if (m_Context->m_NextImagePatternID >= MAX_IMAGE_PATTERNS) {
+		return BGFX_INVALID_HANDLE;
 	}
+
+	ImagePatternHandle handle = { (uint16_t)m_Context->m_NextImagePatternID++ };
 
 	State* state = m_Context->getState();
 
