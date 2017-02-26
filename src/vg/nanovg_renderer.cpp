@@ -1,16 +1,22 @@
 #include "nanovg_renderer.h"
+#include "shape.h"
 #include "../nanovg/nanovg.h"
 #include <bx/allocator.h>
 #include <assert.h>
 
-#define MAX_PAINT_HANDLES 256
+#define MAX_GRADIENTS 64
+#define MAX_IMAGE_PATTERNS 64
+#define MAX_FONTS 8
 
 namespace vg
 {
 NanoVGRenderer::NanoVGRenderer() : 
 	m_Context(nullptr), 
-	m_Paints(nullptr),
-	m_NextPaintID(0)
+	m_Gradients(nullptr),
+	m_ImagePatterns(nullptr),
+	m_NextGradientID(0),
+	m_NextImagePatternID(0),
+	m_NextFontID(0)
 {
 }
 
@@ -20,8 +26,16 @@ NanoVGRenderer::~NanoVGRenderer()
 		nvgDelete(m_Context);
 		m_Context = nullptr;
 	}
+	
+	for (uint32_t i = 0; i < MAX_FONTS; ++i) {
+		if (m_FontData[i]) {
+			BX_FREE(m_Allocator, m_FontData[i]);
+		}
+	}
+	BX_FREE(m_Allocator, m_FontData);
 
-	BX_FREE(m_Allocator, m_Paints);
+	BX_FREE(m_Allocator, m_Gradients);
+	BX_FREE(m_Allocator, m_ImagePatterns);
 }
 
 bool NanoVGRenderer::init(bool edgeAA, uint8_t viewID, bx::AllocatorI* allocator)
@@ -33,7 +47,10 @@ bool NanoVGRenderer::init(bool edgeAA, uint8_t viewID, bx::AllocatorI* allocator
 		return false;
 	}
 
-	m_Paints = (NVGpaint*)BX_ALLOC(allocator, sizeof(NVGpaint) * MAX_PAINT_HANDLES);
+	m_Gradients = (NVGpaint*)BX_ALLOC(allocator, sizeof(NVGpaint) * MAX_GRADIENTS);
+	m_ImagePatterns = (NVGpaint*)BX_ALLOC(allocator, sizeof(NVGpaint) * MAX_IMAGE_PATTERNS);
+	m_FontData = (void**)BX_ALLOC(allocator, sizeof(void*) * MAX_FONTS);
+	memset(m_FontData, 0, sizeof(void*) * MAX_FONTS);
 	
 	return true;
 }
@@ -41,7 +58,8 @@ bool NanoVGRenderer::init(bool edgeAA, uint8_t viewID, bx::AllocatorI* allocator
 void NanoVGRenderer::BeginFrame(uint32_t windowWidth, uint32_t windowHeight, float devicePixelRatio)
 {
 	assert(m_Context != nullptr);
-	m_NextPaintID = 0;
+	m_NextGradientID = 0;
+	m_NextImagePatternID = 0;
 	nvgBeginFrame(m_Context, (int)windowWidth, (int)windowHeight, devicePixelRatio);
 }
 
@@ -128,9 +146,9 @@ void NanoVGRenderer::FillConvexPath(GradientHandle handle, bool aa)
 {
 	BX_UNUSED(aa);
 	assert(m_Context != nullptr);
-	assert(handle.idx < MAX_PAINT_HANDLES);
+	assert(handle.idx < MAX_GRADIENTS);
 
-	NVGpaint* paint = &m_Paints[handle.idx];
+	NVGpaint* paint = &m_Gradients[handle.idx];
 	nvgFillPaint(m_Context, *paint);
 	nvgFill(m_Context);
 }
@@ -139,9 +157,9 @@ void NanoVGRenderer::FillConvexPath(ImagePatternHandle handle, bool aa)
 {
 	BX_UNUSED(aa);
 	assert(m_Context != nullptr);
-	assert(handle.idx < MAX_PAINT_HANDLES);
+	assert(handle.idx < MAX_IMAGE_PATTERNS);
 
-	NVGpaint* paint = &m_Paints[handle.idx];
+	NVGpaint* paint = &m_ImagePatterns[handle.idx];
 	nvgFillPaint(m_Context, *paint);
 	nvgFill(m_Context);
 }
@@ -284,47 +302,47 @@ int NanoVGRenderer::TextGlyphPositions(const Font& font, uint32_t alignment, flo
 
 ImagePatternHandle NanoVGRenderer::ImagePattern(float cx, float cy, float w, float h, float angle, ImageHandle image, float alpha)
 {
-	uint32_t paintID = m_NextPaintID;
-	NVGpaint* paint = &m_Paints[paintID];
+	uint32_t paintID = m_NextImagePatternID;
+	NVGpaint* paint = &m_ImagePatterns[paintID];
 	*paint = nvgImagePattern(m_Context, cx, cy, w, h, angle, (int)image.idx, alpha);
 
-	m_NextPaintID = (m_NextPaintID + 1) % MAX_PAINT_HANDLES;
+	m_NextImagePatternID = (m_NextImagePatternID + 1) % MAX_IMAGE_PATTERNS;
 
 	return { (uint16_t)paintID };
 }
 
 GradientHandle NanoVGRenderer::LinearGradient(float sx, float sy, float ex, float ey, vg::Color icol, vg::Color ocol)
 {
-	uint32_t paintID = m_NextPaintID;
-	NVGpaint* paint = &m_Paints[paintID];
+	uint32_t paintID = m_NextGradientID;
+	NVGpaint* paint = &m_Gradients[paintID];
 
 	*paint = nvgLinearGradient(m_Context, sx, sy, ex, ey, nvgRGBA32(icol), nvgRGBA32(ocol));
 
-	m_NextPaintID = (m_NextPaintID + 1) % MAX_PAINT_HANDLES;
+	m_NextGradientID = (m_NextGradientID + 1) % MAX_GRADIENTS;
 
 	return { (uint16_t)paintID };
 }
 
 GradientHandle NanoVGRenderer::BoxGradient(float x, float y, float w, float h, float r, float f, vg::Color icol, vg::Color ocol)
 {
-	uint32_t paintID = m_NextPaintID;
-	NVGpaint* paint = &m_Paints[paintID];
+	uint32_t paintID = m_NextGradientID;
+	NVGpaint* paint = &m_Gradients[paintID];
 
 	*paint = nvgBoxGradient(m_Context, x, y, w, h, r, f, nvgRGBA32(icol), nvgRGBA32(ocol));
 
-	m_NextPaintID = (m_NextPaintID + 1) % MAX_PAINT_HANDLES;
+	m_NextGradientID = (m_NextGradientID + 1) % MAX_GRADIENTS;
 
 	return { (uint16_t)paintID };
 }
 
 GradientHandle NanoVGRenderer::RadialGradient(float cx, float cy, float inr, float outr, vg::Color icol, vg::Color ocol)
 {
-	uint32_t paintID = m_NextPaintID;
-	NVGpaint* paint = &m_Paints[paintID];
+	uint32_t paintID = m_NextGradientID;
+	NVGpaint* paint = &m_Gradients[paintID];
 
 	*paint = nvgRadialGradient(m_Context, cx, cy, inr, outr, nvgRGBA32(icol), nvgRGBA32(ocol));
 
-	m_NextPaintID = (m_NextPaintID + 1) % MAX_PAINT_HANDLES;
+	m_NextGradientID = (m_NextGradientID + 1) % MAX_GRADIENTS;
 
 	return { (uint16_t)paintID };
 }
@@ -358,14 +376,20 @@ bool NanoVGRenderer::IsImageHandleValid(ImageHandle image)
 
 FontHandle NanoVGRenderer::LoadFontFromMemory(const char* name, const uint8_t* data, uint32_t size)
 {
+	if (m_NextFontID == MAX_FONTS) {
+		return BGFX_INVALID_HANDLE;
+	}
+
 	uint8_t* fontData = (uint8_t*)BX_ALLOC(m_Allocator, size);
 	memcpy(fontData, data, size);
 
-	int fontHandle = nvgCreateFontMem(m_Context, name, fontData, size, 1);
+	int fontHandle = nvgCreateFontMem(m_Context, name, fontData, size, 0);
 	if (fontHandle == -1) {
 		BX_FREE(m_Allocator, fontData);
 		return BGFX_INVALID_HANDLE;
 	}
+
+	m_FontData[m_NextFontID++] = fontData;
 
 	return{ (uint16_t)fontHandle };
 }
@@ -376,6 +400,217 @@ Font NanoVGRenderer::CreateFontWithSize(const char* name, float size)
 	f.m_Handle.idx = (uint16_t)nvgFindFont(m_Context, name);
 	f.m_Size = size;
 	return f;
+}
+
+Shape* NanoVGRenderer::CreateShape()
+{
+	bx::AllocatorI* allocator = m_Allocator;
+
+	bx::MemoryBlock* memBlock = BX_NEW(allocator, bx::MemoryBlock)(allocator);
+	Shape* shape = BX_NEW(allocator, Shape)(memBlock);
+
+	// TODO: Keep the shape ptr to make sure we aren't leaking any memory 
+	// even if the owner of the shape forgets to destroy it.
+
+	return shape;
+}
+
+void NanoVGRenderer::DestroyShape(Shape* shape)
+{
+	bx::AllocatorI* allocator = m_Allocator;
+
+	BX_DELETE(allocator, shape->m_CmdList);
+	BX_DELETE(allocator, shape);
+}
+
+void NanoVGRenderer::SubmitShape(Shape* shape)
+{
+#define READ(type, buffer) *(type*)buffer; buffer += sizeof(type);
+
+	const uint8_t* cmdList = (uint8_t*)shape->m_CmdList->more(0);
+	const uint32_t cmdListSize = shape->m_CmdList->getSize();
+
+	const uint8_t* cmdListEnd = cmdList + cmdListSize;
+
+	const uint16_t firstGradientID = (uint16_t)m_NextGradientID;
+	const uint16_t firstImagePatternID = (uint16_t)m_NextImagePatternID;
+	assert(firstGradientID + shape->m_NumGradients <= MAX_GRADIENTS);
+	assert(firstImagePatternID + shape->m_NumImagePatterns <= MAX_IMAGE_PATTERNS);
+
+	while (cmdList < cmdListEnd) {
+		ShapeCommand::Enum cmdType = *(ShapeCommand::Enum*)cmdList;
+		cmdList += sizeof(ShapeCommand::Enum);
+
+		switch (cmdType) {
+		case ShapeCommand::BeginPath:
+		{
+			BeginPath();
+			break;
+		}
+		case ShapeCommand::ClosePath:
+		{
+			ClosePath();
+			break;
+		}
+		case ShapeCommand::MoveTo:
+		{
+			float* coords = (float*)cmdList;
+			MoveTo(coords[0], coords[1]);
+			cmdList += sizeof(float) * 2;
+			break;
+		}
+		case ShapeCommand::LineTo:
+		{
+			float* coords = (float*)cmdList;
+			LineTo(coords[0], coords[1]);
+			cmdList += sizeof(float) * 2;
+			break;
+		}
+		case ShapeCommand::BezierTo:
+		{
+			float* coords = (float*)cmdList;
+			BezierTo(coords[0], coords[1], coords[2], coords[3], coords[4], coords[5]);
+			cmdList += sizeof(float) * 6;
+			break;
+		}
+		case ShapeCommand::ArcTo:
+		{
+			float* coords = (float*)cmdList;
+			ArcTo(coords[0], coords[1], coords[2], coords[3], coords[4]);
+			cmdList += sizeof(float) * 5;
+			break;
+		}
+		case ShapeCommand::Rect:
+		{
+			float* coords = (float*)cmdList;
+			Rect(coords[0], coords[1], coords[2], coords[3]);
+			cmdList += sizeof(float) * 4;
+			break;
+		}
+		case ShapeCommand::RoundedRect:
+		{
+			float* coords = (float*)cmdList;
+			RoundedRect(coords[0], coords[1], coords[2], coords[3], coords[4]);
+			cmdList += sizeof(float) * 5;
+			break;
+		}
+		case ShapeCommand::Circle:
+		{
+			float* coords = (float*)cmdList;
+			Circle(coords[0], coords[1], coords[2]);
+			cmdList += sizeof(float) * 3;
+			break;
+		}
+		case ShapeCommand::FillConvexColor:
+		{
+			Color col = READ(Color, cmdList);
+			bool aa = READ(bool, cmdList);
+			FillConvexPath(col, aa);
+			break;
+		}
+		case ShapeCommand::FillConvexGradient:
+		{
+			GradientHandle handle = READ(GradientHandle, cmdList);
+			bool aa = READ(bool, cmdList);
+
+			handle.idx += firstGradientID;
+			FillConvexPath(handle, aa);
+			break;
+		}
+		case ShapeCommand::FillConvexImage:
+		{
+			ImagePatternHandle handle = READ(ImagePatternHandle, cmdList);
+			bool aa = READ(bool, cmdList);
+
+			handle.idx += firstImagePatternID;
+			FillConvexPath(handle, aa);
+			break;
+		}
+		case ShapeCommand::FillConcaveColor:
+		{
+			Color col = READ(Color, cmdList);
+			bool aa = READ(bool, cmdList);
+			FillConcavePath(col, aa);
+			break;
+		}
+		case ShapeCommand::Stroke:
+		{
+			Color col = READ(Color, cmdList);
+			float width = READ(float, cmdList);
+			bool aa = READ(bool, cmdList);
+			LineCap::Enum lineCap = READ(LineCap::Enum, cmdList);
+			LineJoin::Enum lineJoin = READ(LineJoin::Enum, cmdList);
+			StrokePath(col, width, aa, lineCap, lineJoin);
+			break;
+		}
+		case ShapeCommand::LinearGradient:
+		{
+			float sx = READ(float, cmdList);
+			float sy = READ(float, cmdList);
+			float ex = READ(float, cmdList);
+			float ey = READ(float, cmdList);
+			Color icol = READ(Color, cmdList);
+			Color ocol = READ(Color, cmdList);
+			LinearGradient(sx, sy, ex, ey, icol, ocol);
+			break;
+		}
+		case ShapeCommand::BoxGradient:
+		{
+			float x = READ(float, cmdList);
+			float y = READ(float, cmdList);
+			float w = READ(float, cmdList);
+			float h = READ(float, cmdList);
+			float r = READ(float, cmdList);
+			float f = READ(float, cmdList);
+			Color icol = READ(Color, cmdList);
+			Color ocol = READ(Color, cmdList);
+			BoxGradient(x, y, w, h, r, f, icol, ocol);
+			break;
+		}
+		case ShapeCommand::RadialGradient:
+		{
+			float cx = READ(float, cmdList);
+			float cy = READ(float, cmdList);
+			float inr = READ(float, cmdList);
+			float outr = READ(float, cmdList);
+			Color icol = READ(Color, cmdList);
+			Color ocol = READ(Color, cmdList);
+			RadialGradient(cx, cy, inr, outr, icol, ocol);
+			break;
+		}
+		case ShapeCommand::ImagePattern:
+		{
+			float cx = READ(float, cmdList);
+			float cy = READ(float, cmdList);
+			float w = READ(float, cmdList);
+			float h = READ(float, cmdList);
+			float angle = READ(float, cmdList);
+			ImageHandle image = READ(ImageHandle, cmdList);
+			float alpha = READ(float, cmdList);
+			ImagePattern(cx, cy, w, h, angle, image, alpha);
+			break;
+		}
+		case ShapeCommand::Text:
+		{
+			Font font = READ(Font, cmdList);
+			uint32_t alignment = READ(uint32_t, cmdList);
+			Color col = READ(Color, cmdList);
+			float x = READ(float, cmdList);
+			float y = READ(float, cmdList);
+			uint32_t len = READ(uint32_t, cmdList);
+			const char* text = (const char*)cmdList;
+			cmdList += len;
+			Text(font, alignment, col, x, y, text, text + len);
+			break;
+		}
+		}
+	}
+
+	// Free shape gradients and image patterns
+	m_NextGradientID = firstGradientID;
+	m_NextImagePatternID = firstImagePatternID;
+
+#undef READ
 }
 }
 

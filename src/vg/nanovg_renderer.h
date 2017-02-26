@@ -75,11 +75,19 @@ public:
 	virtual int TextBreakLines(const Font& font, uint32_t alignment, const char* text, const char* end, float breakWidth, TextRow* rows, int numRows, uint32_t flags);
 	virtual int TextGlyphPositions(const Font& font, uint32_t alignment, float x, float y, const char* text, const char* end, GlyphPosition* glyphs, int maxGlyphs);
 
+	virtual Shape* CreateShape();
+	virtual void DestroyShape(Shape* shape);
+	virtual void SubmitShape(Shape* shape);
+
 private:
 	NVGcontext* m_Context;
-	NVGpaint* m_Paints;
+	NVGpaint* m_Gradients;
+	NVGpaint* m_ImagePatterns;
 	bx::AllocatorI* m_Allocator;
-	uint32_t m_NextPaintID;
+	void** m_FontData;
+	uint32_t m_NextFontID;
+	uint32_t m_NextGradientID;
+	uint32_t m_NextImagePatternID;
 };
 }
 

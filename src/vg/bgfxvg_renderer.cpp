@@ -2462,7 +2462,10 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 
 	const uint8_t* cmdListEnd = cmdList + cmdListSize;
 
-	// TODO: Temporary allocation of shape->m_NumGradients GradientHandle(s) and shape->m_NumImagePatterns ImagePatternHandle(s).
+	const uint16_t firstGradientID = (uint16_t)m_Context->m_NextGradientID;
+	const uint16_t firstImagePatternID = (uint16_t)m_Context->m_NextImagePatternID;
+	assert(firstGradientID + shape->m_NumGradients <= MAX_GRADIENTS);
+	assert(firstImagePatternID + shape->m_NumImagePatterns <= MAX_IMAGE_PATTERNS);
 
 	while (cmdList < cmdListEnd) {
 		ShapeCommand::Enum cmdType = *(ShapeCommand::Enum*)cmdList;
@@ -2537,14 +2540,20 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 		}
 		case ShapeCommand::FillConvexGradient:
 		{
-			// TODO: 
-			assert(false);
+			GradientHandle handle = READ(GradientHandle, cmdList);
+			bool aa = READ(bool, cmdList);
+
+			handle.idx += firstGradientID;
+			FillConvexPath(handle, aa);
 			break;
 		}
 		case ShapeCommand::FillConvexImage:
 		{
-			// TODO: 
-			assert(false);
+			ImagePatternHandle handle = READ(ImagePatternHandle, cmdList);
+			bool aa = READ(bool, cmdList);
+
+			handle.idx += firstImagePatternID;
+			FillConvexPath(handle, aa);
 			break;
 		}
 		case ShapeCommand::FillConcaveColor:
@@ -2566,26 +2575,49 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 		}
 		case ShapeCommand::LinearGradient:
 		{
-			// TODO: 
-			assert(false);
+			float sx = READ(float, cmdList);
+			float sy = READ(float, cmdList);
+			float ex = READ(float, cmdList);
+			float ey = READ(float, cmdList);
+			Color icol = READ(Color, cmdList);
+			Color ocol = READ(Color, cmdList);
+			LinearGradient(sx, sy, ex, ey, icol, ocol);
 			break;
 		}
 		case ShapeCommand::BoxGradient:
 		{
-			// TODO: 
-			assert(false);
+			float x = READ(float, cmdList);
+			float y = READ(float, cmdList);
+			float w = READ(float, cmdList);
+			float h = READ(float, cmdList);
+			float r = READ(float, cmdList);
+			float f = READ(float, cmdList);
+			Color icol = READ(Color, cmdList);
+			Color ocol = READ(Color, cmdList);
+			BoxGradient(x, y, w, h, r, f, icol, ocol);
 			break;
 		}
 		case ShapeCommand::RadialGradient:
 		{
-			// TODO: 
-			assert(false);
+			float cx = READ(float, cmdList);
+			float cy = READ(float, cmdList);
+			float inr = READ(float, cmdList);
+			float outr = READ(float, cmdList);
+			Color icol = READ(Color, cmdList);
+			Color ocol = READ(Color, cmdList);
+			RadialGradient(cx, cy, inr, outr, icol, ocol);
 			break;
 		}
 		case ShapeCommand::ImagePattern:
 		{
-			// TODO: 
-			assert(false);
+			float cx = READ(float, cmdList);
+			float cy = READ(float, cmdList);
+			float w = READ(float, cmdList);
+			float h = READ(float, cmdList);
+			float angle = READ(float, cmdList);
+			ImageHandle image = READ(ImageHandle, cmdList);
+			float alpha = READ(float, cmdList);
+			ImagePattern(cx, cy, w, h, angle, image, alpha);
 			break;
 		}
 		case ShapeCommand::Text:
@@ -2603,6 +2635,10 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 		}
 		}
 	}
+
+	// Free shape gradients and image patterns
+	m_Context->m_NextGradientID = firstGradientID;
+	m_Context->m_NextImagePatternID = firstImagePatternID;
 
 #undef READ
 }
