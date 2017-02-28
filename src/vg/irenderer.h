@@ -52,6 +52,7 @@ public:
 	virtual void Scale(float x, float y) = 0;
 	virtual void Translate(float x, float y) = 0;
 	virtual void Rotate(float ang_rad) = 0;
+	virtual void ApplyTransform(const float* mtx, bool pre = false) = 0;
 	virtual void SetGlobalAlpha(float alpha) = 0;
 
 	virtual FontHandle LoadFontFromMemory(const char* name, const uint8_t* data, uint32_t size) = 0;

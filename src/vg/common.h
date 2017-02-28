@@ -83,7 +83,8 @@ struct TextAlign
 
 		// Shortcuts
 		TopLeft = Top | Left,
-		MiddleCenter = Middle | Center
+		MiddleCenter = Middle | Center,
+		BottomCenter = Bottom | Center
 	};
 };
 

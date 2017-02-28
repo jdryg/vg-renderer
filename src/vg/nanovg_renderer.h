@@ -61,7 +61,8 @@ public:
 	virtual void Scale(float x, float y);
 	virtual void Translate(float x, float y);
 	virtual void Rotate(float ang_rad);
-	
+	virtual void ApplyTransform(const float* mtx, bool pre);
+
 	virtual void SetGlobalAlpha(float alpha);
 
 	virtual FontHandle LoadFontFromMemory(const char* name, const uint8_t* data, uint32_t size);
@@ -78,6 +79,9 @@ public:
 	virtual Shape* CreateShape();
 	virtual void DestroyShape(Shape* shape);
 	virtual void SubmitShape(Shape* shape);
+#if VG_SHAPE_DYNAMIC_TEXT
+	virtual void SubmitShape(Shape* shape, GetStringByIDFunc stringCallback, void* userData);
+#endif
 
 private:
 	NVGcontext* m_Context;

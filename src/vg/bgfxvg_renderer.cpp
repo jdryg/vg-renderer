@@ -227,6 +227,7 @@ struct Context
 	IndexBuffer* m_IndexBuffer;
 
 	FONSquad* m_TextQuads;
+	Vec2* m_TextVertices;
 	uint32_t m_TextQuadCapacity;
 
 	FONScontext* m_FontStashContext;
@@ -286,6 +287,7 @@ struct Context
 		m_CurStateID(0),
 		m_IndexBuffer(nullptr),
 		m_TextQuads(nullptr),
+		m_TextVertices(nullptr),
 		m_TextQuadCapacity(0),
 		m_FontStashContext(nullptr),
 		m_FontImageID(0),
@@ -384,7 +386,7 @@ struct Context
 	void renderConvexPolygonAA(const Vec2* vtx, uint32_t numVertices, Color color);
 	void renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numVertices, ImagePatternHandle img);
 	void renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numVertices, GradientHandle grad);
-	void renderTextQuads(FONSquad* quads, uint32_t numQuads, Color color);
+	void renderTextQuads(uint32_t numQuads, Color color);
 
 #if BATCH_PATH_DIRECTIONS
 	Vec2* allocPathDirections(uint32_t n)
@@ -604,6 +606,7 @@ BGFXVGRenderer::~BGFXVGRenderer()
 	BX_FREE(allocator, m_Context->m_Images);
 
 	BX_ALIGNED_FREE(allocator, m_Context->m_TextQuads, 16);
+	BX_ALIGNED_FREE(allocator, m_Context->m_TextVertices, 16);
 	BX_ALIGNED_FREE(allocator, m_Context->m_PathVertices, 16);
 #if BATCH_TRANSFORM
 	BX_ALIGNED_FREE(allocator, m_Context->m_TransformedPathVertices, 16);
@@ -1037,6 +1040,9 @@ void BGFXVGRenderer::RoundedRect(float x, float y, float w, float h, float r)
 		const float da = approxAcos((scale * r) / ((scale * r) + m_Context->m_TesselationTolerance)) * 2.0f;
 #else
 		const float da = acos((scale * r) / ((scale * r) + m_Context->m_TesselationTolerance)) * 2.0f;
+#endif
+#if !BATCH_TRANSFORM
+		const float* mtx = state->m_TransformMtx;
 #endif
 		const uint32_t numPointsHalfCircle = max2(2, (int)ceilf(PI / da));
 		const uint32_t numPointsQuarterCircle = (numPointsHalfCircle >> 1) + 1;
@@ -1876,6 +1882,23 @@ void BGFXVGRenderer::Rotate(float ang_rad)
 	state->m_AvgScale = getAverageScale(state->m_TransformMtx);
 }
 
+void BGFXVGRenderer::ApplyTransform(const float* mtx, bool pre)
+{
+	State* state = m_Context->getState();
+
+	float res[6];
+	if (pre) {
+		multiplyMatrix3(state->m_TransformMtx, mtx, res);
+	} else {
+		multiplyMatrix3(mtx, state->m_TransformMtx, res);
+	}
+
+	memcpy(state->m_TransformMtx, res, sizeof(float) * 6);
+
+	state->m_FontScale = getFontScale(state->m_TransformMtx);
+	state->m_AvgScale = getAverageScale(state->m_TransformMtx);
+}
+
 void BGFXVGRenderer::SetGlobalAlpha(float alpha)
 {
 	State* state = m_Context->getState();
@@ -1886,10 +1909,6 @@ void BGFXVGRenderer::Text(const Font& font, uint32_t alignment, Color color, flo
 {
 	State* state = m_Context->getState();
 	float scale = state->m_FontScale * m_Context->m_DevicePixelRatio;
-#if !BATCH_TRANSFORM
-	float invscale = 1.0f / scale;
-	const float* scissor = state->m_ScissorRect;
-#endif
 
 	if (!end) {
 		end = text + strlen(text);
@@ -1910,14 +1929,11 @@ void BGFXVGRenderer::Text(const Font& font, uint32_t alignment, Color color, flo
 	if (m_Context->m_TextQuadCapacity < maxChars) {
 		m_Context->m_TextQuadCapacity = maxChars;
 		m_Context->m_TextQuads = (FONSquad*)BX_ALIGNED_REALLOC(m_Context->m_Allocator, m_Context->m_TextQuads, sizeof(FONSquad) * m_Context->m_TextQuadCapacity, 16);
+		m_Context->m_TextVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Context->m_Allocator, m_Context->m_TextVertices, sizeof(Vec2) * m_Context->m_TextQuadCapacity * 4, 16);
 	}
 	
 	FONStextIter iter;
 	fonsTextIterInit(fons, &iter, x * scale, y * scale, text, end);
-
-#if 0
-	float textBounds[4] = { FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX };
-#endif
 
 	FONSquad* nextQuad = m_Context->m_TextQuads;
 	FONStextIter prevIter = iter;
@@ -1928,26 +1944,10 @@ void BGFXVGRenderer::Text(const Font& font, uint32_t alignment, Color color, flo
 			if (numQuads != 0) {
 				assert(numQuads <= m_Context->m_TextQuadCapacity);
 
-#if 0
-				// Check if the bounding rect of the text so far is inside the current scissor rect.
-				if (textBounds[2] < scissor[0] ||
-					textBounds[3] < scissor[1] ||
-					textBounds[0] > (scissor[0] + scissor[2]) ||
-					textBounds[1] > (scissor[1] + scissor[3])) {
-					continue;
-				}
-#endif
-
-				m_Context->renderTextQuads(m_Context->m_TextQuads, numQuads, color);
+				m_Context->renderTextQuads(numQuads, color);
 
 				// Reset next quad ptr.
 				nextQuad = m_Context->m_TextQuads;
-
-#if 0
-				// Reset text bounds
-				textBounds[0] = textBounds[1] = FLT_MAX;
-				textBounds[2] = textBounds[3] = -FLT_MAX;
-#endif
 			}
 
 			// Allocate a new atlas
@@ -1963,25 +1963,6 @@ void BGFXVGRenderer::Text(const Font& font, uint32_t alignment, Color color, flo
 			}
 		}
 
-#if !BATCH_TRANSFORM
-		// Transform quad...
-		// TODO: Batch transform quads? Should handle culling correctly.
-		Vec2 pMin = transformPos2D(nextQuad->x0 * invscale, nextQuad->y0 * invscale, state->m_TransformMtx);
-		Vec2 pMax = transformPos2D(nextQuad->x1 * invscale, nextQuad->y1 * invscale, state->m_TransformMtx);
-
-		nextQuad->x0 = pMin.x;
-		nextQuad->y0 = pMin.y;
-		nextQuad->x1 = pMax.x;
-		nextQuad->y1 = pMax.y;
-
-#if 0
-		textBounds[0] = min2(pMin.x, textBounds[0]);
-		textBounds[1] = min2(pMin.y, textBounds[1]);
-		textBounds[2] = max2(pMax.x, textBounds[2]);
-		textBounds[3] = max2(pMax.y, textBounds[3]);
-#endif
-#endif
-
 		++nextQuad;
 		prevIter = iter;
 	}
@@ -1993,18 +1974,7 @@ void BGFXVGRenderer::Text(const Font& font, uint32_t alignment, Color color, flo
 
 	assert(numQuads <= m_Context->m_TextQuadCapacity);
 
-#if 0
-	// Check if the text box is inside the current scissor rect.
-	if (textBounds[2] < scissor[0] ||
-		textBounds[3] < scissor[1] ||
-		textBounds[0] > (scissor[0] + scissor[2]) ||
-		textBounds[1] > (scissor[1] + scissor[3])) {
-		// Text isn't visible. Ignore command.
-		return;
-	}
-#endif
-
-	m_Context->renderTextQuads(m_Context->m_TextQuads, numQuads, color);
+	m_Context->renderTextQuads(numQuads, color);
 }
 
 void BGFXVGRenderer::TextBox(const Font& font, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* text, const char* end)
@@ -2962,9 +2932,9 @@ inline void Context::addPathVertex(const Vec2& p)
 	path->m_NumVertices++;
 }
 
-#if BATCH_TRANSFORM
-void transformQuads(FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx)
+void transformQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, Vec2* __restrict transformedVertices)
 {
+#if 1
 	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
 	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);
 	const bx::simd128_t mtx2 = bx::simd_splat(mtx[2]);
@@ -2974,44 +2944,111 @@ void transformQuads(FONSquad* __restrict quads, uint32_t n, const float* __restr
 
 	const uint32_t iter = n >> 1; // 2 quads per iteration
 	for (uint32_t i = 0; i < iter; ++i) {
-		bx::simd128_t q0 = bx::simd_ld(quads);
-		bx::simd128_t q1 = bx::simd_ld(quads + 1);
+		bx::simd128_t q0 = bx::simd_ld(quads);     // (x0, y0, x1, y1)
+		bx::simd128_t q1 = bx::simd_ld(quads + 1); // (x2, y2, x3, y3)
 
-		bx::simd128_t src0246 = bx::simd_shuf_xyAB(bx::simd_swiz_xzxz(q0), bx::simd_swiz_xzxz(q1));
-		bx::simd128_t src1357 = bx::simd_shuf_xyAB(bx::simd_swiz_ywyw(q0), bx::simd_swiz_ywyw(q1));
+		bx::simd128_t x0123 = bx::simd_shuf_xyAB(bx::simd_swiz_xzxz(q0), bx::simd_swiz_xzxz(q1)); // (x0, x1, x2, x3)
+		bx::simd128_t y0123 = bx::simd_shuf_xyAB(bx::simd_swiz_ywyw(q0), bx::simd_swiz_ywyw(q1)); // (y0, y1, y2, y3)
+		bx::simd128_t x0123_m0 = bx::simd_mul(x0123, mtx0); // (x0, x1, x2, x3) * mtx[0]
+		bx::simd128_t x0123_m1 = bx::simd_mul(x0123, mtx1); // (x0, x1, x2, x3) * mtx[1]
+		bx::simd128_t y0123_m2 = bx::simd_mul(y0123, mtx2); // (y0, y1, y2, y3) * mtx[2]
+		bx::simd128_t y0123_m3 = bx::simd_mul(y0123, mtx3); // (y0, y1, y2, y3) * mtx[3]
 
-		bx::simd128_t dst0246 = bx::simd_add(bx::simd_add(bx::simd_mul(src0246, mtx0), bx::simd_mul(src1357, mtx2)), mtx4);
-		bx::simd128_t dst1357 = bx::simd_add(bx::simd_add(bx::simd_mul(src0246, mtx1), bx::simd_mul(src1357, mtx3)), mtx5);
+		// v0.x = x0_m0 + y0_m2 + m4
+		// v1.x = x1_m0 + y0_m2 + m4
+		// v2.x = x1_m0 + y1_m2 + m4
+		// v3.x = x0_m0 + y1_m2 + m4
+		// v0.y = x0_m1 + y0_m3 + m5
+		// v1.y = x1_m1 + y0_m3 + m5
+		// v2.y = x1_m1 + y1_m3 + m5
+		// v3.y = x0_m1 + y1_m3 + m5
+		bx::simd128_t x0110_m0 = bx::simd_swiz_xyyx(x0123_m0);
+		bx::simd128_t x0110_m1 = bx::simd_swiz_xyyx(x0123_m1);
+		bx::simd128_t y0011_m2 = bx::simd_swiz_xxyy(y0123_m2);
+		bx::simd128_t y0011_m3 = bx::simd_swiz_xxyy(y0123_m3);
 
-		bx::simd128_t dst0123 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(dst0246, dst1357));
-		bx::simd128_t dst4567 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(dst0246, dst1357));
+		bx::simd128_t v0123_x = bx::simd_add(x0110_m0, bx::simd_add(y0011_m2, mtx4));
+		bx::simd128_t v0123_y = bx::simd_add(x0110_m1, bx::simd_add(y0011_m3, mtx5));
 
-		bx::simd_st(quads, dst0123);
-		bx::simd_st(quads + 1, dst4567);
+		bx::simd128_t v01 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(v0123_x, v0123_y));
+		bx::simd128_t v23 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(v0123_x, v0123_y));
 
+		bx::simd_st(transformedVertices, v01);
+		bx::simd_st(transformedVertices + 2, v23);
+
+		// v4.x = x2_m0 + y2_m2 + m4
+		// v5.x = x3_m0 + y2_m2 + m4
+		// v6.x = x3_m0 + y3_m2 + m4
+		// v7.x = x2_m0 + y3_m2 + m4
+		// v4.y = x2_m1 + y2_m3 + m5
+		// v5.y = x3_m1 + y2_m3 + m5
+		// v6.y = x3_m1 + y3_m3 + m5
+		// v7.y = x2_m1 + y3_m3 + m5
+		bx::simd128_t x2332_m0 = bx::simd_swiz_zwwz(x0123_m0);
+		bx::simd128_t x2332_m1 = bx::simd_swiz_zwwz(x0123_m1);
+		bx::simd128_t y2233_m2 = bx::simd_swiz_zzww(y0123_m2);
+		bx::simd128_t y2233_m3 = bx::simd_swiz_zzww(y0123_m3);
+
+		bx::simd128_t v4567_x = bx::simd_add(x2332_m0, bx::simd_add(y2233_m2, mtx4));
+		bx::simd128_t v4567_y = bx::simd_add(x2332_m1, bx::simd_add(y2233_m3, mtx5));
+
+		bx::simd128_t v45 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(v4567_x, v4567_y));
+		bx::simd128_t v67 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(v4567_x, v4567_y));
+
+		bx::simd_st(transformedVertices + 4, v45);
+		bx::simd_st(transformedVertices + 6, v67);
+		
 		quads += 2;
+		transformedVertices += 8;
 	}
 
 	const uint32_t rem = n & 1;
 	if (rem) {
 		bx::simd128_t q0 = bx::simd_ld(quads);
 
-		bx::simd128_t src0202 = bx::simd_swiz_xzxz(q0);
-		bx::simd128_t src1313 = bx::simd_swiz_ywyw(q0);
+		bx::simd128_t x0101 = bx::simd_swiz_xzxz(q0); // (x0, x1, x0, x1)
+		bx::simd128_t y0101 = bx::simd_swiz_ywyw(q0); // (y0, y1, y0, y1)
+		bx::simd128_t x0101_m0 = bx::simd_mul(x0101, mtx0); // (x0, x1, x0, x1) * mtx[0]
+		bx::simd128_t x0101_m1 = bx::simd_mul(x0101, mtx1); // (x0, x1, x0, x1) * mtx[1]
+		bx::simd128_t y0101_m2 = bx::simd_mul(y0101, mtx2); // (y0, y1, y0, y1) * mtx[2]
+		bx::simd128_t y0101_m3 = bx::simd_mul(y0101, mtx3); // (y0, y1, y0, y1) * mtx[3]
 
-		bx::simd128_t dst0202 = bx::simd_add(bx::simd_add(bx::simd_mul(src0202, mtx0), bx::simd_mul(src1313, mtx2)), mtx4);
-		bx::simd128_t dst1313 = bx::simd_add(bx::simd_add(bx::simd_mul(src0202, mtx1), bx::simd_mul(src1313, mtx3)), mtx5);
+		// v0.x = x0_m0 + y0_m2 + m4
+		// v1.x = x1_m0 + y0_m2 + m4
+		// v2.x = x1_m0 + y1_m2 + m4
+		// v3.x = x0_m0 + y1_m2 + m4
+		// v0.y = x0_m1 + y0_m3 + m5
+		// v1.y = x1_m1 + y0_m3 + m5
+		// v2.y = x1_m1 + y1_m3 + m5
+		// v3.y = x0_m1 + y1_m3 + m5
+		bx::simd128_t x0110_m0 = bx::simd_swiz_xyyx(x0101_m0);
+		bx::simd128_t x0110_m1 = bx::simd_swiz_xyyx(x0101_m1);
+		bx::simd128_t y0011_m2 = bx::simd_swiz_xxyy(y0101_m2);
+		bx::simd128_t y0011_m3 = bx::simd_swiz_xxyy(y0101_m3);
 
-		bx::simd128_t dst0123 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(dst0202, dst1313));
+		bx::simd128_t v0123_x = bx::simd_add(x0110_m0, bx::simd_add(y0011_m2, mtx4));
+		bx::simd128_t v0123_y = bx::simd_add(x0110_m1, bx::simd_add(y0011_m3, mtx5));
 
-		bx::simd_st(quads, dst0123);
+		bx::simd128_t v01 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(v0123_x, v0123_y));
+		bx::simd128_t v23 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(v0123_x, v0123_y));
+
+		bx::simd_st(transformedVertices, v01);
+		bx::simd_st(transformedVertices + 2, v23);
 	}
-}
+#else
+	for (uint32_t i = 0; i < n; ++i) {
+		const FONSquad* q = &quads[i];
+		const uint32_t s = i << 2;
+		transformedVertices[s + 0] = transformPos2D(q->x0, q->y0, mtx);
+		transformedVertices[s + 1] = transformPos2D(q->x1, q->y0, mtx);
+		transformedVertices[s + 2] = transformPos2D(q->x1, q->y1, mtx);
+		transformedVertices[s + 3] = transformPos2D(q->x0, q->y1, mtx);
+	}
 #endif
+}
 
-void Context::renderTextQuads(FONSquad* quads, uint32_t numQuads, Color color)
+void Context::renderTextQuads(uint32_t numQuads, Color color)
 {
-#if BATCH_TRANSFORM
 	State* state = getState();
 	float scale = state->m_FontScale * m_DevicePixelRatio;
 	float invscale = 1.0f / scale;
@@ -3025,8 +3062,7 @@ void Context::renderTextQuads(FONSquad* quads, uint32_t numQuads, Color color)
 	mtx[5] = state->m_TransformMtx[5];
 
 	// TODO: Calculate bounding rect of the quads.
-	transformQuads(quads, numQuads, mtx);
-#endif
+	transformQuads(m_TextQuads, numQuads, mtx, m_TextVertices);
 
 	const uint32_t numDrawVertices = numQuads * 4;
 	const uint32_t numDrawIndices = numQuads * 6;
@@ -3041,17 +3077,19 @@ void Context::renderTextQuads(FONSquad* quads, uint32_t numQuads, Color color)
 	cmd->m_NumVertices += numDrawVertices;
 	cmd->m_NumIndices += numDrawIndices;
 
-	const FONSquad* q = quads;
+	const FONSquad* q = m_TextQuads;
+	const Vec2* v = m_TextVertices;
 	while (numQuads-- > 0) {
-		SET_DRAW_VERTEX(dstVertex, q->x0, q->y0, q->s0, q->t0, color); ++dstVertex;
-		SET_DRAW_VERTEX(dstVertex, q->x1, q->y0, q->s1, q->t0, color); ++dstVertex;
-		SET_DRAW_VERTEX(dstVertex, q->x1, q->y1, q->s1, q->t1, color); ++dstVertex;
-		SET_DRAW_VERTEX(dstVertex, q->x0, q->y1, q->s0, q->t1, color); ++dstVertex;
+		SET_DRAW_VERTEX(dstVertex, v[0].x, v[0].y, q->s0, q->t0, color); ++dstVertex;
+		SET_DRAW_VERTEX(dstVertex, v[1].x, v[1].y, q->s1, q->t0, color); ++dstVertex;
+		SET_DRAW_VERTEX(dstVertex, v[2].x, v[2].y, q->s1, q->t1, color); ++dstVertex;
+		SET_DRAW_VERTEX(dstVertex, v[3].x, v[3].y, q->s0, q->t1, color); ++dstVertex;
 
 		*dstIndex++ = (uint16_t)startVertexID; *dstIndex++ = (uint16_t)(startVertexID + 1); *dstIndex++ = (uint16_t)(startVertexID + 2);
 		*dstIndex++ = (uint16_t)startVertexID; *dstIndex++ = (uint16_t)(startVertexID + 2); *dstIndex++ = (uint16_t)(startVertexID + 3);
 
 		startVertexID += 4;
+		v += 4;
 		++q;
 	}
 }
