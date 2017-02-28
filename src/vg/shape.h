@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 #include <bx/readerwriter.h>
-#include "irenderer.h" // Needed for the various types (LineCap, LineJoin, etc.)
+#include "common.h"
 
 namespace vg
 {
@@ -32,7 +32,10 @@ struct ShapeCommand
 		RadialGradient,
 		ImagePattern,
 
-		Text, 
+		TextStatic, 
+#if VG_SHAPE_DYNAMIC_TEXT
+		TextDynamic,
+#endif
 	};
 };
 
@@ -41,9 +44,10 @@ struct Shape
 	bx::MemoryBlockI* m_CmdList;
 	uint16_t m_NumGradients;
 	uint16_t m_NumImagePatterns;
+	bool m_HasDynamicText;
 
 	// NOTE: The shape doesn't own the memory block.
-	Shape(bx::MemoryBlockI* memBlock) : m_CmdList(memBlock), m_NumGradients(0), m_NumImagePatterns(0)
+	Shape(bx::MemoryBlockI* memBlock) : m_CmdList(memBlock), m_NumGradients(0), m_NumImagePatterns(0), m_HasDynamicText(false)
 	{}
 
 	~Shape()
@@ -70,6 +74,10 @@ struct Shape
 	ImagePatternHandle ImagePattern(float cx, float cy, float w, float h, float angle, ImageHandle image, float alpha);
 
 	void Text(const Font& font, uint32_t alignment, Color color, float x, float y, const char* text, const char* end);
+
+#if VG_SHAPE_DYNAMIC_TEXT
+	void TextDynamic(const Font& font, uint32_t alignment, Color color, float x, float y, uint32_t stringID);
+#endif
 };
 }
 

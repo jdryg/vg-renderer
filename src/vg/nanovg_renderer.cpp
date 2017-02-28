@@ -590,7 +590,7 @@ void NanoVGRenderer::SubmitShape(Shape* shape)
 			ImagePattern(cx, cy, w, h, angle, image, alpha);
 			break;
 		}
-		case ShapeCommand::Text:
+		case ShapeCommand::TextStatic:
 		{
 			Font font = READ(Font, cmdList);
 			uint32_t alignment = READ(uint32_t, cmdList);
@@ -613,4 +613,3 @@ void NanoVGRenderer::SubmitShape(Shape* shape)
 #undef READ
 }
 }
-

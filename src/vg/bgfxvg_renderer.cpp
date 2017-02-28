@@ -2620,7 +2620,7 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 			ImagePattern(cx, cy, w, h, angle, image, alpha);
 			break;
 		}
-		case ShapeCommand::Text:
+		case ShapeCommand::TextStatic:
 		{
 			Font font = READ(Font, cmdList);
 			uint32_t alignment = READ(uint32_t, cmdList);
@@ -2633,6 +2633,16 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 			Text(font, alignment, col, x, y, text, text + len);
 			break;
 		}
+#if VG_SHAPE_DYNAMIC_TEXT
+		case ShapeCommand::TextDynamic:
+		{
+			assert(false); // Do not call this version of SubmitShape if you are using Text templates.
+
+			// Skip the command
+			cmdList += sizeof(Font) + sizeof(uint32_t) * 2 + sizeof(Color) + sizeof(float) * 2;
+			break;
+		}
+#endif
 		}
 	}
 
@@ -2642,6 +2652,216 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 
 #undef READ
 }
+
+#if VG_SHAPE_DYNAMIC_TEXT
+// TODO: Find a way to merge those 2 functions. They are exactly the same except from the way TextDynamic commands are processed.
+// Ideally both of them should call a generic version which does all the work (pointer to std::function?)
+void BGFXVGRenderer::SubmitShape(Shape* shape, GetStringByIDFunc stringCallback, void* userData)
+{
+#define READ(type, buffer) *(type*)buffer; buffer += sizeof(type);
+
+	const uint8_t* cmdList = (uint8_t*)shape->m_CmdList->more(0);
+	const uint32_t cmdListSize = shape->m_CmdList->getSize();
+
+	const uint8_t* cmdListEnd = cmdList + cmdListSize;
+
+	const uint16_t firstGradientID = (uint16_t)m_Context->m_NextGradientID;
+	const uint16_t firstImagePatternID = (uint16_t)m_Context->m_NextImagePatternID;
+	assert(firstGradientID + shape->m_NumGradients <= MAX_GRADIENTS);
+	assert(firstImagePatternID + shape->m_NumImagePatterns <= MAX_IMAGE_PATTERNS);
+
+	while (cmdList < cmdListEnd) {
+		ShapeCommand::Enum cmdType = *(ShapeCommand::Enum*)cmdList;
+		cmdList += sizeof(ShapeCommand::Enum);
+
+		switch (cmdType) {
+		case ShapeCommand::BeginPath:
+		{
+			BeginPath();
+			break;
+		}
+		case ShapeCommand::ClosePath:
+		{
+			ClosePath();
+			break;
+		}
+		case ShapeCommand::MoveTo:
+		{
+			float* coords = (float*)cmdList;
+			MoveTo(coords[0], coords[1]);
+			cmdList += sizeof(float) * 2;
+			break;
+		}
+		case ShapeCommand::LineTo:
+		{
+			float* coords = (float*)cmdList;
+			LineTo(coords[0], coords[1]);
+			cmdList += sizeof(float) * 2;
+			break;
+		}
+		case ShapeCommand::BezierTo:
+		{
+			float* coords = (float*)cmdList;
+			BezierTo(coords[0], coords[1], coords[2], coords[3], coords[4], coords[5]);
+			cmdList += sizeof(float) * 6;
+			break;
+		}
+		case ShapeCommand::ArcTo:
+		{
+			float* coords = (float*)cmdList;
+			ArcTo(coords[0], coords[1], coords[2], coords[3], coords[4]);
+			cmdList += sizeof(float) * 5;
+			break;
+		}
+		case ShapeCommand::Rect:
+		{
+			float* coords = (float*)cmdList;
+			Rect(coords[0], coords[1], coords[2], coords[3]);
+			cmdList += sizeof(float) * 4;
+			break;
+		}
+		case ShapeCommand::RoundedRect:
+		{
+			float* coords = (float*)cmdList;
+			RoundedRect(coords[0], coords[1], coords[2], coords[3], coords[4]);
+			cmdList += sizeof(float) * 5;
+			break;
+		}
+		case ShapeCommand::Circle:
+		{
+			float* coords = (float*)cmdList;
+			Circle(coords[0], coords[1], coords[2]);
+			cmdList += sizeof(float) * 3;
+			break;
+		}
+		case ShapeCommand::FillConvexColor:
+		{
+			Color col = READ(Color, cmdList);
+			bool aa = READ(bool, cmdList);
+			FillConvexPath(col, aa);
+			break;
+		}
+		case ShapeCommand::FillConvexGradient:
+		{
+			GradientHandle handle = READ(GradientHandle, cmdList);
+			bool aa = READ(bool, cmdList);
+
+			handle.idx += firstGradientID;
+			FillConvexPath(handle, aa);
+			break;
+		}
+		case ShapeCommand::FillConvexImage:
+		{
+			ImagePatternHandle handle = READ(ImagePatternHandle, cmdList);
+			bool aa = READ(bool, cmdList);
+
+			handle.idx += firstImagePatternID;
+			FillConvexPath(handle, aa);
+			break;
+		}
+		case ShapeCommand::FillConcaveColor:
+		{
+			Color col = READ(Color, cmdList);
+			bool aa = READ(bool, cmdList);
+			FillConcavePath(col, aa);
+			break;
+		}
+		case ShapeCommand::Stroke:
+		{
+			Color col = READ(Color, cmdList);
+			float width = READ(float, cmdList);
+			bool aa = READ(bool, cmdList);
+			LineCap::Enum lineCap = READ(LineCap::Enum, cmdList);
+			LineJoin::Enum lineJoin = READ(LineJoin::Enum, cmdList);
+			StrokePath(col, width, aa, lineCap, lineJoin);
+			break;
+		}
+		case ShapeCommand::LinearGradient:
+		{
+			float sx = READ(float, cmdList);
+			float sy = READ(float, cmdList);
+			float ex = READ(float, cmdList);
+			float ey = READ(float, cmdList);
+			Color icol = READ(Color, cmdList);
+			Color ocol = READ(Color, cmdList);
+			LinearGradient(sx, sy, ex, ey, icol, ocol);
+			break;
+		}
+		case ShapeCommand::BoxGradient:
+		{
+			float x = READ(float, cmdList);
+			float y = READ(float, cmdList);
+			float w = READ(float, cmdList);
+			float h = READ(float, cmdList);
+			float r = READ(float, cmdList);
+			float f = READ(float, cmdList);
+			Color icol = READ(Color, cmdList);
+			Color ocol = READ(Color, cmdList);
+			BoxGradient(x, y, w, h, r, f, icol, ocol);
+			break;
+		}
+		case ShapeCommand::RadialGradient:
+		{
+			float cx = READ(float, cmdList);
+			float cy = READ(float, cmdList);
+			float inr = READ(float, cmdList);
+			float outr = READ(float, cmdList);
+			Color icol = READ(Color, cmdList);
+			Color ocol = READ(Color, cmdList);
+			RadialGradient(cx, cy, inr, outr, icol, ocol);
+			break;
+		}
+		case ShapeCommand::ImagePattern:
+		{
+			float cx = READ(float, cmdList);
+			float cy = READ(float, cmdList);
+			float w = READ(float, cmdList);
+			float h = READ(float, cmdList);
+			float angle = READ(float, cmdList);
+			ImageHandle image = READ(ImageHandle, cmdList);
+			float alpha = READ(float, cmdList);
+			ImagePattern(cx, cy, w, h, angle, image, alpha);
+			break;
+		}
+		case ShapeCommand::TextStatic:
+		{
+			Font font = READ(Font, cmdList);
+			uint32_t alignment = READ(uint32_t, cmdList);
+			Color col = READ(Color, cmdList);
+			float x = READ(float, cmdList);
+			float y = READ(float, cmdList);
+			uint32_t len = READ(uint32_t, cmdList);
+			const char* text = (const char*)cmdList;
+			cmdList += len;
+			Text(font, alignment, col, x, y, text, text + len);
+			break;
+		}
+		case ShapeCommand::TextDynamic:
+		{
+			Font font = READ(Font, cmdList);
+			uint32_t alignment = READ(uint32_t, cmdList);
+			Color col = READ(Color, cmdList);
+			float x = READ(float, cmdList);
+			float y = READ(float, cmdList);
+			uint32_t stringID = READ(uint32_t, cmdList);
+
+			uint32_t len;
+			const char* text = stringCallback(stringID, len, userData);
+			const char* end = len != ~0u ? text + len : text + strlen(text);
+
+			Text(font, alignment, col, x, y, text, end);
+			break;
+		}
+		}
+	}
+
+	// Free shape gradients and image patterns
+	m_Context->m_NextGradientID = firstGradientID;
+	m_Context->m_NextImagePatternID = firstImagePatternID;
+
+#undef READ
+}
+#endif
 
 //////////////////////////////////////////////////////////////////////////
 // Context
@@ -3059,12 +3279,12 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 	const float avgScale = state->m_AvgScale;
 	float strokeWidth = clamp(thickness * avgScale, 0.0f, 200.0f);
 	float alphaScale = state->m_GlobalAlpha;
-	if (strokeWidth < 1.0f) {
+	if (strokeWidth < m_FringeWidth) {
 		// nvgStroke()
 		float alpha = clamp(strokeWidth, 0.0f, 1.0f);
 		alphaScale *= alpha * alpha;
 
-		strokeWidth = 1.0f;
+		strokeWidth = m_FringeWidth;
 	}
 
 	uint32_t c = ColorRGBA::setAlpha(color, (uint8_t)(alphaScale * ColorRGBA::getAlpha(color)));

@@ -265,7 +265,7 @@ void Shape::Text(const Font& font, uint32_t alignment, Color color, float x, flo
 	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
 
 	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::Text);
+	bx::write(&writer, ShapeCommand::TextStatic);
 	bx::write(&writer, font);
 	bx::write(&writer, alignment);
 	bx::write(&writer, color);
@@ -274,4 +274,23 @@ void Shape::Text(const Font& font, uint32_t alignment, Color color, float x, flo
 	bx::write(&writer, len);
 	bx::write(&writer, text, len);
 }
+
+#if VG_SHAPE_DYNAMIC_TEXT
+void Shape::TextDynamic(const Font& font, uint32_t alignment, Color color, float x, float y, uint32_t stringID)
+{
+	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(Font) + sizeof(uint32_t) * 2 + sizeof(Color) + sizeof(float) * 2;
+	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
+
+	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
+	bx::write(&writer, ShapeCommand::TextDynamic);
+	bx::write(&writer, font);
+	bx::write(&writer, alignment);
+	bx::write(&writer, color);
+	bx::write(&writer, x);
+	bx::write(&writer, y);
+	bx::write(&writer, stringID);
+
+	m_HasDynamicText = true;
+}
+#endif
 }

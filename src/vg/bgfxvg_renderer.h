@@ -78,6 +78,9 @@ public:
 	virtual Shape* CreateShape();
 	virtual void DestroyShape(Shape* shape);
 	virtual void SubmitShape(Shape* shape);
+#if VG_SHAPE_DYNAMIC_TEXT
+	virtual void SubmitShape(Shape* shape, GetStringByIDFunc stringCallback, void* userData);
+#endif
 
 private:
 	Context* m_Context;
