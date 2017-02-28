@@ -6,19 +6,24 @@ A vector graphics renderer for bgfx, based on ideas from both NanoVG and ImDrawL
 
 Also includes some small changes to FontStash.
 
-Based on NanoVG and FontStash included in bgfx.
+Based on NanoVG and FontStash versions included in bgfx repo.
 
 Compared to NanoVG/FontStash:
 
-1. Generates fewer draw calls, by batching multiple paths together, and indexed triangle lists (ala ImDrawList)
+1. Generates fewer draw calls, by batching multiple paths together, and indexed triangle lists (like ImDrawList)
 2. Separate shader program for gradients to reduce uniform usage (NanoVG's bgfx backend uses a single program for all cases)
-3. Circle() is implemented without Beziers (there's a switch to use the original NanoVG code)
+3. Circle() and RoundedRect() are implemented without Beziers (there's a switch to use the original NanoVG code)
 4. All textures are RGBA (even the font altas)
-5. Concave polygons are decomposed into convex parts and rendered normally instead of using the stencil buffer (not tested extensively) (uses algorithm from https://mpen.ca/406/bayazit)
+5. Concave polygons are decomposed into convex parts and rendered normally instead of using the stencil buffer (not tested extensively; might have issues with AA) (uses algorithm from https://mpen.ca/406/bayazit)
 6. Stack-based Bezier tesselation
 7. FontStash glyph hashing uses BKDR for better distribution of glyphs in the LUT (fewer collisions when searching for cached glyphs)
+8. Shapes (aka prebaked command lists, aka display lists) with dynamic text support (i.e. the actual text string is retrieved at the time the shape is submitted for rendering, via a callback) (can be disabled with a compile-time flag (VG_SHAPE_DYNAMIC_TEXT)).
 
 What's not supported compared to NanoVG
 
 1. Round caps and joins
 2. Bevel joins
+3. Arbitrary polygon winding
+4. Polygon holes
+5. Variable text line height
+6. Skew transformation matrix
