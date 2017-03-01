@@ -249,7 +249,7 @@ struct Context
 	bgfx::UniformHandle m_ExtentRadiusFeatherUniform;
 	bgfx::UniformHandle m_InnerColorUniform;
 	bgfx::UniformHandle m_OuterColorUniform;
-	
+
 	uint16_t m_WinWidth;
 	uint16_t m_WinHeight;
 	float m_DevicePixelRatio;
@@ -258,96 +258,70 @@ struct Context
 	uint8_t m_ViewID;
 	bool m_ForceNewDrawCommand;
 
-	Context(bx::AllocatorI* allocator, uint8_t viewID) : 
-		m_Allocator(allocator),
-		m_VertexBuffers(nullptr),
-		m_NumVertexBuffers(0),
-		m_VertexBufferCapacity(0),
-		m_VBDataPool(nullptr),
-		m_VBDataPoolCapacity(0),
-		m_DrawCommands(nullptr),
-		m_NumDrawCommands(0),
-		m_DrawCommandCapacity(0),
-		m_Images(nullptr),
-		m_ImageCapacity(0),
-		m_PathVertices(nullptr),
-		m_NumPathVertices(0),
-		m_PathVertexCapacity(0),
-#if BATCH_TRANSFORM
-		m_TransformedPathVertices(nullptr),
-		m_PathVerticesTransformed(false),
-#endif
-#if BATCH_PATH_DIRECTIONS
-		m_PathDirections(nullptr),
-		m_PathDirectionsCapacity(0),
-#endif
-		m_SubPaths(nullptr),
-		m_NumSubPaths(0),
-		m_SubPathCapacity(0),
-		m_CurStateID(0),
-		m_IndexBuffer(nullptr),
-		m_TextQuads(nullptr),
-		m_TextVertices(nullptr),
-		m_TextQuadCapacity(0),
-		m_FontStashContext(nullptr),
-		m_FontImageID(0),
-		m_WinWidth(0),
-		m_WinHeight(0),
-		m_DevicePixelRatio(1.0f),
-		m_TesselationTolerance(1.0f),
-		m_FringeWidth(1.0f),
-		m_ViewID(viewID),
-		m_ForceNewDrawCommand(false),
-		m_NextFontID(0)
-	{
-		for (uint32_t i = 0; i < MAX_FONT_IMAGES; ++i) {
-			m_FontImages[i] = BGFX_INVALID_HANDLE;
-		}
+	Context(bx::AllocatorI* allocator, uint8_t viewID);
+	~Context();
 
-		for (uint32_t i = 0; i < DrawCommand::NumTypes; ++i) {
-			m_ProgramHandle[i] = BGFX_INVALID_HANDLE;
-		}
-
-		m_TexUniform = BGFX_INVALID_HANDLE;
-		m_PaintMatUniform = BGFX_INVALID_HANDLE;
-		m_ExtentRadiusFeatherUniform = BGFX_INVALID_HANDLE;
-		m_InnerColorUniform = BGFX_INVALID_HANDLE;
-		m_OuterColorUniform = BGFX_INVALID_HANDLE;
-
-		memset(m_FontData, 0, sizeof(void*) * MAX_FONTS);
-	}
-	
 	// Helpers...
-	inline State* getState() 
-	{ 
-		return &m_StateStack[m_CurStateID]; 
-	}
-
-	inline SubPath* getSubPath()
-	{
-		if (m_NumSubPaths == 0) {
-			return nullptr; 
-		}
-
-		return &m_SubPaths[m_NumSubPaths - 1];
-	}
-	
-	inline VertexBuffer* getVertexBuffer() 
-	{
-		return &m_VertexBuffers[m_NumVertexBuffers - 1]; 
-	}
-
-	inline IndexBuffer* getIndexBuffer() 
-	{
-		return m_IndexBuffer; 
-	}
-
+	inline State* getState()               { return &m_StateStack[m_CurStateID]; }
+	inline SubPath* getSubPath()           { return m_NumSubPaths == 0 ? nullptr : &m_SubPaths[m_NumSubPaths - 1]; }
+	inline VertexBuffer* getVertexBuffer() { return &m_VertexBuffers[m_NumVertexBuffers - 1]; }
+	inline IndexBuffer* getIndexBuffer()   { return m_IndexBuffer; }
 	inline Vec2 getWhitePixelUV()
 	{
 		int w, h;
 		getImageSize(m_FontImages[0], &w, &h);
 		return Vec2(1.0f / (float)w, 1.0f / (float)h);
 	}
+
+	bool init();
+	void beginFrame(uint32_t windowWidth, uint32_t windowHeight, float devicePixelRatio);
+	void endFrame();
+
+	// Commands
+	void beginPath();
+	void moveTo(float x, float y);
+	void lineTo(float x, float y);
+	void bezierTo(float c1x, float c1y, float c2x, float c2y, float x, float y);
+	void arcTo(float x1, float y1, float x2, float y2, float radius);
+	void rect(float x, float y, float w, float h);
+	void roundedRect(float x, float y, float w, float h, float r);
+	void circle(float cx, float cy, float r);
+	void closePath();
+	void fillConvexPath(Color col, bool aa);
+	void fillConvexPath(GradientHandle gradient, bool aa);
+	void fillConvexPath(ImagePatternHandle img, bool aa);
+	void fillConcavePath(Color col, bool aa);
+	void strokePath(Color col, float width, bool aa, LineCap::Enum lineCap, LineJoin::Enum lineJoin);
+	GradientHandle createLinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol);
+	GradientHandle createBoxGradient(float x, float y, float w, float h, float r, float f, Color icol, Color ocol);
+	GradientHandle createRadialGradient(float cx, float cy, float inr, float outr, Color icol, Color ocol);
+	ImagePatternHandle createImagePattern(float cx, float cy, float w, float h, float angle, ImageHandle image, float alpha);
+	void text(const Font& font, uint32_t alignment, Color color, float x, float y, const char* text, const char* end);
+	void textBox(const Font& font, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* text, const char* end);
+	float calcTextBounds(const Font& font, uint32_t alignment, float x, float y, const char* text, const char* end, float* bounds);
+	void calcTextBoxBounds(const Font& font, uint32_t alignment, float x, float y, float breakWidth, const char* text, const char* end, float* bounds, uint32_t flags);
+	float getTextLineHeight(const Font& font, uint32_t alignment);
+	int textBreakLines(const Font& font, uint32_t alignment, const char* text, const char* end, float breakRowWidth, TextRow* rows, int maxRows, uint32_t flags);
+	int textGlyphPositions(const Font& font, uint32_t alignment, float x, float y, const char* text, const char* end, GlyphPosition* positions, int maxPositions);
+
+	// State
+	void pushState();
+	void popState();
+	void resetScissor();
+	void setScissor(float x, float y, float w, float h);
+	bool intersectScissor(float x, float y, float w, float h);
+	void setGlobalAlpha(float alpha);
+	void onTransformationMatrixUpdated();
+	void transformIdentity();
+	void transformScale(float x, float y);
+	void transformTranslate(float x, float y);
+	void transformRotate(float ang_rad);
+	void transformMult(const float* mtx, bool pre);
+
+	// Shapes
+	Shape* createShape();
+	void destroyShape(Shape* shape);
+	void submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void* userData);
 
 	// Vertex buffers
 	VertexBuffer* allocVertexBuffer();
@@ -373,6 +347,7 @@ struct Context
 	bool updateImage(ImageHandle img, int x, int y, int w, int h, const uint8_t* data);
 	bool deleteImage(ImageHandle img);
 	void getImageSize(ImageHandle image, int* w, int* h);
+	bool isImageHandleValid(ImageHandle image);
 
 	// Fonts
 	FontHandle loadFontFromMemory(const char* name, const uint8_t* data, uint32_t size);
@@ -401,7 +376,7 @@ struct Context
 #endif
 };
 
-void releaseVertexBufferData(void* ptr, void* userData)
+static void releaseVertexBufferDataCallback(void* ptr, void* userData)
 {
 	Context* ctx = (Context*)userData;
 	ctx->releaseVertexBufferData((DrawVertex*)ptr);
@@ -436,7 +411,7 @@ inline bool invertMatrix3(const float* t, float* inv)
 	inv[1] = (float)(-t[1] * invdet);
 	inv[3] = (float)(t[0] * invdet);
 	inv[5] = (float)(((double)t[1] * t[4] - (double)t[0] * t[5]) * invdet);
-	
+
 	return true;
 }
 
@@ -497,42 +472,22 @@ inline void vec2Normalize(Vec2* v)
 	v->y *= invLen;
 }
 
+inline void sincos(float a, float& c, float& s)
+{
+#if APPROXIMATE_MATH
+	c = approxCos(a);
+	s = approxSin(a);
+#else
+	c = cosf(a);
+	s = sinf(a);
+#endif
+}
+
 inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
 {
-	// Calculate vector 'v' from the equation P = p1 + v * w, where 'P' is the extruded point,
-	// 'p1' is the current path vertex (see decl above) and 'w' is the extrusion width.
-	// NanoVG calculates 'v' using the average of the 2 segment normals. BUT I DON'T UNDERSTAND
-	// HOW ITS LENGTH IS DERIVED!!! ImDrawList seems to do the same thing.
-	// 
-	// So, in this case 'v' is calculated by the intersection of the 2 translated/extruded line segments.
-	// Line segment 'p01' (from 'p0' to 'p1') is translated 'k' units to the left. Line segment 'p12' is also 
-	// translated 'k' units to the left. The intersection point 'P' is then calculated from the 2 segments.
-	// Since both strokes have the same width, equations can be simplified a lot. I ended up with the 
-	// following equation for 'v':
-	//
-	// v = perpCCW(d01) + d01 * [(1.0 - dot(d12, d01)) / cross(d12, d01)]
-	// 
-	// where dxx are the unit direction vectors defined above.
-	//
-	// In the special case where d01 is parallel to d12, the cross product is zero and the 2nd term
-	// is omitted (1.0 - dot() is also 0.0).
-	//
-	// Note that the above equation can be simplified further by expanding all 3 functions (dot/cross/perpCCW).
-	// The final equation seems to be:
-	// 
-	// v = (d01 - d12) / cross(d12, d01)
-#if 0
-	Vec2 v = d01.perpCCW();
-	const float cross = d12.cross(d01);
-
-	// TODO: fabs() shouldn't be necessary here if the polygon has correct winding. Leave it until I manage
-	// to fix/enforce ordering.
-	if (fabsf(cross) > 1e-5f) {
-		const float dot = d12.dot(d01);
-		const float f = (1.0f - dot) / cross;
-		v += d01 * f;
-	}
-#else
+	// v is the vector from the path point to the outline point, assuming a stroke width of 1.0.
+	// Equation obtained by solving the intersection of the 2 line segments. d01 and d12 are 
+	// assumed to be normalized.
 	Vec2 v;
 	const float cross = d12.cross(d01);
 	if (fabsf(cross) > 1e-5f) {
@@ -540,83 +495,23 @@ inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
 	} else {
 		v = d01.perpCCW();
 	}
-#endif
 
 	return v;
 }
 
+//////////////////////////////////////////////////////////////////////////
+// BGFXVGRenderer
+//
 BGFXVGRenderer::BGFXVGRenderer() : m_Context(nullptr)
 {
 }
 
 BGFXVGRenderer::~BGFXVGRenderer()
 {
-	bx::AllocatorI* allocator = m_Context->m_Allocator;
-
-	for (uint32_t i = 0; i < DrawCommand::NumTypes; ++i) {
-		if (bgfx::isValid(m_Context->m_ProgramHandle[i])) {
-			bgfx::destroyProgram(m_Context->m_ProgramHandle[i]);
-		}
+	if (m_Context) {
+		BX_DELETE(m_Context->m_Allocator, m_Context);
+		m_Context = nullptr;
 	}
-
-	bgfx::destroyUniform(m_Context->m_TexUniform);
-	bgfx::destroyUniform(m_Context->m_PaintMatUniform);
-	bgfx::destroyUniform(m_Context->m_ExtentRadiusFeatherUniform);
-	bgfx::destroyUniform(m_Context->m_InnerColorUniform);
-	bgfx::destroyUniform(m_Context->m_OuterColorUniform);
-
-	for (uint32_t i = 0; i < m_Context->m_VertexBufferCapacity; ++i) {
-		if (bgfx::isValid(m_Context->m_VertexBuffers[i].m_bgfxHandle)) {
-			bgfx::destroyDynamicVertexBuffer(m_Context->m_VertexBuffers[i].m_bgfxHandle);
-		}
-	}
-	BX_FREE(allocator, m_Context->m_VertexBuffers);
-
-	for (uint32_t i = 0; i < m_Context->m_VBDataPoolCapacity; ++i) {
-		DrawVertex* buffer = m_Context->m_VBDataPool[i];
-		if (!buffer) {
-			continue;
-		}
-
-		if ((uintptr_t)buffer & 1) {
-			buffer = (DrawVertex*)((uintptr_t)buffer & ~1);
-			BX_FREE(allocator, buffer);
-		}
-	}
-	BX_FREE(allocator, m_Context->m_VBDataPool);
-
-	BX_FREE(allocator, m_Context->m_DrawCommands);
-
-	// Manually delete font data
-	for (int i = 0; i < MAX_FONTS; ++i) {
-		if (m_Context->m_FontData[i]) {
-			BX_FREE(allocator, m_Context->m_FontData[i]);
-		}
-	}
-
-	fonsDeleteInternal(m_Context->m_FontStashContext);
-
-	for (uint32_t i = 0; i < MAX_FONT_IMAGES; ++i) {
-		m_Context->deleteImage(m_Context->m_FontImages[i]);
-	}
-
-	BX_FREE(allocator, m_Context->m_SubPaths);
-	BX_DELETE(allocator, m_Context->m_IndexBuffer);
-
-	BX_FREE(allocator, m_Context->m_Images);
-
-	BX_ALIGNED_FREE(allocator, m_Context->m_TextQuads, 16);
-	BX_ALIGNED_FREE(allocator, m_Context->m_TextVertices, 16);
-	BX_ALIGNED_FREE(allocator, m_Context->m_PathVertices, 16);
-#if BATCH_TRANSFORM
-	BX_ALIGNED_FREE(allocator, m_Context->m_TransformedPathVertices, 16);
-#endif
-#if BATCH_PATH_DIRECTIONS
-	BX_ALIGNED_FREE(allocator, m_Context->m_PathDirections, 16);
-#endif
-	
-	BX_DELETE(allocator, m_Context);
-	m_Context = nullptr;
 }
 
 bool BGFXVGRenderer::init(uint8_t viewID, bx::AllocatorI* allocator)
@@ -626,43 +521,427 @@ bool BGFXVGRenderer::init(uint8_t viewID, bx::AllocatorI* allocator)
 		return false;
 	}
 
-	m_Context->m_DevicePixelRatio = 1.0f;
-	m_Context->m_TesselationTolerance = 0.25f;
-	m_Context->m_FringeWidth = 1.0f;
-	m_Context->m_CurStateID = 0;
-	m_Context->m_StateStack[0].m_GlobalAlpha = 1.0f;
-	ResetScissor();
-	LoadIdentity();
+	if (!m_Context->init()) {
+		BX_DELETE(allocator, m_Context);
+		return false;
+	}
 
-	m_Context->m_SubPathCapacity = 16;
-	m_Context->m_SubPaths = (SubPath*)BX_ALLOC(allocator, sizeof(SubPath) * m_Context->m_SubPathCapacity);
+	return true;
+}
 
-	m_Context->m_IndexBuffer = BX_NEW(allocator, IndexBuffer)();
+void BGFXVGRenderer::BeginFrame(uint32_t windowWidth, uint32_t windowHeight, float devicePixelRatio)
+{
+	m_Context->beginFrame(windowWidth, windowHeight, devicePixelRatio);
+}
 
-	m_Context->m_DrawVertexDecl.begin()
+void BGFXVGRenderer::EndFrame()
+{
+	m_Context->endFrame();
+}
+
+void BGFXVGRenderer::BeginPath()
+{
+	m_Context->beginPath();
+}
+
+void BGFXVGRenderer::MoveTo(float x, float y)
+{
+	m_Context->moveTo(x, y);
+}
+
+void BGFXVGRenderer::LineTo(float x, float y)
+{
+	m_Context->lineTo(x, y);
+}
+
+void BGFXVGRenderer::BezierTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
+{
+	m_Context->bezierTo(c1x, c1y, c2x, c2y, x, y);
+}
+
+void BGFXVGRenderer::ArcTo(float x1, float y1, float x2, float y2, float radius)
+{
+	m_Context->arcTo(x1, y1, x2, y2, radius);
+}
+
+void BGFXVGRenderer::Rect(float x, float y, float w, float h)
+{
+	m_Context->rect(x, y, w, h);
+}
+
+void BGFXVGRenderer::RoundedRect(float x, float y, float w, float h, float r)
+{
+	m_Context->roundedRect(x, y, w, h, r);
+}
+
+void BGFXVGRenderer::Circle(float cx, float cy, float r)
+{
+	m_Context->circle(cx, cy, r);
+}
+
+void BGFXVGRenderer::ClosePath()
+{
+	m_Context->closePath();
+}
+
+void BGFXVGRenderer::FillConvexPath(Color col, bool aa)
+{
+	m_Context->fillConvexPath(col, aa);
+}
+
+void BGFXVGRenderer::FillConvexPath(GradientHandle gradient, bool aa)
+{
+	m_Context->fillConvexPath(gradient, aa);
+}
+
+void BGFXVGRenderer::FillConvexPath(ImagePatternHandle img, bool aa)
+{
+	m_Context->fillConvexPath(img, aa);
+}
+
+void BGFXVGRenderer::FillConcavePath(Color col, bool aa)
+{
+	m_Context->fillConcavePath(col, aa);
+}
+
+void BGFXVGRenderer::StrokePath(Color col, float width, bool aa, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
+{
+	m_Context->strokePath(col, width, aa, lineCap, lineJoin);
+}
+
+GradientHandle BGFXVGRenderer::LinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol)
+{
+	return m_Context->createLinearGradient(sx, sy, ex, ey, icol, ocol);
+}
+
+GradientHandle BGFXVGRenderer::BoxGradient(float x, float y, float w, float h, float r, float f, Color icol, Color ocol)
+{
+	return m_Context->createBoxGradient(x, y, w, h, r, f, icol, ocol);
+}
+
+GradientHandle BGFXVGRenderer::RadialGradient(float cx, float cy, float inr, float outr, Color icol, Color ocol)
+{
+	return m_Context->createRadialGradient(cx, cy, inr, outr, icol, ocol);
+}
+
+ImagePatternHandle BGFXVGRenderer::ImagePattern(float cx, float cy, float w, float h, float angle, ImageHandle image, float alpha)
+{
+	return m_Context->createImagePattern(cx, cy, w, h, angle, image, alpha);
+}
+
+ImageHandle BGFXVGRenderer::CreateImageRGBA(int w, int h, uint32_t imageFlags, const uint8_t* data)
+{
+	return m_Context->createImageRGBA(w, h, imageFlags, data);
+}
+
+void BGFXVGRenderer::UpdateImage(ImageHandle image, const uint8_t* data)
+{
+	int w, h;
+	m_Context->getImageSize(image, &w, &h);
+	m_Context->updateImage(image, 0, 0, w, h, data);
+}
+
+void BGFXVGRenderer::GetImageSize(ImageHandle image, int* w, int* h)
+{
+	m_Context->getImageSize(image, w, h);
+}
+
+void BGFXVGRenderer::DeleteImage(ImageHandle image)
+{
+	m_Context->deleteImage(image);
+}
+
+bool BGFXVGRenderer::IsImageHandleValid(ImageHandle image)
+{
+	return m_Context->isImageHandleValid(image);
+}
+
+void BGFXVGRenderer::PushState()
+{
+	m_Context->pushState();
+}
+
+void BGFXVGRenderer::PopState()
+{
+	m_Context->popState();
+}
+
+void BGFXVGRenderer::ResetScissor()
+{
+	m_Context->resetScissor();
+}
+
+void BGFXVGRenderer::Scissor(float x, float y, float w, float h)
+{
+	m_Context->setScissor(x, y, w, h);
+}
+
+bool BGFXVGRenderer::IntersectScissor(float x, float y, float w, float h)
+{
+	return m_Context->intersectScissor(x, y, w, h);
+}
+
+void BGFXVGRenderer::LoadIdentity()
+{
+	m_Context->transformIdentity();
+}
+void BGFXVGRenderer::Scale(float x, float y)
+{
+	m_Context->transformScale(x, y);
+}
+void BGFXVGRenderer::Translate(float x, float y)
+{
+	m_Context->transformTranslate(x, y);
+}
+void BGFXVGRenderer::Rotate(float ang_rad)
+{
+	m_Context->transformRotate(ang_rad);
+}
+void BGFXVGRenderer::ApplyTransform(const float* mtx, bool pre)
+{
+	m_Context->transformMult(mtx, pre);
+}
+void BGFXVGRenderer::SetGlobalAlpha(float alpha)
+{
+	m_Context->setGlobalAlpha(alpha);
+}
+
+void BGFXVGRenderer::Text(const Font& font, uint32_t alignment, Color color, float x, float y, const char* text, const char* end)
+{
+	m_Context->text(font, alignment, color, x, y, text, end);
+}
+
+void BGFXVGRenderer::TextBox(const Font& font, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* text, const char* end)
+{
+	m_Context->textBox(font, alignment, color, x, y, breakWidth, text, end);
+}
+
+float BGFXVGRenderer::CalcTextBounds(const Font& font, uint32_t alignment, float x, float y, const char* text, const char* end, float* bounds)
+{
+	return m_Context->calcTextBounds(font, alignment, x, y, text, end, bounds);
+}
+
+void BGFXVGRenderer::CalcTextBoxBounds(const Font& font, uint32_t alignment, float x, float y, float breakWidth, const char* text, const char* end, float* bounds, uint32_t flags)
+{
+	m_Context->calcTextBoxBounds(font, alignment, x, y, breakWidth, text, end, bounds, flags);
+}
+
+float BGFXVGRenderer::GetTextLineHeight(const Font& font, uint32_t alignment)
+{
+	return m_Context->getTextLineHeight(font, alignment);
+}
+
+int BGFXVGRenderer::TextBreakLines(const Font& font, uint32_t alignment, const char* text, const char* end, float breakRowWidth, TextRow* rows, int maxRows, uint32_t flags)
+{
+	return m_Context->textBreakLines(font, alignment, text, end, breakRowWidth, rows, maxRows, flags);
+}
+
+int BGFXVGRenderer::TextGlyphPositions(const Font& font, uint32_t alignment, float x, float y, const char* text, const char* end, GlyphPosition* positions, int maxPositions)
+{
+	return m_Context->textGlyphPositions(font, alignment, x, y, text, end, positions, maxPositions);
+}
+
+FontHandle BGFXVGRenderer::LoadFontFromMemory(const char* name, const uint8_t* data, uint32_t size)
+{
+	return m_Context->loadFontFromMemory(name, data, size);
+}
+
+Font BGFXVGRenderer::CreateFontWithSize(const char* name, float size)
+{
+	Font f;
+	f.m_Handle.idx = (uint16_t)fonsGetFontByName(m_Context->m_FontStashContext, name);
+	f.m_Size = size;
+	return f;
+}
+
+Shape* BGFXVGRenderer::CreateShape()
+{
+	return m_Context->createShape();
+}
+
+void BGFXVGRenderer::DestroyShape(Shape* shape)
+{
+	m_Context->destroyShape(shape);
+}
+
+void BGFXVGRenderer::SubmitShape(Shape* shape)
+{
+	m_Context->submitShape(shape, nullptr, nullptr);
+}
+
+#if VG_SHAPE_DYNAMIC_TEXT
+void BGFXVGRenderer::SubmitShape(Shape* shape, GetStringByIDFunc stringCallback, void* userData)
+{
+	m_Context->submitShape(shape, &stringCallback, userData);
+}
+#endif // VG_SHAPE_DYNAMIC_TEXT
+
+//////////////////////////////////////////////////////////////////////////
+// Context
+//
+Context::Context(bx::AllocatorI* allocator, uint8_t viewID) :
+	m_Allocator(allocator),
+	m_VertexBuffers(nullptr),
+	m_NumVertexBuffers(0),
+	m_VertexBufferCapacity(0),
+	m_VBDataPool(nullptr),
+	m_VBDataPoolCapacity(0),
+	m_DrawCommands(nullptr),
+	m_NumDrawCommands(0),
+	m_DrawCommandCapacity(0),
+	m_Images(nullptr),
+	m_ImageCapacity(0),
+	m_PathVertices(nullptr),
+	m_NumPathVertices(0),
+	m_PathVertexCapacity(0),
+#if BATCH_TRANSFORM
+	m_TransformedPathVertices(nullptr),
+	m_PathVerticesTransformed(false),
+#endif
+#if BATCH_PATH_DIRECTIONS
+	m_PathDirections(nullptr),
+	m_PathDirectionsCapacity(0),
+#endif
+	m_SubPaths(nullptr),
+	m_NumSubPaths(0),
+	m_SubPathCapacity(0),
+	m_CurStateID(0),
+	m_IndexBuffer(nullptr),
+	m_TextQuads(nullptr),
+	m_TextVertices(nullptr),
+	m_TextQuadCapacity(0),
+	m_FontStashContext(nullptr),
+	m_FontImageID(0),
+	m_WinWidth(0),
+	m_WinHeight(0),
+	m_DevicePixelRatio(1.0f),
+	m_TesselationTolerance(1.0f),
+	m_FringeWidth(1.0f),
+	m_ViewID(viewID),
+	m_ForceNewDrawCommand(false),
+	m_NextFontID(0)
+{
+	for (uint32_t i = 0; i < MAX_FONT_IMAGES; ++i) {
+		m_FontImages[i] = BGFX_INVALID_HANDLE;
+	}
+
+	for (uint32_t i = 0; i < DrawCommand::NumTypes; ++i) {
+		m_ProgramHandle[i] = BGFX_INVALID_HANDLE;
+	}
+
+	m_TexUniform = BGFX_INVALID_HANDLE;
+	m_PaintMatUniform = BGFX_INVALID_HANDLE;
+	m_ExtentRadiusFeatherUniform = BGFX_INVALID_HANDLE;
+	m_InnerColorUniform = BGFX_INVALID_HANDLE;
+	m_OuterColorUniform = BGFX_INVALID_HANDLE;
+
+	memset(m_FontData, 0, sizeof(void*) * MAX_FONTS);
+}
+
+Context::~Context()
+{
+	for (uint32_t i = 0; i < DrawCommand::NumTypes; ++i) {
+		if (bgfx::isValid(m_ProgramHandle[i])) {
+			bgfx::destroyProgram(m_ProgramHandle[i]);
+		}
+	}
+
+	bgfx::destroyUniform(m_TexUniform);
+	bgfx::destroyUniform(m_PaintMatUniform);
+	bgfx::destroyUniform(m_ExtentRadiusFeatherUniform);
+	bgfx::destroyUniform(m_InnerColorUniform);
+	bgfx::destroyUniform(m_OuterColorUniform);
+
+	for (uint32_t i = 0; i < m_VertexBufferCapacity; ++i) {
+		if (bgfx::isValid(m_VertexBuffers[i].m_bgfxHandle)) {
+			bgfx::destroyDynamicVertexBuffer(m_VertexBuffers[i].m_bgfxHandle);
+		}
+	}
+	BX_FREE(m_Allocator, m_VertexBuffers);
+
+	for (uint32_t i = 0; i < m_VBDataPoolCapacity; ++i) {
+		DrawVertex* buffer = m_VBDataPool[i];
+		if (!buffer) {
+			continue;
+		}
+
+		if ((uintptr_t)buffer & 1) {
+			buffer = (DrawVertex*)((uintptr_t)buffer & ~1);
+			BX_FREE(m_Allocator, buffer);
+		}
+	}
+	BX_FREE(m_Allocator, m_VBDataPool);
+
+	BX_FREE(m_Allocator, m_DrawCommands);
+
+	// Manually delete font data
+	for (int i = 0; i < MAX_FONTS; ++i) {
+		if (m_FontData[i]) {
+			BX_FREE(m_Allocator, m_FontData[i]);
+		}
+	}
+
+	fonsDeleteInternal(m_FontStashContext);
+
+	for (uint32_t i = 0; i < MAX_FONT_IMAGES; ++i) {
+		deleteImage(m_FontImages[i]);
+	}
+
+	BX_FREE(m_Allocator, m_SubPaths);
+	BX_DELETE(m_Allocator, m_IndexBuffer);
+
+	BX_FREE(m_Allocator, m_Images);
+
+	BX_ALIGNED_FREE(m_Allocator, m_TextQuads, 16);
+	BX_ALIGNED_FREE(m_Allocator, m_TextVertices, 16);
+	BX_ALIGNED_FREE(m_Allocator, m_PathVertices, 16);
+#if BATCH_TRANSFORM
+	BX_ALIGNED_FREE(m_Allocator, m_TransformedPathVertices, 16);
+#endif
+#if BATCH_PATH_DIRECTIONS
+	BX_ALIGNED_FREE(m_Allocator, m_PathDirections, 16);
+#endif
+}
+
+bool Context::init()
+{
+	m_DevicePixelRatio = 1.0f;
+	m_TesselationTolerance = 0.25f;
+	m_FringeWidth = 1.0f;
+	m_CurStateID = 0;
+	m_StateStack[0].m_GlobalAlpha = 1.0f;
+	resetScissor();
+	transformIdentity();
+
+	m_SubPathCapacity = 16;
+	m_SubPaths = (SubPath*)BX_ALLOC(m_Allocator, sizeof(SubPath) * m_SubPathCapacity);
+
+	m_IndexBuffer = BX_NEW(m_Allocator, IndexBuffer)();
+
+	m_DrawVertexDecl.begin()
 		.add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
 		.add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
 		.add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
 		.end();
 
 	bgfx::RendererType::Enum bgfxRendererType = bgfx::getRendererType();
-	m_Context->m_ProgramHandle[DrawCommand::Type_TexturedVertexColor] =
+	m_ProgramHandle[DrawCommand::Type_TexturedVertexColor] =
 		bgfx::createProgram(
-			bgfx::createEmbeddedShader(s_EmbeddedShaders, bgfxRendererType, "vs_solid_color"), 
-			bgfx::createEmbeddedShader(s_EmbeddedShaders, bgfxRendererType, "fs_solid_color"),
-			true);
+		bgfx::createEmbeddedShader(s_EmbeddedShaders, bgfxRendererType, "vs_solid_color"),
+		bgfx::createEmbeddedShader(s_EmbeddedShaders, bgfxRendererType, "fs_solid_color"),
+		true);
 
-	m_Context->m_ProgramHandle[DrawCommand::Type_ColorGradient] =
+	m_ProgramHandle[DrawCommand::Type_ColorGradient] =
 		bgfx::createProgram(
-			bgfx::createEmbeddedShader(s_EmbeddedShaders, bgfxRendererType, "vs_gradient"), 
-			bgfx::createEmbeddedShader(s_EmbeddedShaders, bgfxRendererType, "fs_gradient"),
-			true);
+		bgfx::createEmbeddedShader(s_EmbeddedShaders, bgfxRendererType, "vs_gradient"),
+		bgfx::createEmbeddedShader(s_EmbeddedShaders, bgfxRendererType, "fs_gradient"),
+		true);
 
-	m_Context->m_TexUniform = bgfx::createUniform("s_tex", bgfx::UniformType::Int1, 1);
-	m_Context->m_PaintMatUniform = bgfx::createUniform("u_paintMat", bgfx::UniformType::Mat3, 1);
-	m_Context->m_ExtentRadiusFeatherUniform = bgfx::createUniform("u_extentRadiusFeather", bgfx::UniformType::Vec4, 1);
-	m_Context->m_InnerColorUniform = bgfx::createUniform("u_innerCol", bgfx::UniformType::Vec4, 1);
-	m_Context->m_OuterColorUniform = bgfx::createUniform("u_outerCol", bgfx::UniformType::Vec4, 1);
+	m_TexUniform = bgfx::createUniform("s_tex", bgfx::UniformType::Int1, 1);
+	m_PaintMatUniform = bgfx::createUniform("u_paintMat", bgfx::UniformType::Mat3, 1);
+	m_ExtentRadiusFeatherUniform = bgfx::createUniform("u_extentRadiusFeather", bgfx::UniformType::Vec4, 1);
+	m_InnerColorUniform = bgfx::createUniform("u_innerCol", bgfx::UniformType::Vec4, 1);
+	m_OuterColorUniform = bgfx::createUniform("u_outerCol", bgfx::UniformType::Vec4, 1);
 
 	// Init font stash
 	FONSparams fontParams;
@@ -675,64 +954,63 @@ bool BGFXVGRenderer::init(uint8_t viewID, bx::AllocatorI* allocator)
 	fontParams.renderDraw = nullptr;
 	fontParams.renderDelete = nullptr;
 	fontParams.userPtr = nullptr;
-	m_Context->m_FontStashContext = fonsCreateInternal(&fontParams);
-	if (!m_Context->m_FontStashContext) {
+	m_FontStashContext = fonsCreateInternal(&fontParams);
+	if (!m_FontStashContext) {
 		return false;
 	}
 
-	m_Context->m_FontImages[0] = m_Context->createImageRGBA(fontParams.width, fontParams.height, ImageFlags::Filter_Bilinear, nullptr);
-	if (!isValid(m_Context->m_FontImages[0])) {
+	m_FontImages[0] = createImageRGBA(fontParams.width, fontParams.height, ImageFlags::Filter_Bilinear, nullptr);
+	if (!isValid(m_FontImages[0])) {
 		return false;
 	}
-	m_Context->m_FontImageID = 0;
+	m_FontImageID = 0;
 
 	return true;
 }
 
-void BGFXVGRenderer::BeginFrame(uint32_t windowWidth, uint32_t windowHeight, float devicePixelRatio)
+void Context::beginFrame(uint32_t windowWidth, uint32_t windowHeight, float devicePixelRatio)
 {
 	assert(windowWidth > 0 && windowWidth < 65536);
 	assert(windowHeight > 0 && windowHeight < 65536);
-	m_Context->m_WinWidth = (uint16_t)windowWidth;
-	m_Context->m_WinHeight = (uint16_t)windowHeight;
-	m_Context->m_DevicePixelRatio = devicePixelRatio;
-	m_Context->m_TesselationTolerance = 0.25f / devicePixelRatio;
-	m_Context->m_FringeWidth = 1.0f / devicePixelRatio;
+	m_WinWidth = (uint16_t)windowWidth;
+	m_WinHeight = (uint16_t)windowHeight;
+	m_DevicePixelRatio = devicePixelRatio;
+	m_TesselationTolerance = 0.25f / devicePixelRatio;
+	m_FringeWidth = 1.0f / devicePixelRatio;
 
-	assert(m_Context->m_CurStateID == 0);
-	ResetScissor();
-	LoadIdentity();
+	assert(m_CurStateID == 0);
+	resetScissor();
+	transformIdentity();
 
-	m_Context->m_NumVertexBuffers = 0;
-	m_Context->allocVertexBuffer();
+	m_NumVertexBuffers = 0;
+	allocVertexBuffer();
 
-	m_Context->m_IndexBuffer->reset();
-	m_Context->m_NumDrawCommands = 0;
-	m_Context->m_ForceNewDrawCommand = true;
+	m_IndexBuffer->reset();
+	m_NumDrawCommands = 0;
+	m_ForceNewDrawCommand = true;
 
-	m_Context->m_NextGradientID = 0;
-	m_Context->m_NextImagePatternID = 0;
+	m_NextGradientID = 0;
+	m_NextImagePatternID = 0;
 }
 
-void BGFXVGRenderer::EndFrame()
+void Context::endFrame()
 {
-	assert(m_Context->m_CurStateID == 0);
-
-	if (m_Context->m_NumDrawCommands == 0) {
+	assert(m_CurStateID == 0);
+	if (m_NumDrawCommands == 0) {
 		return;
 	}
 
-	m_Context->flushTextAtlasTexture();
+	flushTextAtlasTexture();
 
 	// Update bgfx vertex buffers...
-	for (uint32_t iVB = 0; iVB < m_Context->m_NumVertexBuffers; ++iVB) {
-		VertexBuffer* vb = &m_Context->m_VertexBuffers[iVB];
+	for (uint32_t iVB = 0; iVB < m_NumVertexBuffers; ++iVB) {
+		VertexBuffer* vb = &m_VertexBuffers[iVB];
 
 		if (!bgfx::isValid(vb->m_bgfxHandle)) {
-			vb->m_bgfxHandle = bgfx::createDynamicVertexBuffer(MAX_VB_VERTICES, m_Context->m_DrawVertexDecl, 0);
+			vb->m_bgfxHandle = bgfx::createDynamicVertexBuffer(MAX_VB_VERTICES, m_DrawVertexDecl, 0);
 		}
 
-		const bgfx::Memory* mem = bgfx::makeRef(vb->m_Vertices, sizeof(DrawVertex) * vb->m_Count, releaseVertexBufferData, m_Context);
+		const bgfx::Memory* mem = bgfx::makeRef(vb->m_Vertices, sizeof(DrawVertex) * vb->m_Count, releaseVertexBufferDataCallback, this);
 		bgfx::updateDynamicVertexBuffer(vb->m_bgfxHandle, 0, mem);
 
 		// Null out the buffer. Will be allocated again from the pool on the next frame.
@@ -741,29 +1019,29 @@ void BGFXVGRenderer::EndFrame()
 
 	// Update bgfx index buffer...
 	bgfx::TransientIndexBuffer tib;
-	uint32_t totalIndices = bgfx::getAvailTransientIndexBuffer(m_Context->m_IndexBuffer->m_Count);
-	assert(totalIndices == m_Context->m_IndexBuffer->m_Count);
+	uint32_t totalIndices = bgfx::getAvailTransientIndexBuffer(m_IndexBuffer->m_Count);
+	assert(totalIndices == m_IndexBuffer->m_Count);
 	bgfx::allocTransientIndexBuffer(&tib, totalIndices);
-	memcpy(tib.data, &m_Context->m_IndexBuffer->m_Indices[0], sizeof(uint16_t) * totalIndices);
+	memcpy(tib.data, &m_IndexBuffer->m_Indices[0], sizeof(uint16_t) * totalIndices);
 
 	float viewMtx[16];
 	float projMtx[16];
 	bx::mtxIdentity(viewMtx);
-	bx::mtxOrtho(projMtx, 0.0f, m_Context->m_WinWidth, m_Context->m_WinHeight, 0.0f, 0.0f, 1.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
-	bgfx::setViewTransform(m_Context->m_ViewID, viewMtx, projMtx);
+	bx::mtxOrtho(projMtx, 0.0f, m_WinWidth, m_WinHeight, 0.0f, 0.0f, 1.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
+	bgfx::setViewTransform(m_ViewID, viewMtx, projMtx);
 
-	const uint32_t numCommands = m_Context->m_NumDrawCommands;
+	const uint32_t numCommands = m_NumDrawCommands;
 	for (uint32_t iCmd = 0; iCmd < numCommands; ++iCmd) {
-		DrawCommand* cmd = &m_Context->m_DrawCommands[iCmd];
+		DrawCommand* cmd = &m_DrawCommands[iCmd];
 
-		bgfx::setVertexBuffer(m_Context->m_VertexBuffers[cmd->m_VertexBufferID].m_bgfxHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
+		bgfx::setVertexBuffer(m_VertexBuffers[cmd->m_VertexBufferID].m_bgfxHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
 		bgfx::setIndexBuffer(&tib, cmd->m_FirstIndexID, cmd->m_NumIndices);
 		bgfx::setScissor((uint16_t)cmd->m_ScissorRect[0], (uint16_t)cmd->m_ScissorRect[1], (uint16_t)cmd->m_ScissorRect[2], (uint16_t)cmd->m_ScissorRect[3]);
 
 		if (cmd->m_Type == DrawCommand::Type_TexturedVertexColor) {
 			assert(isValid(cmd->m_ImageHandle));
-			Image* tex = &m_Context->m_Images[cmd->m_ImageHandle.idx];
-			bgfx::setTexture(0, m_Context->m_TexUniform, tex->m_bgfxHandle, tex->m_Flags);
+			Image* tex = &m_Images[cmd->m_ImageHandle.idx];
+			bgfx::setTexture(0, m_TexUniform, tex->m_bgfxHandle, tex->m_Flags);
 
 			int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
 			bgfx::setState(
@@ -771,15 +1049,15 @@ void BGFXVGRenderer::EndFrame()
 				BGFX_STATE_RGB_WRITE |
 				BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
 
-			bgfx::submit(m_Context->m_ViewID, m_Context->m_ProgramHandle[DrawCommand::Type_TexturedVertexColor], cmdDepth, false);
+			bgfx::submit(m_ViewID, m_ProgramHandle[DrawCommand::Type_TexturedVertexColor], cmdDepth, false);
 		} else if (cmd->m_Type == DrawCommand::Type_ColorGradient) {
 			assert(isValid(cmd->m_GradientHandle));
-			Gradient* grad = &m_Context->m_Gradients[cmd->m_GradientHandle.idx];
+			Gradient* grad = &m_Gradients[cmd->m_GradientHandle.idx];
 
-			bgfx::setUniform(m_Context->m_PaintMatUniform, grad->m_Matrix, 1);
-			bgfx::setUniform(m_Context->m_ExtentRadiusFeatherUniform, grad->m_Params, 1);
-			bgfx::setUniform(m_Context->m_InnerColorUniform, grad->m_InnerColor, 1);
-			bgfx::setUniform(m_Context->m_OuterColorUniform, grad->m_OuterColor, 1);
+			bgfx::setUniform(m_PaintMatUniform, grad->m_Matrix, 1);
+			bgfx::setUniform(m_ExtentRadiusFeatherUniform, grad->m_Params, 1);
+			bgfx::setUniform(m_InnerColorUniform, grad->m_InnerColor, 1);
+			bgfx::setUniform(m_OuterColorUniform, grad->m_OuterColor, 1);
 
 			int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
 			bgfx::setState(
@@ -787,104 +1065,104 @@ void BGFXVGRenderer::EndFrame()
 				BGFX_STATE_RGB_WRITE |
 				BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
 
-			bgfx::submit(m_Context->m_ViewID, m_Context->m_ProgramHandle[DrawCommand::Type_ColorGradient], cmdDepth, false);
+			bgfx::submit(m_ViewID, m_ProgramHandle[DrawCommand::Type_ColorGradient], cmdDepth, false);
 		} else {
 			assert(false);
 		}
 	}
 
 	// nvgEndFrame
-	if (m_Context->m_FontImageID != 0) {
-		ImageHandle fontImage = m_Context->m_FontImages[m_Context->m_FontImageID];
+	if (m_FontImageID != 0) {
+		ImageHandle fontImage = m_FontImages[m_FontImageID];
 
 		// delete images that smaller than current one
 		if (isValid(fontImage)) {
 			int iw, ih;
-			GetImageSize(fontImage, &iw, &ih);
+			getImageSize(fontImage, &iw, &ih);
 
 			int j = 0;
-			for (int i = 0; i < m_Context->m_FontImageID; i++) {
-				if (isValid(m_Context->m_FontImages[i])) {
+			for (int i = 0; i < m_FontImageID; i++) {
+				if (isValid(m_FontImages[i])) {
 					int nw, nh;
-					GetImageSize(m_Context->m_FontImages[i], &nw, &nh);
+					getImageSize(m_FontImages[i], &nw, &nh);
 
 					if (nw < iw || nh < ih) {
-						DeleteImage(m_Context->m_FontImages[i]);
+						deleteImage(m_FontImages[i]);
 					} else {
-						m_Context->m_FontImages[j++] = m_Context->m_FontImages[i];
+						m_FontImages[j++] = m_FontImages[i];
 					}
 				}
 			}
 
 			// make current font image to first
-			m_Context->m_FontImages[j++] = m_Context->m_FontImages[0];
-			m_Context->m_FontImages[0] = fontImage;
-			m_Context->m_FontImageID = 0;
+			m_FontImages[j++] = m_FontImages[0];
+			m_FontImages[0] = fontImage;
+			m_FontImageID = 0;
 
 			// clear all images after j
 			for (int i = j; i < MAX_FONT_IMAGES; i++) {
-				m_Context->m_FontImages[i] = BGFX_INVALID_HANDLE;
+				m_FontImages[i] = BGFX_INVALID_HANDLE;
 			}
 		}
 	}
 }
 
-void BGFXVGRenderer::BeginPath()
+void Context::beginPath()
 {
-	m_Context->m_NumSubPaths = 0;
-	m_Context->m_NumPathVertices = 0;
-	m_Context->m_SubPaths[0].m_IsClosed = false;
-	m_Context->m_SubPaths[0].m_NumVertices = 0;
-	m_Context->m_SubPaths[0].m_FirstVertexID = 0;
+	m_NumSubPaths = 0;
+	m_NumPathVertices = 0;
+	m_SubPaths[0].m_IsClosed = false;
+	m_SubPaths[0].m_NumVertices = 0;
+	m_SubPaths[0].m_FirstVertexID = 0;
 #if BATCH_TRANSFORM
-	m_Context->m_PathVerticesTransformed = false;
+	m_PathVerticesTransformed = false;
 #endif
 }
 
-void BGFXVGRenderer::MoveTo(float x, float y)
+void Context::moveTo(float x, float y)
 {
-	SubPath* path = m_Context->getSubPath();
+	SubPath* path = getSubPath();
 	if (!path || path->m_NumVertices > 0) {
-		assert(!path || (path && m_Context->m_NumPathVertices > 0));
+		assert(!path || (path && m_NumPathVertices > 0));
 
 		// Move on to the next sub path.
-		if (m_Context->m_NumSubPaths + 1 > m_Context->m_SubPathCapacity) {
-			m_Context->m_SubPathCapacity += 16;
-			m_Context->m_SubPaths = (SubPath*)BX_REALLOC(m_Context->m_Allocator, m_Context->m_SubPaths, sizeof(SubPath) * m_Context->m_SubPathCapacity);
+		if (m_NumSubPaths + 1 > m_SubPathCapacity) {
+			m_SubPathCapacity += 16;
+			m_SubPaths = (SubPath*)BX_REALLOC(m_Allocator, m_SubPaths, sizeof(SubPath) * m_SubPathCapacity);
 		}
-		m_Context->m_NumSubPaths++;
+		m_NumSubPaths++;
 
-		path = m_Context->getSubPath();
+		path = getSubPath();
 		path->m_IsClosed = false;
 		path->m_NumVertices = 0;
-		path->m_FirstVertexID = m_Context->m_NumPathVertices;
+		path->m_FirstVertexID = m_NumPathVertices;
 	}
 
 #if BATCH_TRANSFORM
-	m_Context->addPathVertex(Vec2(x, y));
+	addPathVertex(Vec2(x, y));
 #else
-	m_Context->addPathVertex(transformPos2D(x, y, m_Context->getState()->m_TransformMtx));
+	addPathVertex(transformPos2D(x, y, getState()->m_TransformMtx));
 #endif
 }
 
-void BGFXVGRenderer::LineTo(float x, float y)
+void Context::lineTo(float x, float y)
 {
-	assert(m_Context->getSubPath()->m_NumVertices > 0);
+	assert(getSubPath()->m_NumVertices > 0);
 #if BATCH_TRANSFORM
-	m_Context->addPathVertex(Vec2(x, y));
+	addPathVertex(Vec2(x, y));
 #else
-	m_Context->addPathVertex(transformPos2D(x, y, m_Context->getState()->m_TransformMtx));
+	addPathVertex(transformPos2D(x, y, getState()->m_TransformMtx));
 #endif
 }
 
-void BGFXVGRenderer::BezierTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
+void Context::bezierTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
 {
-	State* state = m_Context->getState();
-	SubPath* path = m_Context->getSubPath();
+	const State* state = getState();
+	const SubPath* path = getSubPath();
 	assert(path->m_NumVertices > 0);
 
 #if BATCH_TRANSFORM
-	const Vec2* lastVertex = &m_Context->m_PathVertices[path->m_FirstVertexID + path->m_NumVertices - 1];
+	const Vec2* lastVertex = &m_PathVertices[path->m_FirstVertexID + path->m_NumVertices - 1];
 	float x1 = lastVertex->x;
 	float y1 = lastVertex->y;
 	float x2 = c1x;
@@ -895,14 +1173,14 @@ void BGFXVGRenderer::BezierTo(float c1x, float c1y, float c2x, float c2y, float 
 	float y4 = y;
 
 	const float avgScale = state->m_AvgScale;
-	const float tessTol = m_Context->m_TesselationTolerance / (avgScale * avgScale);
+	const float tessTol = m_TesselationTolerance / (avgScale * avgScale);
 #else
 	const float* mtx = state->m_TransformMtx;
 	Vec2 p2 = transformPos2D(c1x, c1y, mtx);
 	Vec2 p3 = transformPos2D(c2x, c2y, mtx);
 	Vec2 p4 = transformPos2D(x, y, mtx);
 
-	const Vec2* lastVertex = &m_Context->m_PathVertices[path->m_FirstVertexID + path->m_NumVertices - 1];
+	const Vec2* lastVertex = &m_PathVertices[path->m_FirstVertexID + path->m_NumVertices - 1];
 	float x1 = lastVertex->x;
 	float y1 = lastVertex->y;
 	float x2 = p2.x;
@@ -912,7 +1190,7 @@ void BGFXVGRenderer::BezierTo(float c1x, float c1y, float c2x, float c2y, float 
 	float x4 = p4.x;
 	float y4 = p4.y;
 
-	const float tessTol = m_Context->m_TesselationTolerance;
+	const float tessTol = m_TesselationTolerance;
 #endif
 
 	const int MAX_LEVELS = 10;
@@ -925,7 +1203,7 @@ void BGFXVGRenderer::BezierTo(float c1x, float c1y, float c2x, float c2y, float 
 		float d3 = fabsf(((x3 - x4) * dy - (y3 - y4) * dx));
 
 		if ((d2 + d3) * (d2 + d3) <= tessTol * (dx * dx + dy * dy)) {
-			m_Context->addPathVertex(Vec2(x4, y4));
+			addPathVertex(Vec2(x4, y4));
 
 			// Pop sibling off the stack and decrease level...
 			if (stackPtr == stack) {
@@ -989,13 +1267,13 @@ void BGFXVGRenderer::BezierTo(float c1x, float c1y, float c2x, float c2y, float 
 	}
 }
 
-void BGFXVGRenderer::ArcTo(float x1, float y1, float x2, float y2, float radius)
+void Context::arcTo(float x1, float y1, float x2, float y2, float radius)
 {
 	BX_UNUSED(x1, y1, x2, y2, radius);
 	assert(false); // NOT USED
 }
 
-void BGFXVGRenderer::Rect(float x, float y, float w, float h)
+void Context::rect(float x, float y, float w, float h)
 {
 	if (fabsf(w) < 1e-5f || fabsf(h) < 1e-5f) {
 		return;
@@ -1003,43 +1281,43 @@ void BGFXVGRenderer::Rect(float x, float y, float w, float h)
 
 	// nvgRect
 	// CCW order
-	MoveTo(x, y);
-	LineTo(x, y + h);
-	LineTo(x + w, y + h);
-	LineTo(x + w, y);
-	ClosePath();
+	moveTo(x, y);
+	lineTo(x, y + h);
+	lineTo(x + w, y + h);
+	lineTo(x + w, y);
+	closePath();
 }
 
-void BGFXVGRenderer::RoundedRect(float x, float y, float w, float h, float r)
+void Context::roundedRect(float x, float y, float w, float h, float r)
 {
 	// nvgRoundedRect
 	if (r < 0.1f) {
-		Rect(x, y, w, h);
+		rect(x, y, w, h);
 	} else {
 		float rx = min2(r, fabsf(w) * 0.5f) * sign(w);
 		float ry = min2(r, fabsf(h) * 0.5f) * sign(h);
 
 #if BEZIER_CIRCLE
-		MoveTo(x, y + ry);
-		LineTo(x, y + h - ry);
-		BezierTo(x, y + h - ry*(1 - NVG_KAPPA90), x + rx*(1 - NVG_KAPPA90), y + h, x + rx, y + h);
-		LineTo(x + w - rx, y + h);
-		BezierTo(x + w - rx*(1 - NVG_KAPPA90), y + h, x + w, y + h - ry*(1 - NVG_KAPPA90), x + w, y + h - ry);
-		LineTo(x + w, y + ry);
-		BezierTo(x + w, y + ry*(1 - NVG_KAPPA90), x + w - rx*(1 - NVG_KAPPA90), y, x + w - rx, y);
-		LineTo(x + rx, y);
-		BezierTo(x + rx*(1 - NVG_KAPPA90), y, x, y + ry*(1 - NVG_KAPPA90), x, y + ry);
-		ClosePath();
+		moveTo(x, y + ry);
+		lineTo(x, y + h - ry);
+		bezierTo(x, y + h - ry*(1 - NVG_KAPPA90), x + rx*(1 - NVG_KAPPA90), y + h, x + rx, y + h);
+		lineTo(x + w - rx, y + h);
+		bezierTo(x + w - rx*(1 - NVG_KAPPA90), y + h, x + w, y + h - ry*(1 - NVG_KAPPA90), x + w, y + h - ry);
+		lineTo(x + w, y + ry);
+		bezierTo(x + w, y + ry*(1 - NVG_KAPPA90), x + w - rx*(1 - NVG_KAPPA90), y, x + w - rx, y);
+		lineTo(x + rx, y);
+		bezierTo(x + rx*(1 - NVG_KAPPA90), y, x, y + ry*(1 - NVG_KAPPA90), x, y + ry);
+		closePath();
 #else
 		r = min2(rx, ry);
 
-		State* state = m_Context->getState();
+		const State* state = getState();
 
 		const float scale = state->m_AvgScale;
 #if APPROXIMATE_MATH
-		const float da = approxAcos((scale * r) / ((scale * r) + m_Context->m_TesselationTolerance)) * 2.0f;
+		const float da = approxAcos((scale * r) / ((scale * r) + m_TesselationTolerance)) * 2.0f;
 #else
-		const float da = acos((scale * r) / ((scale * r) + m_Context->m_TesselationTolerance)) * 2.0f;
+		const float da = acos((scale * r) / ((scale * r) + m_TesselationTolerance)) * 2.0f;
 #endif
 #if !BATCH_TRANSFORM
 		const float* mtx = state->m_TransformMtx;
@@ -1047,26 +1325,21 @@ void BGFXVGRenderer::RoundedRect(float x, float y, float w, float h, float r)
 		const uint32_t numPointsHalfCircle = max2(2, (int)ceilf(PI / da));
 		const uint32_t numPointsQuarterCircle = (numPointsHalfCircle >> 1) + 1;
 
-		MoveTo(x, y + ry);
-		LineTo(x, y + h - ry);
+		moveTo(x, y + ry);
+		lineTo(x, y + h - ry);
 
-		SubPath* path = m_Context->getSubPath();
+		SubPath* path = getSubPath();
 
 		// Bottom left quarter circle
 		{
 			float cx = x + rx;
 			float cy = y + h - ry;
-			Vec2* circleVertices = m_Context->allocPathVertices(numPointsQuarterCircle - 1);
+			Vec2* circleVertices = allocPathVertices(numPointsQuarterCircle - 1);
 			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
 				const float a = -PI - (PI * 0.5f) * ((float)i / (float)(numPointsQuarterCircle - 1));
 
-#if APPROXIMATE_MATH
-				const float ca = approxCos(a);
-				const float sa = approxSin(a);
-#else
-				const float ca = cosf(a);
-				const float sa = sinf(a);
-#endif
+				float ca, sa;
+				sincos(a, ca, sa);
 
 #if BATCH_TRANSFORM
 				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
@@ -1077,23 +1350,18 @@ void BGFXVGRenderer::RoundedRect(float x, float y, float w, float h, float r)
 			path->m_NumVertices += (numPointsQuarterCircle - 1);
 		}
 
-		LineTo(x + w - rx, y + h);
+		lineTo(x + w - rx, y + h);
 
 		// Bottom right quarter circle
 		{
 			float cx = x + w - rx;
 			float cy = y + h - ry;
-			Vec2* circleVertices = m_Context->allocPathVertices(numPointsQuarterCircle - 1);
+			Vec2* circleVertices = allocPathVertices(numPointsQuarterCircle - 1);
 			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
 				const float a = -1.5f * PI - (PI * 0.5f) * ((float)i / (float)(numPointsQuarterCircle - 1));
 
-#if APPROXIMATE_MATH
-				const float ca = approxCos(a);
-				const float sa = approxSin(a);
-#else
-				const float ca = cosf(a);
-				const float sa = sinf(a);
-#endif
+				float ca, sa;
+				sincos(a, ca, sa);
 
 #if BATCH_TRANSFORM
 				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
@@ -1104,23 +1372,18 @@ void BGFXVGRenderer::RoundedRect(float x, float y, float w, float h, float r)
 			path->m_NumVertices += (numPointsQuarterCircle - 1);
 		}
 
-		LineTo(x + w, y + ry);
+		lineTo(x + w, y + ry);
 
 		// Top right quarter circle
 		{
 			float cx = x + w - rx;
 			float cy = y + ry;
-			Vec2* circleVertices = m_Context->allocPathVertices(numPointsQuarterCircle - 1);
+			Vec2* circleVertices = allocPathVertices(numPointsQuarterCircle - 1);
 			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
 				const float a = -(PI * 0.5f) * ((float)i / (float)(numPointsQuarterCircle - 1));
 
-#if APPROXIMATE_MATH
-				const float ca = approxCos(a);
-				const float sa = approxSin(a);
-#else
-				const float ca = cosf(a);
-				const float sa = sinf(a);
-#endif
+				float ca, sa;
+				sincos(a, ca, sa);
 
 #if BATCH_TRANSFORM
 				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
@@ -1131,23 +1394,18 @@ void BGFXVGRenderer::RoundedRect(float x, float y, float w, float h, float r)
 			path->m_NumVertices += (numPointsQuarterCircle - 1);
 		}
 
-		LineTo(x + rx, y);
+		lineTo(x + rx, y);
 
 		// Top left quarter circle
 		{
 			float cx = x + rx;
 			float cy = y + ry;
-			Vec2* circleVertices = m_Context->allocPathVertices(numPointsQuarterCircle - 1);
+			Vec2* circleVertices = allocPathVertices(numPointsQuarterCircle - 1);
 			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
 				const float a = -PI * 0.5f - (PI * 0.5f) * ((float)i / (float)(numPointsQuarterCircle - 1));
 
-#if APPROXIMATE_MATH
-				const float ca = approxCos(a);
-				const float sa = approxSin(a);
-#else
-				const float ca = cosf(a);
-				const float sa = sinf(a);
-#endif
+				float ca, sa;
+				sincos(a, ca, sa);
 
 #if BATCH_TRANSFORM
 				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
@@ -1158,57 +1416,49 @@ void BGFXVGRenderer::RoundedRect(float x, float y, float w, float h, float r)
 			path->m_NumVertices += (numPointsQuarterCircle - 1);
 		}
 
-		ClosePath();
+		closePath();
 #endif
 	}
 }
 
-void BGFXVGRenderer::Circle(float cx, float cy, float r)
+void Context::circle(float cx, float cy, float r)
 {
 #if BEZIER_CIRCLE
-	// TODO: This ends up appearing in the profiler because we are rendering many component pins. 
-	// Check if it'd be better to draw a circle directly and somehow calculate the number of segments based on current 
-	// scale.
-	// 
 	// nvgEllipse with both radii equal to r
 	// See: http://spencermortensen.com/articles/bezier-circle/
-	MoveTo(cx - r, cy);
-	BezierTo(cx - r, cy + r * NVG_KAPPA90, cx - r * NVG_KAPPA90, cy + r, cx, cy + r);
-	BezierTo(cx + r * NVG_KAPPA90, cy + r, cx + r, cy + r * NVG_KAPPA90, cx + r, cy);
-	BezierTo(cx + r, cy - r * NVG_KAPPA90, cx + r * NVG_KAPPA90, cy - r, cx, cy - r);
-	BezierTo(cx - r * NVG_KAPPA90, cy - r, cx - r, cy - r * NVG_KAPPA90, cx - r, cy);
-	ClosePath();
+	moveTo(cx - r, cy);
+	bezierTo(cx - r, cy + r * NVG_KAPPA90, cx - r * NVG_KAPPA90, cy + r, cx, cy + r);
+	bezierTo(cx + r * NVG_KAPPA90, cy + r, cx + r, cy + r * NVG_KAPPA90, cx + r, cy);
+	bezierTo(cx + r, cy - r * NVG_KAPPA90, cx + r * NVG_KAPPA90, cy - r, cx, cy - r);
+	bezierTo(cx - r * NVG_KAPPA90, cy - r, cx - r, cy - r * NVG_KAPPA90, cx - r, cy);
+	closePath();
 #else
-	// NOTE: It still appears in the profiler with a slightly lower percentage.
-	State* state = m_Context->getState();
+	const State* state = getState();
+	const float scale = state->m_AvgScale;
+
 #if !BATCH_TRANSFORM
 	const float* mtx = state->m_TransformMtx;
 #endif
-	const float scale = state->m_AvgScale;
-#if APPROXIMATE_MATH
-	const float da = approxAcos((scale * r) / ((scale * r) + m_Context->m_TesselationTolerance)) * 2.0f;
-#else
-	const float da = acos((scale * r) / ((scale * r) + m_Context->m_TesselationTolerance)) * 2.0f;
-#endif
-	const uint32_t numPointsHalfCircle = max2(2, (int)ceilf(PI / da));
 
+#if APPROXIMATE_MATH
+	const float da = approxAcos((scale * r) / ((scale * r) + m_TesselationTolerance)) * 2.0f;
+#else
+	const float da = acos((scale * r) / ((scale * r) + m_TesselationTolerance)) * 2.0f;
+#endif
+
+	const uint32_t numPointsHalfCircle = max2(2, (int)ceilf(PI / da));
 	const uint32_t numPoints = (numPointsHalfCircle * 2);
 
-	MoveTo(cx + r, cy);
+	moveTo(cx + r, cy);
 
 	// NOTE: Get the subpath after MoveTo() because MoveTo will handle the creation of the new subpath (if needed).
-	SubPath* path = m_Context->getSubPath();
-	Vec2* circleVertices = m_Context->allocPathVertices(numPoints - 1);
+	SubPath* path = getSubPath();
+	Vec2* circleVertices = allocPathVertices(numPoints - 1);
 	for (uint32_t i = 1; i < numPoints; ++i) {
 		const float a = (2.0f * PI) * (1.0f - (float)i / (float)numPoints);
-		
-#if APPROXIMATE_MATH
-		const float ca = approxCos(a);
-		const float sa = approxSin(a);
-#else
-		const float ca = cosf(a);
-		const float sa = sinf(a);
-#endif
+
+		float ca, sa;
+		sincos(a, ca, sa);
 
 #if BATCH_TRANSFORM
 		*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
@@ -1217,23 +1467,23 @@ void BGFXVGRenderer::Circle(float cx, float cy, float r)
 #endif
 	}
 	path->m_NumVertices += (numPoints - 1);
-	ClosePath();
+	closePath();
 #endif
 }
 
-void BGFXVGRenderer::ClosePath()
+void Context::closePath()
 {
-	SubPath* path = m_Context->getSubPath();
+	SubPath* path = getSubPath();
 	assert(!path->m_IsClosed);
 	assert(path->m_NumVertices > 2);
 	path->m_IsClosed = true;
 
-	const Vec2& first = m_Context->m_PathVertices[path->m_FirstVertexID];
-	const Vec2& last = m_Context->m_PathVertices[path->m_FirstVertexID + path->m_NumVertices - 1];
+	const Vec2& first = m_PathVertices[path->m_FirstVertexID];
+	const Vec2& last = m_PathVertices[path->m_FirstVertexID + path->m_NumVertices - 1];
 	Vec2 d = first - last;
 	if (d.dot(d) < 1e-5f) {
 		--path->m_NumVertices;
-		--m_Context->m_NumPathVertices;
+		--m_NumPathVertices;
 	}
 }
 
@@ -1392,154 +1642,154 @@ void transformPointsSSE(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p
 }
 #endif // BATCH_TRANSFORM
 
-void BGFXVGRenderer::FillConvexPath(Color col, bool aa)
+void Context::fillConvexPath(Color col, bool aa)
 {
 #if BATCH_TRANSFORM
-	if (!m_Context->m_PathVerticesTransformed) {
-		State* state = m_Context->getState();
-		transformPointsSSE(m_Context->m_PathVertices, m_Context->m_NumPathVertices, m_Context->m_TransformedPathVertices, state->m_TransformMtx);
-		m_Context->m_PathVerticesTransformed = true;
+	if (!m_PathVerticesTransformed) {
+		const State* state = getState();
+		transformPointsSSE(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
+		m_PathVerticesTransformed = true;
 	}
 
-	const Vec2* pathVertices = m_Context->m_TransformedPathVertices;
+	const Vec2* pathVertices = m_TransformedPathVertices;
 #else
-	const Vec2* pathVertices = m_Context->m_PathVertices;
+	const Vec2* pathVertices = m_PathVertices;
 #endif
 
-	const uint32_t numPaths = m_Context->m_NumSubPaths;
+	const uint32_t numPaths = m_NumSubPaths;
 	for (uint32_t iPath = 0; iPath < numPaths; ++iPath) {
-		const SubPath* path = &m_Context->m_SubPaths[iPath];
+		const SubPath* path = &m_SubPaths[iPath];
 		if (path->m_NumVertices < 3) {
 			continue;
 		}
 
 		if (aa) {
-			m_Context->renderConvexPolygonAA(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, col);
+			renderConvexPolygonAA(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, col);
 		} else {
-			m_Context->renderConvexPolygonNoAA(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, col);
+			renderConvexPolygonNoAA(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, col);
 		}
 	}
 }
 
-void BGFXVGRenderer::FillConvexPath(GradientHandle gradient, bool aa)
+void Context::fillConvexPath(GradientHandle gradient, bool aa)
 {
 #if BATCH_TRANSFORM
-	if (!m_Context->m_PathVerticesTransformed) {
-		State* state = m_Context->getState();
-		transformPointsSSE(m_Context->m_PathVertices, m_Context->m_NumPathVertices, m_Context->m_TransformedPathVertices, state->m_TransformMtx);
-		m_Context->m_PathVerticesTransformed = true;
+	if (!m_PathVerticesTransformed) {
+		const State* state = getState();
+		transformPointsSSE(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
+		m_PathVerticesTransformed = true;
 	}
 
-	const Vec2* pathVertices = m_Context->m_TransformedPathVertices;
+	const Vec2* pathVertices = m_TransformedPathVertices;
 #else
-	const Vec2* pathVertices = m_Context->m_PathVertices;
+	const Vec2* pathVertices = m_PathVertices;
 #endif
 
 	// TODO: Anti-aliasing of gradient-filled paths
 	BX_UNUSED(aa);
-	
-	const uint32_t numPaths = m_Context->m_NumSubPaths;
+
+	const uint32_t numPaths = m_NumSubPaths;
 	for (uint32_t iPath = 0; iPath < numPaths; ++iPath) {
-		const SubPath* path = &m_Context->m_SubPaths[iPath];
+		const SubPath* path = &m_SubPaths[iPath];
 		if (path->m_NumVertices < 3) {
 			continue;
 		}
 
-		m_Context->renderConvexPolygonNoAA(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, gradient);
+		renderConvexPolygonNoAA(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, gradient);
 	}
 }
 
-void BGFXVGRenderer::FillConvexPath(ImagePatternHandle img, bool aa)
+void Context::fillConvexPath(ImagePatternHandle img, bool aa)
 {
 #if BATCH_TRANSFORM
-	if (!m_Context->m_PathVerticesTransformed) {
-		State* state = m_Context->getState();
-		transformPointsSSE(m_Context->m_PathVertices, m_Context->m_NumPathVertices, m_Context->m_TransformedPathVertices, state->m_TransformMtx);
-		m_Context->m_PathVerticesTransformed = true;
+	if (!m_PathVerticesTransformed) {
+		const State* state = getState();
+		transformPointsSSE(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
+		m_PathVerticesTransformed = true;
 	}
 
-	const Vec2* pathVertices = m_Context->m_TransformedPathVertices;
+	const Vec2* pathVertices = m_TransformedPathVertices;
 #else
-	const Vec2* pathVertices = m_Context->m_PathVertices;
+	const Vec2* pathVertices = m_PathVertices;
 #endif
 
 	// TODO: Anti-aliasing of textured paths
 	BX_UNUSED(aa);
-	const uint32_t numPaths = m_Context->m_NumSubPaths;
+	const uint32_t numPaths = m_NumSubPaths;
 	for (uint32_t iPath = 0; iPath < numPaths; ++iPath) {
-		const SubPath* path = &m_Context->m_SubPaths[iPath];
+		const SubPath* path = &m_SubPaths[iPath];
 		if (path->m_NumVertices < 3) {
 			continue;
 		}
 
-		m_Context->renderConvexPolygonNoAA(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, img);
+		renderConvexPolygonNoAA(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, img);
 	}
 }
 
-void BGFXVGRenderer::FillConcavePath(Color col, bool aa)
+void Context::fillConcavePath(Color col, bool aa)
 {
 #if BATCH_TRANSFORM
-	if (!m_Context->m_PathVerticesTransformed) {
-		State* state = m_Context->getState();
-		transformPointsSSE(m_Context->m_PathVertices, m_Context->m_NumPathVertices, m_Context->m_TransformedPathVertices, state->m_TransformMtx);
-		m_Context->m_PathVerticesTransformed = true;
+	if (!m_PathVerticesTransformed) {
+		const State* state = getState();
+		transformPointsSSE(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
+		m_PathVerticesTransformed = true;
 	}
 
-	const Vec2* pathVertices = m_Context->m_TransformedPathVertices;
+	const Vec2* pathVertices = m_TransformedPathVertices;
 #else
-	const Vec2* pathVertices = m_Context->m_PathVertices;
+	const Vec2* pathVertices = m_PathVertices;
 #endif
 
-	const uint32_t numPaths = m_Context->m_NumSubPaths;
+	const uint32_t numPaths = m_NumSubPaths;
 	assert(numPaths == 1); // Only a single concave polygon can be decomposed at a time.
 
-	const SubPath* path = &m_Context->m_SubPaths[0];
+	const SubPath* path = &m_SubPaths[0];
 	if (path->m_NumVertices < 3) {
 		return;
 	}
 
-	m_Context->decomposeAndFillConcavePolygon(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, col, aa);
+	decomposeAndFillConcavePolygon(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, col, aa);
 }
 
-void BGFXVGRenderer::StrokePath(Color col, float width, bool aa, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
+void Context::strokePath(Color col, float width, bool aa, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
 {
 #if BATCH_TRANSFORM
-	if (!m_Context->m_PathVerticesTransformed) {
-		State* state = m_Context->getState();
-		transformPointsSSE(m_Context->m_PathVertices, m_Context->m_NumPathVertices, m_Context->m_TransformedPathVertices, state->m_TransformMtx);
-		m_Context->m_PathVerticesTransformed = true;
+	if (!m_PathVerticesTransformed) {
+		const State* state = getState();
+		transformPointsSSE(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
+		m_PathVerticesTransformed = true;
 	}
 
-	const Vec2* pathVertices = m_Context->m_TransformedPathVertices;
+	const Vec2* pathVertices = m_TransformedPathVertices;
 #else
-	const Vec2* pathVertices = m_Context->m_PathVertices;
+	const Vec2* pathVertices = m_PathVertices;
 #endif
 	
-	const uint32_t numPaths = m_Context->m_NumSubPaths;
+	const uint32_t numPaths = m_NumSubPaths;
 	for (uint32_t iSubPath = 0; iSubPath < numPaths; ++iSubPath) {
-		SubPath* path = &m_Context->m_SubPaths[iSubPath];
+		SubPath* path = &m_SubPaths[iSubPath];
 		if (path->m_NumVertices < 2) {
 			continue;
 		}
 
 		if (aa) {
-			m_Context->renderPathStrokeAA(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, path->m_IsClosed, width, col, lineCap, lineJoin);
+			renderPathStrokeAA(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, path->m_IsClosed, width, col, lineCap, lineJoin);
 		} else {
-			m_Context->renderPathStrokeNoAA(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, path->m_IsClosed, width, col, lineCap, lineJoin);
+			renderPathStrokeNoAA(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, path->m_IsClosed, width, col, lineCap, lineJoin);
 		}
 	}
 }
 
 // NOTE: In contrast to NanoVG these Gradients are State dependent (the current transformation matrix is baked in the Gradient matrix).
-GradientHandle BGFXVGRenderer::LinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol)
+GradientHandle Context::createLinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol)
 {
-	if (m_Context->m_NextGradientID >= MAX_GRADIENTS) {
+	if (m_NextGradientID >= MAX_GRADIENTS) {
 		return BGFX_INVALID_HANDLE;
 	}
 
-	GradientHandle handle = { (uint16_t)m_Context->m_NextGradientID++ };
+	GradientHandle handle = { (uint16_t)m_NextGradientID++ };
 
-	State* state = m_Context->getState();
+	const State* state = getState();
 
 	const float large = 1e5;
 	float dx = ex - sx;
@@ -1567,7 +1817,7 @@ GradientHandle BGFXVGRenderer::LinearGradient(float sx, float sy, float ex, floa
 	float inversePatternMatrix[6];
 	invertMatrix3(patternMatrix, inversePatternMatrix);
 
-	Gradient* grad = &m_Context->m_Gradients[handle.idx];
+	Gradient* grad = &m_Gradients[handle.idx];
 	grad->m_Matrix[0] = inversePatternMatrix[0];
 	grad->m_Matrix[1] = inversePatternMatrix[1];
 	grad->m_Matrix[2] = 0.0f;
@@ -1593,15 +1843,15 @@ GradientHandle BGFXVGRenderer::LinearGradient(float sx, float sy, float ex, floa
 	return handle;
 }
 
-GradientHandle BGFXVGRenderer::BoxGradient(float x, float y, float w, float h, float r, float f, Color icol, Color ocol)
+GradientHandle Context::createBoxGradient(float x, float y, float w, float h, float r, float f, Color icol, Color ocol)
 {
-	if (m_Context->m_NextGradientID >= MAX_GRADIENTS) {
+	if (m_NextGradientID >= MAX_GRADIENTS) {
 		return BGFX_INVALID_HANDLE;
 	}
 
-	GradientHandle handle = { (uint16_t)m_Context->m_NextGradientID++ };
+	GradientHandle handle = { (uint16_t)m_NextGradientID++ };
 
-	State* state = m_Context->getState();
+	const State* state = getState();
 
 	float gradientMatrix[6];
 	gradientMatrix[0] = 1.0f;
@@ -1617,7 +1867,7 @@ GradientHandle BGFXVGRenderer::BoxGradient(float x, float y, float w, float h, f
 	float inversePatternMatrix[6];
 	invertMatrix3(patternMatrix, inversePatternMatrix);
 
-	Gradient* grad = &m_Context->m_Gradients[handle.idx];
+	Gradient* grad = &m_Gradients[handle.idx];
 	grad->m_Matrix[0] = inversePatternMatrix[0];
 	grad->m_Matrix[1] = inversePatternMatrix[1];
 	grad->m_Matrix[2] = 0.0f;
@@ -1643,15 +1893,15 @@ GradientHandle BGFXVGRenderer::BoxGradient(float x, float y, float w, float h, f
 	return handle;
 }
 
-GradientHandle BGFXVGRenderer::RadialGradient(float cx, float cy, float inr, float outr, Color icol, Color ocol)
+GradientHandle Context::createRadialGradient(float cx, float cy, float inr, float outr, Color icol, Color ocol)
 {
-	if (m_Context->m_NextGradientID >= MAX_GRADIENTS) {
+	if (m_NextGradientID >= MAX_GRADIENTS) {
 		return BGFX_INVALID_HANDLE;
 	}
 
-	GradientHandle handle = { (uint16_t)m_Context->m_NextGradientID++ };
+	GradientHandle handle = { (uint16_t)m_NextGradientID++ };
 
-	State* state = m_Context->getState();
+	const State* state = getState();
 
 	float gradientMatrix[6];
 	gradientMatrix[0] = 1.0f;
@@ -1670,7 +1920,7 @@ GradientHandle BGFXVGRenderer::RadialGradient(float cx, float cy, float inr, flo
 	float r = (inr + outr) * 0.5f;
 	float f = (outr - inr);
 
-	Gradient* grad = &m_Context->m_Gradients[handle.idx];
+	Gradient* grad = &m_Gradients[handle.idx];
 	grad->m_Matrix[0] = inversePatternMatrix[0];
 	grad->m_Matrix[1] = inversePatternMatrix[1];
 	grad->m_Matrix[2] = 0.0f;
@@ -1696,15 +1946,15 @@ GradientHandle BGFXVGRenderer::RadialGradient(float cx, float cy, float inr, flo
 	return handle;
 }
 
-ImagePatternHandle BGFXVGRenderer::ImagePattern(float cx, float cy, float w, float h, float angle, ImageHandle image, float alpha)
+ImagePatternHandle Context::createImagePattern(float cx, float cy, float w, float h, float angle, ImageHandle image, float alpha)
 {
-	if (m_Context->m_NextImagePatternID >= MAX_IMAGE_PATTERNS) {
+	if (m_NextImagePatternID >= MAX_IMAGE_PATTERNS) {
 		return BGFX_INVALID_HANDLE;
 	}
 
-	ImagePatternHandle handle = { (uint16_t)m_Context->m_NextImagePatternID++ };
+	ImagePatternHandle handle = { (uint16_t)m_NextImagePatternID++ };
 
-	State* state = m_Context->getState();
+	const State* state = getState();
 
 	const float cs = cosf(angle);
 	const float sn = sinf(angle);
@@ -1730,7 +1980,7 @@ ImagePatternHandle BGFXVGRenderer::ImagePattern(float cx, float cy, float w, flo
 	inversePatternMatrix[4] /= w;
 	inversePatternMatrix[5] /= h;
 
-	vg::ImagePattern* pattern = &m_Context->m_ImagePatterns[handle.idx];
+	vg::ImagePattern* pattern = &m_ImagePatterns[handle.idx];
 	memcpy(pattern->m_Matrix, inversePatternMatrix, sizeof(float) * 6);
 	pattern->m_ImageHandle = image;
 	pattern->m_Alpha = alpha;
@@ -1738,62 +1988,40 @@ ImagePatternHandle BGFXVGRenderer::ImagePattern(float cx, float cy, float w, flo
 	return handle;
 }
 
-ImageHandle BGFXVGRenderer::CreateImageRGBA(int w, int h, uint32_t imageFlags, const uint8_t* data)
-{
-	return m_Context->createImageRGBA(w, h, imageFlags, data);
-}
-
-void BGFXVGRenderer::UpdateImage(ImageHandle image, const uint8_t* data)
-{
-	int w, h;
-	GetImageSize(image, &w, &h);
-	m_Context->updateImage(image, 0, 0, w, h, data);
-}
-
-void BGFXVGRenderer::GetImageSize(ImageHandle image, int* w, int* h)
-{
-	m_Context->getImageSize(image, w, h);
-}
-
-void BGFXVGRenderer::DeleteImage(ImageHandle image)
-{
-	m_Context->deleteImage(image);
-}
-
-bool BGFXVGRenderer::IsImageHandleValid(ImageHandle image)
+bool Context::isImageHandleValid(ImageHandle image)
 {
 	if (!isValid(image)) {
 		return false;
 	}
 
-	Image* tex = &m_Context->m_Images[image.idx];
+	Image* tex = &m_Images[image.idx];
 	return bgfx::isValid(tex->m_bgfxHandle);
 }
 
-void BGFXVGRenderer::PushState()
+void Context::pushState()
 {
-	assert(m_Context->m_CurStateID < MAX_STATE_STACK_SIZE - 1);
-	memcpy(&m_Context->m_StateStack[m_Context->m_CurStateID + 1], &m_Context->m_StateStack[m_Context->m_CurStateID], sizeof(State));
-	++m_Context->m_CurStateID;
+	assert(m_CurStateID < MAX_STATE_STACK_SIZE - 1);
+	memcpy(&m_StateStack[m_CurStateID + 1], &m_StateStack[m_CurStateID], sizeof(State));
+	++m_CurStateID;
 }
 
-void BGFXVGRenderer::PopState()
+void Context::popState()
 {
-	assert(m_Context->m_CurStateID > 0);
-	--m_Context->m_CurStateID;
+	assert(m_CurStateID > 0);
+	--m_CurStateID;
 }
 
-void BGFXVGRenderer::ResetScissor()
+void Context::resetScissor()
 {
-	State* state = m_Context->getState();
+	State* state = getState();
 	state->m_ScissorRect[0] = state->m_ScissorRect[1] = 0.0f;
-	state->m_ScissorRect[2] = (float)m_Context->m_WinWidth;
-	state->m_ScissorRect[3] = (float)m_Context->m_WinHeight;
+	state->m_ScissorRect[2] = (float)m_WinWidth;
+	state->m_ScissorRect[3] = (float)m_WinHeight;
 }
 
-void BGFXVGRenderer::Scissor(float x, float y, float w, float h)
+void Context::setScissor(float x, float y, float w, float h)
 {
-	State* state = m_Context->getState();
+	State* state = getState();
 	Vec2 pos = transformPos2D(x, y, state->m_TransformMtx);
 	Vec2 size = transformVec2D(w, h, state->m_TransformMtx);
 	state->m_ScissorRect[0] = pos.x;
@@ -1802,9 +2030,9 @@ void BGFXVGRenderer::Scissor(float x, float y, float w, float h)
 	state->m_ScissorRect[3] = size.y;
 }
 
-bool BGFXVGRenderer::IntersectScissor(float x, float y, float w, float h)
+bool Context::intersectScissor(float x, float y, float w, float h)
 {
-	State* state = m_Context->getState();
+	State* state = getState();
 	Vec2 pos = transformPos2D(x, y, state->m_TransformMtx);
 	Vec2 size = transformVec2D(w, h, state->m_TransformMtx);
 
@@ -1827,48 +2055,52 @@ bool BGFXVGRenderer::IntersectScissor(float x, float y, float w, float h)
 	return state->m_ScissorRect[2] >= 1.0f && state->m_ScissorRect[3] >= 1.0f;
 }
 
-void BGFXVGRenderer::LoadIdentity()
+void Context::onTransformationMatrixUpdated()
 {
-	State* state = m_Context->getState();
+	State* state = getState();
+	state->m_FontScale = getFontScale(state->m_TransformMtx);
+	state->m_AvgScale = getAverageScale(state->m_TransformMtx);
+}
+
+void Context::transformIdentity()
+{
+	State* state = getState();
 	state->m_TransformMtx[0] = 1.0f;
 	state->m_TransformMtx[1] = 0.0f;
 	state->m_TransformMtx[2] = 0.0f;
 	state->m_TransformMtx[3] = 1.0f;
 	state->m_TransformMtx[4] = 0.0f;
 	state->m_TransformMtx[5] = 0.0f;
-	
-	state->m_FontScale = getFontScale(state->m_TransformMtx);
-	state->m_AvgScale = getAverageScale(state->m_TransformMtx);
+
+	onTransformationMatrixUpdated();
 }
 
-void BGFXVGRenderer::Scale(float x, float y)
+void Context::transformScale(float x, float y)
 {
-	State* state = m_Context->getState();
+	State* state = getState();
 	state->m_TransformMtx[0] = x * state->m_TransformMtx[0];
 	state->m_TransformMtx[1] = x * state->m_TransformMtx[1];
 	state->m_TransformMtx[2] = y * state->m_TransformMtx[2];
 	state->m_TransformMtx[3] = y * state->m_TransformMtx[3];
 
-	state->m_FontScale = getFontScale(state->m_TransformMtx);
-	state->m_AvgScale = getAverageScale(state->m_TransformMtx);
+	onTransformationMatrixUpdated();
 }
 
-void BGFXVGRenderer::Translate(float x, float y)
+void Context::transformTranslate(float x, float y)
 {
-	State* state = m_Context->getState();
+	State* state = getState();
 	state->m_TransformMtx[4] += state->m_TransformMtx[0] * x + state->m_TransformMtx[2] * y;
 	state->m_TransformMtx[5] += state->m_TransformMtx[1] * x + state->m_TransformMtx[3] * y;
 
-	state->m_FontScale = getFontScale(state->m_TransformMtx);
-	state->m_AvgScale = getAverageScale(state->m_TransformMtx);
+	onTransformationMatrixUpdated();
 }
 
-void BGFXVGRenderer::Rotate(float ang_rad)
+void Context::transformRotate(float ang_rad)
 {
 	const float c = cosf(ang_rad);
 	const float s = sinf(ang_rad);
 
-	State* state = m_Context->getState();
+	State* state = getState();
 	float mtx[6];
 	mtx[0] = c * state->m_TransformMtx[0] + s * state->m_TransformMtx[2];
 	mtx[1] = c * state->m_TransformMtx[1] + s * state->m_TransformMtx[3];
@@ -1878,13 +2110,12 @@ void BGFXVGRenderer::Rotate(float ang_rad)
 	mtx[5] = state->m_TransformMtx[5];
 	memcpy(state->m_TransformMtx, mtx, sizeof(float) * 6);
 
-	state->m_FontScale = getFontScale(state->m_TransformMtx);
-	state->m_AvgScale = getAverageScale(state->m_TransformMtx);
+	onTransformationMatrixUpdated();
 }
 
-void BGFXVGRenderer::ApplyTransform(const float* mtx, bool pre)
+void Context::transformMult(const float* mtx, bool pre)
 {
-	State* state = m_Context->getState();
+	State* state = getState();
 
 	float res[6];
 	if (pre) {
@@ -1895,20 +2126,22 @@ void BGFXVGRenderer::ApplyTransform(const float* mtx, bool pre)
 
 	memcpy(state->m_TransformMtx, res, sizeof(float) * 6);
 
-	state->m_FontScale = getFontScale(state->m_TransformMtx);
-	state->m_AvgScale = getAverageScale(state->m_TransformMtx);
+	onTransformationMatrixUpdated();
 }
 
-void BGFXVGRenderer::SetGlobalAlpha(float alpha)
+void Context::setGlobalAlpha(float alpha)
 {
-	State* state = m_Context->getState();
-	state->m_GlobalAlpha = alpha;
+	getState()->m_GlobalAlpha = alpha;
 }
 
-void BGFXVGRenderer::Text(const Font& font, uint32_t alignment, Color color, float x, float y, const char* text, const char* end)
+void Context::text(const Font& font, uint32_t alignment, Color color, float x, float y, const char* text, const char* end)
 {
-	State* state = m_Context->getState();
-	float scale = state->m_FontScale * m_Context->m_DevicePixelRatio;
+	const State* state = getState();
+	const float scale = state->m_FontScale * m_DevicePixelRatio;
+	const float scaledFontSize = font.m_Size * scale;
+	if (scaledFontSize < 1.0f) { // TODO: Make threshold configurable.
+		return;
+	}
 
 	if (!end) {
 		end = text + strlen(text);
@@ -1918,46 +2151,45 @@ void BGFXVGRenderer::Text(const Font& font, uint32_t alignment, Color color, flo
 		return;
 	}
 
-	FONScontext* fons = m_Context->m_FontStashContext;
-	fonsSetSize(fons, font.m_Size * scale); // TODO: Check font size and discard call if smaller than threshold
-	fonsSetAlign(fons, alignment);
-	fonsSetFont(fons, font.m_Handle.idx);
+	fonsSetSize(m_FontStashContext, scaledFontSize);
+	fonsSetAlign(m_FontStashContext, alignment);
+	fonsSetFont(m_FontStashContext, font.m_Handle.idx);
 
 	// Assume ASCII where each byte is a codepoint. Otherwise, the number 
 	// of quads will be less than the number of chars/bytes.
 	const uint32_t maxChars = (uint32_t)(end - text);
-	if (m_Context->m_TextQuadCapacity < maxChars) {
-		m_Context->m_TextQuadCapacity = maxChars;
-		m_Context->m_TextQuads = (FONSquad*)BX_ALIGNED_REALLOC(m_Context->m_Allocator, m_Context->m_TextQuads, sizeof(FONSquad) * m_Context->m_TextQuadCapacity, 16);
-		m_Context->m_TextVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Context->m_Allocator, m_Context->m_TextVertices, sizeof(Vec2) * m_Context->m_TextQuadCapacity * 4, 16);
+	if (m_TextQuadCapacity < maxChars) {
+		m_TextQuadCapacity = maxChars;
+		m_TextQuads = (FONSquad*)BX_ALIGNED_REALLOC(m_Allocator, m_TextQuads, sizeof(FONSquad) * m_TextQuadCapacity, 16);
+		m_TextVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_TextVertices, sizeof(Vec2) * m_TextQuadCapacity * 4, 16);
 	}
 	
 	FONStextIter iter;
-	fonsTextIterInit(fons, &iter, x * scale, y * scale, text, end);
+	fonsTextIterInit(m_FontStashContext, &iter, x * scale, y * scale, text, end);
 
-	FONSquad* nextQuad = m_Context->m_TextQuads;
+	FONSquad* nextQuad = m_TextQuads;
 	FONStextIter prevIter = iter;
-	while (fonsTextIterNext(fons, &iter, nextQuad)) {
+	while (fonsTextIterNext(m_FontStashContext, &iter, nextQuad)) {
 		if (iter.prevGlyphIndex == -1) {
 			// Draw all quads up to this point (if any) with the current atlas texture.
-			const uint32_t numQuads = (uint32_t)(nextQuad - m_Context->m_TextQuads);
+			const uint32_t numQuads = (uint32_t)(nextQuad - m_TextQuads);
 			if (numQuads != 0) {
-				assert(numQuads <= m_Context->m_TextQuadCapacity);
+				assert(numQuads <= m_TextQuadCapacity);
 
-				m_Context->renderTextQuads(numQuads, color);
+				renderTextQuads(numQuads, color);
 
 				// Reset next quad ptr.
-				nextQuad = m_Context->m_TextQuads;
+				nextQuad = m_TextQuads;
 			}
 
 			// Allocate a new atlas
-			if (!m_Context->allocTextAtlas()) {
+			if (!allocTextAtlas()) {
 				break;
 			}
 
 			// And try fitting the glyph once again.
 			iter = prevIter;
-			fonsTextIterNext(fons, &iter, nextQuad);
+			fonsTextIterNext(m_FontStashContext, &iter, nextQuad);
 			if (iter.prevGlyphIndex == -1) {
 				break;
 			}
@@ -1967,63 +2199,61 @@ void BGFXVGRenderer::Text(const Font& font, uint32_t alignment, Color color, flo
 		prevIter = iter;
 	}
 
-	const uint32_t numQuads = (uint32_t)(nextQuad - m_Context->m_TextQuads);
+	const uint32_t numQuads = (uint32_t)(nextQuad - m_TextQuads);
 	if (numQuads == 0) {
 		return;
 	}
 
-	assert(numQuads <= m_Context->m_TextQuadCapacity);
+	assert(numQuads <= m_TextQuadCapacity);
 
-	m_Context->renderTextQuads(numQuads, color);
+	renderTextQuads(numQuads, color);
 }
 
-void BGFXVGRenderer::TextBox(const Font& font, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* text, const char* end)
+void Context::textBox(const Font& font, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* str, const char* end)
 {
-	TextRow rows[2];
-	int nrows = 0, i;
-	int haling = alignment & (FONS_ALIGN_LEFT | FONS_ALIGN_CENTER | FONS_ALIGN_RIGHT);
+	int halign = alignment & (FONS_ALIGN_LEFT | FONS_ALIGN_CENTER | FONS_ALIGN_RIGHT);
 	int valign = alignment & (FONS_ALIGN_TOP | FONS_ALIGN_MIDDLE | FONS_ALIGN_BOTTOM | FONS_ALIGN_BASELINE);
-	float lineh = 0;
 
-	lineh = GetTextLineHeight(font, alignment);
+	float lineh = getTextLineHeight(font, alignment);
 
 	alignment = FONS_ALIGN_LEFT | valign;
 
-	while ((nrows = TextBreakLines(font, alignment, text, end, breakWidth, rows, 2, 0))) {
-		for (i = 0; i < nrows; i++) {
+	TextRow rows[2];
+	int nrows;
+	while ((nrows = textBreakLines(font, alignment, str, end, breakWidth, rows, 2, 0))) {
+		for (int i = 0; i < nrows; ++i) {
 			TextRow* row = &rows[i];
-			if (haling & FONS_ALIGN_LEFT) {
-				Text(font, alignment, color, x, y, row->start, row->end);
-			} else if (haling & FONS_ALIGN_CENTER) {
-				Text(font, alignment, color, x + breakWidth * 0.5f - row->width * 0.5f, y, row->start, row->end);
-			} else if (haling & FONS_ALIGN_RIGHT) {
-				Text(font, alignment, color, x + breakWidth - row->width, y, row->start, row->end);
+
+			if (halign & FONS_ALIGN_LEFT) {
+				text(font, alignment, color, x, y, row->start, row->end);
+			} else if (halign & FONS_ALIGN_CENTER) {
+				text(font, alignment, color, x + breakWidth * 0.5f - row->width * 0.5f, y, row->start, row->end);
+			} else if (halign & FONS_ALIGN_RIGHT) {
+				text(font, alignment, color, x + breakWidth - row->width, y, row->start, row->end);
 			}
 
 			y += lineh; // Assume line height multiplier to be 1.0 (NanoVG allows the user to change it, but I don't use it).
 		}
 
-		text = rows[nrows - 1].next;
+		str = rows[nrows - 1].next;
 	}
 }
 
-float BGFXVGRenderer::CalcTextBounds(const Font& font, uint32_t alignment, float x, float y, const char* text, const char* end, float* bounds)
+float Context::calcTextBounds(const Font& font, uint32_t alignment, float x, float y, const char* text, const char* end, float* bounds)
 {
 	// nvgTextBounds()
-	State* state = m_Context->getState();
-	float scale = state->m_FontScale * m_Context->m_DevicePixelRatio;
-	float invscale = 1.0f / scale;
-	float width;
+	const State* state = getState();
+	const float scale = state->m_FontScale * m_DevicePixelRatio;
+	const float invscale = 1.0f / scale;
 
-	FONScontext* fons = m_Context->m_FontStashContext;
-	fonsSetSize(fons, font.m_Size * scale);
-	fonsSetAlign(fons, alignment);
-	fonsSetFont(fons, font.m_Handle.idx);
+	fonsSetSize(m_FontStashContext, font.m_Size * scale);
+	fonsSetAlign(m_FontStashContext, alignment);
+	fonsSetFont(m_FontStashContext, font.m_Handle.idx);
 
-	width = fonsTextBounds(fons, x * scale, y * scale, text, end, bounds);
+	float width = fonsTextBounds(m_FontStashContext, x * scale, y * scale, text, end, bounds);
 	if (bounds != nullptr) {
 		// Use line bounds for height.
-		fonsLineBounds(fons, y * scale, &bounds[1], &bounds[3]);
+		fonsLineBounds(m_FontStashContext, y * scale, &bounds[1], &bounds[3]);
 		bounds[0] *= invscale;
 		bounds[1] *= invscale;
 		bounds[2] *= invscale;
@@ -2033,47 +2263,45 @@ float BGFXVGRenderer::CalcTextBounds(const Font& font, uint32_t alignment, float
 	return width * invscale;
 }
 
-void BGFXVGRenderer::CalcTextBoxBounds(const Font& font, uint32_t alignment, float x, float y, float breakWidth, const char* text, const char* end, float* bounds, uint32_t flags)
+void Context::calcTextBoxBounds(const Font& font, uint32_t alignment, float x, float y, float breakWidth, const char* text, const char* end, float* bounds, uint32_t flags)
 {
-	State* state = m_Context->getState();
-	TextRow rows[2];
-	float scale = state->m_FontScale * m_Context->m_DevicePixelRatio;
-	float invscale = 1.0f / scale;
-	int nrows = 0, i;
-	int haling = alignment & (FONS_ALIGN_LEFT | FONS_ALIGN_CENTER | FONS_ALIGN_RIGHT);
-	int valign = alignment & (FONS_ALIGN_TOP | FONS_ALIGN_MIDDLE | FONS_ALIGN_BOTTOM | FONS_ALIGN_BASELINE);
-	float rminy = 0, rmaxy = 0;
-	float minx, miny, maxx, maxy;
+	const State* state = getState();
+	const float scale = state->m_FontScale * m_DevicePixelRatio;
+	const float invscale = 1.0f / scale;
 
-	FONScontext* fons = m_Context->m_FontStashContext;
-	fonsSetSize(fons, font.m_Size * scale);
-	fonsSetFont(fons, font.m_Handle.idx);
-
-	float lineh;
-	fonsVertMetrics(fons, nullptr, nullptr, &lineh);
-	lineh *= invscale;
+	const int halign = alignment & (FONS_ALIGN_LEFT | FONS_ALIGN_CENTER | FONS_ALIGN_RIGHT);
+	const int valign = alignment & (FONS_ALIGN_TOP | FONS_ALIGN_MIDDLE | FONS_ALIGN_BOTTOM | FONS_ALIGN_BASELINE);
 
 	alignment = FONS_ALIGN_LEFT | valign;
-	fonsSetAlign(fons, alignment);
+	fonsSetAlign(m_FontStashContext, alignment);
+	fonsSetSize(m_FontStashContext, font.m_Size * scale);
+	fonsSetFont(m_FontStashContext, font.m_Handle.idx);
 
-	minx = maxx = x;
-	miny = maxy = y;
+	float lineh;
+	fonsVertMetrics(m_FontStashContext, nullptr, nullptr, &lineh);
+	lineh *= invscale;
 
-	fonsLineBounds(fons, 0, &rminy, &rmaxy);
+	float rminy = 0, rmaxy = 0;
+	fonsLineBounds(m_FontStashContext, 0, &rminy, &rmaxy);
 	rminy *= invscale;
 	rmaxy *= invscale;
 
-	while ((nrows = TextBreakLines(font, alignment, text, end, breakWidth, rows, 2, flags))) {
-		for (i = 0; i < nrows; i++) {
+	float minx, miny, maxx, maxy;
+	minx = maxx = x;
+	miny = maxy = y;
+
+	TextRow rows[2];
+	int nrows = 0;
+	while ((nrows = textBreakLines(font, alignment, text, end, breakWidth, rows, 2, flags))) {
+		for (int i = 0; i < nrows; i++) {
 			TextRow* row = &rows[i];
-			float rminx, rmaxx, dx = 0;
+			float rminx, rmaxx;
 	
 			// Horizontal bounds
-			if (haling & FONS_ALIGN_LEFT) {
-				dx = 0;
-			} else if (haling & FONS_ALIGN_CENTER) {
+			float dx = 0.0f; // Assume left align
+			if (halign & FONS_ALIGN_CENTER) {
 				dx = breakWidth * 0.5f - row->width * 0.5f;
-			} else if (haling & FONS_ALIGN_RIGHT) {
+			} else if (halign & FONS_ALIGN_RIGHT) {
 				dx = breakWidth - row->width;
 			}
 
@@ -2101,36 +2329,52 @@ void BGFXVGRenderer::CalcTextBoxBounds(const Font& font, uint32_t alignment, flo
 	}
 }
 
-float BGFXVGRenderer::GetTextLineHeight(const Font& font, uint32_t alignment)
+float Context::getTextLineHeight(const Font& font, uint32_t alignment)
 {
-	State* state = m_Context->getState();
-	float scale = state->m_FontScale * m_Context->m_DevicePixelRatio;
-	float invscale = 1.0f / scale;
+	const State* state = getState();
+	const float scale = state->m_FontScale * m_DevicePixelRatio;
+	const float invscale = 1.0f / scale;
 
-	FONScontext* fons = m_Context->m_FontStashContext;
-	fonsSetSize(fons, font.m_Size * scale);
-	fonsSetAlign(fons, alignment);
-	fonsSetFont(fons, font.m_Handle.idx);
+	fonsSetSize(m_FontStashContext, font.m_Size * scale);
+	fonsSetAlign(m_FontStashContext, alignment);
+	fonsSetFont(m_FontStashContext, font.m_Handle.idx);
 
 	float lineh;
-	fonsVertMetrics(fons, nullptr, nullptr, &lineh);
+	fonsVertMetrics(m_FontStashContext, nullptr, nullptr, &lineh);
 	lineh *= invscale;
 
 	return lineh;
 }
 
-int BGFXVGRenderer::TextBreakLines(const Font& font, uint32_t alignment, const char* text, const char* end, float breakRowWidth, TextRow* rows, int maxRows, uint32_t flags)
+int Context::textBreakLines(const Font& font, uint32_t alignment, const char* text, const char* end, float breakRowWidth, TextRow* rows, int maxRows, uint32_t flags)
 {
 	// nvgTextBreakLines()
 #define CP_SPACE  0
 #define CP_NEW_LINE  1
 #define CP_CHAR 2
 
-	State* state = m_Context->getState();
-	float scale = state->m_FontScale * m_Context->m_DevicePixelRatio;
-	float invscale = 1.0f / scale;
-	FONStextIter iter, prevIter;
-	FONSquad q;
+	const State* state = getState();
+	const float scale = state->m_FontScale * m_DevicePixelRatio;
+	const float invscale = 1.0f / scale;
+
+	if (maxRows == 0) {
+		return 0;
+	}
+
+	if (end == nullptr) {
+		end = text + strlen(text);
+	}
+
+	if (text == end) {
+		return 0;
+	}
+
+	fonsSetSize(m_FontStashContext, font.m_Size * scale);
+	fonsSetAlign(m_FontStashContext, alignment);
+	fonsSetFont(m_FontStashContext, font.m_Handle.idx);
+
+	breakRowWidth *= scale;
+
 	int nrows = 0;
 	float rowStartX = 0;
 	float rowWidth = 0;
@@ -2147,32 +2391,16 @@ int BGFXVGRenderer::TextBreakLines(const Font& font, uint32_t alignment, const c
 	int type = CP_SPACE, ptype = CP_SPACE;
 	unsigned int pcodepoint = 0;
 
-	if (maxRows == 0) {
-		return 0;
-	}
-
-	if (end == nullptr) {
-		end = text + strlen(text);
-	}
-
-	if (text == end) {
-		return 0;
-	}
-
-	FONScontext* fons = m_Context->m_FontStashContext;
-	fonsSetSize(fons, font.m_Size * scale);
-	fonsSetAlign(fons, alignment);
-	fonsSetFont(fons, font.m_Handle.idx);
-
-	breakRowWidth *= scale;
-
-	fonsTextIterInit(fons, &iter, 0, 0, text, end);
+	FONStextIter iter, prevIter;
+	fonsTextIterInit(m_FontStashContext, &iter, 0, 0, text, end);
 	prevIter = iter;
-	while (fonsTextIterNext(fons, &iter, &q)) {
-		if (iter.prevGlyphIndex < 0 && m_Context->allocTextAtlas()) { 
+
+	FONSquad q;
+	while (fonsTextIterNext(m_FontStashContext, &iter, &q)) {
+		if (iter.prevGlyphIndex < 0 && allocTextAtlas()) { 
 			// can not retrieve glyph?
 			iter = prevIter;
-			fonsTextIterNext(fons, &iter, &q); // try again
+			fonsTextIterNext(m_FontStashContext, &iter, &q); // try again
 		}
 
 		prevIter = iter;
@@ -2346,14 +2574,11 @@ int BGFXVGRenderer::TextBreakLines(const Font& font, uint32_t alignment, const c
 #undef CP_CHAR
 }
 
-int BGFXVGRenderer::TextGlyphPositions(const Font& font, uint32_t alignment, float x, float y, const char* text, const char* end, GlyphPosition* positions, int maxPositions)
+int Context::textGlyphPositions(const Font& font, uint32_t alignment, float x, float y, const char* text, const char* end, GlyphPosition* positions, int maxPositions)
 {
-	State* state = m_Context->getState();
-	float scale = state->m_FontScale * m_Context->m_DevicePixelRatio;
-	float invscale = 1.0f / scale;
-	FONStextIter iter, prevIter;
-	FONSquad q;
-	int npos = 0;
+	const State* state = getState();
+	const float scale = state->m_FontScale * m_DevicePixelRatio;
+	const float invscale = 1.0f / scale;
 
 	if (!end) {
 		end = text + strlen(text);
@@ -2363,17 +2588,20 @@ int BGFXVGRenderer::TextGlyphPositions(const Font& font, uint32_t alignment, flo
 		return 0;
 	}
 
-	FONScontext* fons = m_Context->m_FontStashContext;
-	fonsSetSize(fons, font.m_Size * scale);
-	fonsSetAlign(fons, alignment);
-	fonsSetFont(fons, font.m_Handle.idx);
+	fonsSetSize(m_FontStashContext, font.m_Size * scale);
+	fonsSetAlign(m_FontStashContext, alignment);
+	fonsSetFont(m_FontStashContext, font.m_Handle.idx);
 
-	fonsTextIterInit(fons, &iter, x * scale, y * scale, text, end);
+	FONStextIter iter, prevIter;
+	fonsTextIterInit(m_FontStashContext, &iter, x * scale, y * scale, text, end);
 	prevIter = iter;
-	while (fonsTextIterNext(fons, &iter, &q)) {
-		if (iter.prevGlyphIndex < 0 && m_Context->allocTextAtlas()) {
+
+	FONSquad q;
+	int npos = 0;
+	while (fonsTextIterNext(m_FontStashContext, &iter, &q)) {
+		if (iter.prevGlyphIndex < 0 && allocTextAtlas()) {
 			iter = prevIter;
-			fonsTextIterNext(fons, &iter, &q);
+			fonsTextIterNext(m_FontStashContext, &iter, &q);
 		}
 
 		prevIter = iter;
@@ -2381,33 +2609,20 @@ int BGFXVGRenderer::TextGlyphPositions(const Font& font, uint32_t alignment, flo
 		positions[npos].x = iter.x * invscale;
 		positions[npos].minx = min2(iter.x, q.x0) * invscale;
 		positions[npos].maxx = max2(iter.nextx, q.x1) * invscale;
+		
 		npos++;
-		if (npos >= maxPositions)
+		if (npos >= maxPositions) {
 			break;
+		}
 	}
 
 	return npos;
 }
 
-FontHandle BGFXVGRenderer::LoadFontFromMemory(const char* name, const uint8_t* data, uint32_t size)
+Shape* Context::createShape()
 {
-	return m_Context->loadFontFromMemory(name, data, size);
-}
-
-Font BGFXVGRenderer::CreateFontWithSize(const char* name, float size)
-{
-	Font f;
-	f.m_Handle.idx = (uint16_t)fonsGetFontByName(m_Context->m_FontStashContext, name);
-	f.m_Size = size;
-	return f;
-}
-
-Shape* BGFXVGRenderer::CreateShape()
-{
-	bx::AllocatorI* allocator = m_Context->m_Allocator;
-
-	bx::MemoryBlock* memBlock = BX_NEW(allocator, bx::MemoryBlock)(allocator);
-	Shape* shape = BX_NEW(allocator, Shape)(memBlock);
+	bx::MemoryBlock* memBlock = BX_NEW(m_Allocator, bx::MemoryBlock)(m_Allocator);
+	Shape* shape = BX_NEW(m_Allocator, Shape)(memBlock);
 
 	// TODO: Keep the shape ptr to make sure we aren't leaking any memory 
 	// even if the owner of the shape forgets to destroy it.
@@ -2415,15 +2630,13 @@ Shape* BGFXVGRenderer::CreateShape()
 	return shape;
 }
 
-void BGFXVGRenderer::DestroyShape(Shape* shape)
+void Context::destroyShape(Shape* shape)
 {
-	bx::AllocatorI* allocator = m_Context->m_Allocator;
-
-	BX_DELETE(allocator, shape->m_CmdList);
-	BX_DELETE(allocator, shape);
+	BX_DELETE(m_Allocator, shape->m_CmdList);
+	BX_DELETE(m_Allocator, shape);
 }
 
-void BGFXVGRenderer::SubmitShape(Shape* shape)
+void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void* userData)
 {
 #define READ(type, buffer) *(type*)buffer; buffer += sizeof(type);
 
@@ -2432,8 +2645,8 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 
 	const uint8_t* cmdListEnd = cmdList + cmdListSize;
 
-	const uint16_t firstGradientID = (uint16_t)m_Context->m_NextGradientID;
-	const uint16_t firstImagePatternID = (uint16_t)m_Context->m_NextImagePatternID;
+	const uint16_t firstGradientID = (uint16_t)m_NextGradientID;
+	const uint16_t firstImagePatternID = (uint16_t)m_NextImagePatternID;
 	assert(firstGradientID + shape->m_NumGradients <= MAX_GRADIENTS);
 	assert(firstImagePatternID + shape->m_NumImagePatterns <= MAX_IMAGE_PATTERNS);
 
@@ -2444,60 +2657,60 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 		switch (cmdType) {
 		case ShapeCommand::BeginPath:
 		{
-			BeginPath();
+			beginPath();
 			break;
 		}
 		case ShapeCommand::ClosePath:
 		{
-			ClosePath();
+			closePath();
 			break;
 		}
 		case ShapeCommand::MoveTo:
 		{
 			float* coords = (float*)cmdList;
-			MoveTo(coords[0], coords[1]);
+			moveTo(coords[0], coords[1]);
 			cmdList += sizeof(float) * 2;
 			break;
 		}
 		case ShapeCommand::LineTo:
 		{
 			float* coords = (float*)cmdList;
-			LineTo(coords[0], coords[1]);
+			lineTo(coords[0], coords[1]);
 			cmdList += sizeof(float) * 2;
 			break;
 		}
 		case ShapeCommand::BezierTo:
 		{
 			float* coords = (float*)cmdList;
-			BezierTo(coords[0], coords[1], coords[2], coords[3], coords[4], coords[5]);
+			bezierTo(coords[0], coords[1], coords[2], coords[3], coords[4], coords[5]);
 			cmdList += sizeof(float) * 6;
 			break;
 		}
 		case ShapeCommand::ArcTo:
 		{
 			float* coords = (float*)cmdList;
-			ArcTo(coords[0], coords[1], coords[2], coords[3], coords[4]);
+			arcTo(coords[0], coords[1], coords[2], coords[3], coords[4]);
 			cmdList += sizeof(float) * 5;
 			break;
 		}
 		case ShapeCommand::Rect:
 		{
 			float* coords = (float*)cmdList;
-			Rect(coords[0], coords[1], coords[2], coords[3]);
+			rect(coords[0], coords[1], coords[2], coords[3]);
 			cmdList += sizeof(float) * 4;
 			break;
 		}
 		case ShapeCommand::RoundedRect:
 		{
 			float* coords = (float*)cmdList;
-			RoundedRect(coords[0], coords[1], coords[2], coords[3], coords[4]);
+			roundedRect(coords[0], coords[1], coords[2], coords[3], coords[4]);
 			cmdList += sizeof(float) * 5;
 			break;
 		}
 		case ShapeCommand::Circle:
 		{
 			float* coords = (float*)cmdList;
-			Circle(coords[0], coords[1], coords[2]);
+			circle(coords[0], coords[1], coords[2]);
 			cmdList += sizeof(float) * 3;
 			break;
 		}
@@ -2505,7 +2718,7 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 		{
 			Color col = READ(Color, cmdList);
 			bool aa = READ(bool, cmdList);
-			FillConvexPath(col, aa);
+			fillConvexPath(col, aa);
 			break;
 		}
 		case ShapeCommand::FillConvexGradient:
@@ -2514,7 +2727,7 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 			bool aa = READ(bool, cmdList);
 
 			handle.idx += firstGradientID;
-			FillConvexPath(handle, aa);
+			fillConvexPath(handle, aa);
 			break;
 		}
 		case ShapeCommand::FillConvexImage:
@@ -2523,14 +2736,14 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 			bool aa = READ(bool, cmdList);
 
 			handle.idx += firstImagePatternID;
-			FillConvexPath(handle, aa);
+			fillConvexPath(handle, aa);
 			break;
 		}
 		case ShapeCommand::FillConcaveColor:
 		{
 			Color col = READ(Color, cmdList);
 			bool aa = READ(bool, cmdList);
-			FillConcavePath(col, aa);
+			fillConcavePath(col, aa);
 			break;
 		}
 		case ShapeCommand::Stroke:
@@ -2540,7 +2753,7 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 			bool aa = READ(bool, cmdList);
 			LineCap::Enum lineCap = READ(LineCap::Enum, cmdList);
 			LineJoin::Enum lineJoin = READ(LineJoin::Enum, cmdList);
-			StrokePath(col, width, aa, lineCap, lineJoin);
+			strokePath(col, width, aa, lineCap, lineJoin);
 			break;
 		}
 		case ShapeCommand::LinearGradient:
@@ -2551,7 +2764,7 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 			float ey = READ(float, cmdList);
 			Color icol = READ(Color, cmdList);
 			Color ocol = READ(Color, cmdList);
-			LinearGradient(sx, sy, ex, ey, icol, ocol);
+			createLinearGradient(sx, sy, ex, ey, icol, ocol);
 			break;
 		}
 		case ShapeCommand::BoxGradient:
@@ -2564,7 +2777,7 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 			float f = READ(float, cmdList);
 			Color icol = READ(Color, cmdList);
 			Color ocol = READ(Color, cmdList);
-			BoxGradient(x, y, w, h, r, f, icol, ocol);
+			createBoxGradient(x, y, w, h, r, f, icol, ocol);
 			break;
 		}
 		case ShapeCommand::RadialGradient:
@@ -2575,7 +2788,7 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 			float outr = READ(float, cmdList);
 			Color icol = READ(Color, cmdList);
 			Color ocol = READ(Color, cmdList);
-			RadialGradient(cx, cy, inr, outr, icol, ocol);
+			createRadialGradient(cx, cy, inr, outr, icol, ocol);
 			break;
 		}
 		case ShapeCommand::ImagePattern:
@@ -2587,7 +2800,7 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 			float angle = READ(float, cmdList);
 			ImageHandle image = READ(ImageHandle, cmdList);
 			float alpha = READ(float, cmdList);
-			ImagePattern(cx, cy, w, h, angle, image, alpha);
+			createImagePattern(cx, cy, w, h, angle, image, alpha);
 			break;
 		}
 		case ShapeCommand::TextStatic:
@@ -2598,214 +2811,12 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 			float x = READ(float, cmdList);
 			float y = READ(float, cmdList);
 			uint32_t len = READ(uint32_t, cmdList);
-			const char* text = (const char*)cmdList; 
+			const char* str = (const char*)cmdList;
 			cmdList += len;
-			Text(font, alignment, col, x, y, text, text + len);
+			text(font, alignment, col, x, y, str, str + len);
 			break;
 		}
 #if VG_SHAPE_DYNAMIC_TEXT
-		case ShapeCommand::TextDynamic:
-		{
-			assert(false); // Do not call this version of SubmitShape if you are using Text templates.
-
-			// Skip the command
-			cmdList += sizeof(Font) + sizeof(uint32_t) * 2 + sizeof(Color) + sizeof(float) * 2;
-			break;
-		}
-#endif
-		}
-	}
-
-	// Free shape gradients and image patterns
-	m_Context->m_NextGradientID = firstGradientID;
-	m_Context->m_NextImagePatternID = firstImagePatternID;
-
-#undef READ
-}
-
-#if VG_SHAPE_DYNAMIC_TEXT
-// TODO: Find a way to merge those 2 functions. They are exactly the same except from the way TextDynamic commands are processed.
-// Ideally both of them should call a generic version which does all the work (pointer to std::function?)
-void BGFXVGRenderer::SubmitShape(Shape* shape, GetStringByIDFunc stringCallback, void* userData)
-{
-#define READ(type, buffer) *(type*)buffer; buffer += sizeof(type);
-
-	const uint8_t* cmdList = (uint8_t*)shape->m_CmdList->more(0);
-	const uint32_t cmdListSize = shape->m_CmdList->getSize();
-
-	const uint8_t* cmdListEnd = cmdList + cmdListSize;
-
-	const uint16_t firstGradientID = (uint16_t)m_Context->m_NextGradientID;
-	const uint16_t firstImagePatternID = (uint16_t)m_Context->m_NextImagePatternID;
-	assert(firstGradientID + shape->m_NumGradients <= MAX_GRADIENTS);
-	assert(firstImagePatternID + shape->m_NumImagePatterns <= MAX_IMAGE_PATTERNS);
-
-	while (cmdList < cmdListEnd) {
-		ShapeCommand::Enum cmdType = *(ShapeCommand::Enum*)cmdList;
-		cmdList += sizeof(ShapeCommand::Enum);
-
-		switch (cmdType) {
-		case ShapeCommand::BeginPath:
-		{
-			BeginPath();
-			break;
-		}
-		case ShapeCommand::ClosePath:
-		{
-			ClosePath();
-			break;
-		}
-		case ShapeCommand::MoveTo:
-		{
-			float* coords = (float*)cmdList;
-			MoveTo(coords[0], coords[1]);
-			cmdList += sizeof(float) * 2;
-			break;
-		}
-		case ShapeCommand::LineTo:
-		{
-			float* coords = (float*)cmdList;
-			LineTo(coords[0], coords[1]);
-			cmdList += sizeof(float) * 2;
-			break;
-		}
-		case ShapeCommand::BezierTo:
-		{
-			float* coords = (float*)cmdList;
-			BezierTo(coords[0], coords[1], coords[2], coords[3], coords[4], coords[5]);
-			cmdList += sizeof(float) * 6;
-			break;
-		}
-		case ShapeCommand::ArcTo:
-		{
-			float* coords = (float*)cmdList;
-			ArcTo(coords[0], coords[1], coords[2], coords[3], coords[4]);
-			cmdList += sizeof(float) * 5;
-			break;
-		}
-		case ShapeCommand::Rect:
-		{
-			float* coords = (float*)cmdList;
-			Rect(coords[0], coords[1], coords[2], coords[3]);
-			cmdList += sizeof(float) * 4;
-			break;
-		}
-		case ShapeCommand::RoundedRect:
-		{
-			float* coords = (float*)cmdList;
-			RoundedRect(coords[0], coords[1], coords[2], coords[3], coords[4]);
-			cmdList += sizeof(float) * 5;
-			break;
-		}
-		case ShapeCommand::Circle:
-		{
-			float* coords = (float*)cmdList;
-			Circle(coords[0], coords[1], coords[2]);
-			cmdList += sizeof(float) * 3;
-			break;
-		}
-		case ShapeCommand::FillConvexColor:
-		{
-			Color col = READ(Color, cmdList);
-			bool aa = READ(bool, cmdList);
-			FillConvexPath(col, aa);
-			break;
-		}
-		case ShapeCommand::FillConvexGradient:
-		{
-			GradientHandle handle = READ(GradientHandle, cmdList);
-			bool aa = READ(bool, cmdList);
-
-			handle.idx += firstGradientID;
-			FillConvexPath(handle, aa);
-			break;
-		}
-		case ShapeCommand::FillConvexImage:
-		{
-			ImagePatternHandle handle = READ(ImagePatternHandle, cmdList);
-			bool aa = READ(bool, cmdList);
-
-			handle.idx += firstImagePatternID;
-			FillConvexPath(handle, aa);
-			break;
-		}
-		case ShapeCommand::FillConcaveColor:
-		{
-			Color col = READ(Color, cmdList);
-			bool aa = READ(bool, cmdList);
-			FillConcavePath(col, aa);
-			break;
-		}
-		case ShapeCommand::Stroke:
-		{
-			Color col = READ(Color, cmdList);
-			float width = READ(float, cmdList);
-			bool aa = READ(bool, cmdList);
-			LineCap::Enum lineCap = READ(LineCap::Enum, cmdList);
-			LineJoin::Enum lineJoin = READ(LineJoin::Enum, cmdList);
-			StrokePath(col, width, aa, lineCap, lineJoin);
-			break;
-		}
-		case ShapeCommand::LinearGradient:
-		{
-			float sx = READ(float, cmdList);
-			float sy = READ(float, cmdList);
-			float ex = READ(float, cmdList);
-			float ey = READ(float, cmdList);
-			Color icol = READ(Color, cmdList);
-			Color ocol = READ(Color, cmdList);
-			LinearGradient(sx, sy, ex, ey, icol, ocol);
-			break;
-		}
-		case ShapeCommand::BoxGradient:
-		{
-			float x = READ(float, cmdList);
-			float y = READ(float, cmdList);
-			float w = READ(float, cmdList);
-			float h = READ(float, cmdList);
-			float r = READ(float, cmdList);
-			float f = READ(float, cmdList);
-			Color icol = READ(Color, cmdList);
-			Color ocol = READ(Color, cmdList);
-			BoxGradient(x, y, w, h, r, f, icol, ocol);
-			break;
-		}
-		case ShapeCommand::RadialGradient:
-		{
-			float cx = READ(float, cmdList);
-			float cy = READ(float, cmdList);
-			float inr = READ(float, cmdList);
-			float outr = READ(float, cmdList);
-			Color icol = READ(Color, cmdList);
-			Color ocol = READ(Color, cmdList);
-			RadialGradient(cx, cy, inr, outr, icol, ocol);
-			break;
-		}
-		case ShapeCommand::ImagePattern:
-		{
-			float cx = READ(float, cmdList);
-			float cy = READ(float, cmdList);
-			float w = READ(float, cmdList);
-			float h = READ(float, cmdList);
-			float angle = READ(float, cmdList);
-			ImageHandle image = READ(ImageHandle, cmdList);
-			float alpha = READ(float, cmdList);
-			ImagePattern(cx, cy, w, h, angle, image, alpha);
-			break;
-		}
-		case ShapeCommand::TextStatic:
-		{
-			Font font = READ(Font, cmdList);
-			uint32_t alignment = READ(uint32_t, cmdList);
-			Color col = READ(Color, cmdList);
-			float x = READ(float, cmdList);
-			float y = READ(float, cmdList);
-			uint32_t len = READ(uint32_t, cmdList);
-			const char* text = (const char*)cmdList;
-			cmdList += len;
-			Text(font, alignment, col, x, y, text, text + len);
-			break;
-		}
 		case ShapeCommand::TextDynamic:
 		{
 			Font font = READ(Font, cmdList);
@@ -2815,27 +2826,27 @@ void BGFXVGRenderer::SubmitShape(Shape* shape, GetStringByIDFunc stringCallback,
 			float y = READ(float, cmdList);
 			uint32_t stringID = READ(uint32_t, cmdList);
 
-			uint32_t len;
-			const char* text = stringCallback(stringID, len, userData);
-			const char* end = len != ~0u ? text + len : text + strlen(text);
+			assert(stringCallback);
+			if (stringCallback) {
+				uint32_t len;
+				const char* str = (*stringCallback)(stringID, len, userData);
+				const char* end = len != ~0u ? str + len : str + strlen(str);
 
-			Text(font, alignment, col, x, y, text, end);
-			break;
+				text(font, alignment, col, x, y, str, end);
+				break;
+			}
 		}
+#endif
 		}
 	}
 
 	// Free shape gradients and image patterns
-	m_Context->m_NextGradientID = firstGradientID;
-	m_Context->m_NextImagePatternID = firstImagePatternID;
+	m_NextGradientID = firstGradientID;
+	m_NextImagePatternID = firstImagePatternID;
 
 #undef READ
 }
-#endif
 
-//////////////////////////////////////////////////////////////////////////
-// Context
-//
 void Context::getImageSize(ImageHandle image, int* w, int* h)
 {
 	if (!isValid(image)) {
