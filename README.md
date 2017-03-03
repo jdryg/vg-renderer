@@ -18,6 +18,7 @@ Compared to NanoVG/FontStash:
 6. Stack-based Bezier tesselation
 7. FontStash glyph hashing uses BKDR for better distribution of glyphs in the LUT (fewer collisions when searching for cached glyphs)
 8. Shapes (aka prebaked command lists, aka display lists) with dynamic text support (i.e. the actual text string is retrieved at the time the shape is submitted for rendering, via a callback) (can be disabled with a compile-time flag (VG_SHAPE_DYNAMIC_TEXT)).
+9. Caching of tessellated shapes.
 
 What's not supported compared to NanoVG
 
