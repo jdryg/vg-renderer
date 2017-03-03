@@ -76,7 +76,7 @@ public:
 	virtual int TextBreakLines(const Font& font, uint32_t alignment, const char* text, const char* end, float breakWidth, TextRow* rows, int numRows, uint32_t flags);
 	virtual int TextGlyphPositions(const Font& font, uint32_t alignment, float x, float y, const char* text, const char* end, GlyphPosition* glyphs, int maxGlyphs);
 
-	virtual Shape* CreateShape();
+	virtual Shape* CreateShape(uint32_t flags);
 	virtual void DestroyShape(Shape* shape);
 	virtual void SubmitShape(Shape* shape);
 #if VG_SHAPE_DYNAMIC_TEXT

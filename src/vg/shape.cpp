@@ -273,6 +273,8 @@ void Shape::Text(const Font& font, uint32_t alignment, Color color, float x, flo
 	bx::write(&writer, y);
 	bx::write(&writer, len);
 	bx::write(&writer, text, len);
+
+	m_Flags |= ShapeFlag::HasText;
 }
 
 #if VG_SHAPE_DYNAMIC_TEXT
@@ -290,7 +292,7 @@ void Shape::TextDynamic(const Font& font, uint32_t alignment, Color color, float
 	bx::write(&writer, y);
 	bx::write(&writer, stringID);
 
-	m_HasDynamicText = true;
+	m_Flags |= ShapeFlag::HasText | ShapeFlag::HasDynamicText;
 }
 #endif
 }

@@ -39,15 +39,34 @@ struct ShapeCommand
 	};
 };
 
+struct ShapeFlag
+{
+	enum Enum : uint32_t
+	{
+		HasText = 0x00000001,
+		HasDynamicText = 0x00000002,
+		HasGradients = 0x00000004,
+		HasImages = 0x00000008,
+		AllowCommandReordering = 0x00000010,
+		EnableCaching = 0x00000020
+	};
+};
+
 struct Shape
 {
 	bx::MemoryBlockI* m_CmdList;
+	void* m_RendererData;
 	uint16_t m_NumGradients;
 	uint16_t m_NumImagePatterns;
-	bool m_HasDynamicText;
+	uint32_t m_Flags;
 
 	// NOTE: The shape doesn't own the memory block.
-	Shape(bx::MemoryBlockI* memBlock) : m_CmdList(memBlock), m_NumGradients(0), m_NumImagePatterns(0), m_HasDynamicText(false)
+	Shape(bx::MemoryBlockI* memBlock) :
+		m_CmdList(memBlock),
+		m_NumGradients(0),
+		m_NumImagePatterns(0),
+		m_Flags(0),
+		m_RendererData(nullptr)
 	{}
 
 	~Shape()

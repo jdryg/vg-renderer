@@ -55,6 +55,7 @@ namespace vg
 #define BATCH_PATH_DIRECTIONS    0
 #define APPROXIMATE_MATH         1
 #define BEZIER_CIRCLE            0
+#define ENABLE_SHAPE_CACHING     1
 
 #if BATCH_TRANSFORM
 #if !defined(FONS_QUAD_SIMD) || !FONS_QUAD_SIMD
@@ -77,6 +78,8 @@ static const bgfx::EmbeddedShader s_EmbeddedShaders[] =
 
 	BGFX_EMBEDDED_SHADER_END()
 };
+
+#define CMD_READ(type, buffer) *(type*)buffer; buffer += sizeof(type);
 
 struct State
 {
@@ -182,6 +185,30 @@ struct DrawCommand
 	uint32_t m_NumIndices;
 	float m_ScissorRect[4];
 	Type m_Type;
+};
+
+struct CachedDrawCommand
+{
+	DrawVertex* m_Vertices;
+	uint16_t* m_Indices;
+	uint16_t m_NumVertices;
+	uint16_t m_NumIndices;
+};
+
+struct CachedShape
+{
+	CachedDrawCommand* m_DrawCommands;
+	const uint8_t** m_TextCommands;
+	uint32_t m_NumDrawCommands;
+	uint32_t m_NumTextCommands;
+	float m_InvTransformMtx[6];
+	float m_AvgScale;
+
+	CachedShape() : m_AvgScale(0.0f), m_DrawCommands(nullptr), m_NumDrawCommands(0), m_TextCommands(nullptr), m_NumTextCommands(0)
+	{}
+
+	~CachedShape()
+	{}
 };
 
 struct Context
@@ -319,7 +346,7 @@ struct Context
 	void transformMult(const float* mtx, bool pre);
 
 	// Shapes
-	Shape* createShape();
+	Shape* createShape(uint32_t flags);
 	void destroyShape(Shape* shape);
 	void submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void* userData);
 
@@ -362,6 +389,12 @@ struct Context
 	void renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numVertices, ImagePatternHandle img);
 	void renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numVertices, GradientHandle grad);
 	void renderTextQuads(uint32_t numQuads, Color color);
+
+	// Caching
+	void cachedShapeReset(CachedShape* shape);
+	void cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* cmd);
+	void cachedShapeAddTextCommand(CachedShape* shape, const uint8_t* cmdData);
+	void cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* stringCallback, void* userData);
 
 #if BATCH_PATH_DIRECTIONS
 	Vec2* allocPathDirections(uint32_t n)
@@ -754,9 +787,9 @@ Font BGFXVGRenderer::CreateFontWithSize(const char* name, float size)
 	return f;
 }
 
-Shape* BGFXVGRenderer::CreateShape()
+Shape* BGFXVGRenderer::CreateShape(uint32_t flags)
 {
-	return m_Context->createShape();
+	return m_Context->createShape(flags);
 }
 
 void BGFXVGRenderer::DestroyShape(Shape* shape)
@@ -2619,10 +2652,12 @@ int Context::textGlyphPositions(const Font& font, uint32_t alignment, float x, f
 	return npos;
 }
 
-Shape* Context::createShape()
+Shape* Context::createShape(uint32_t flags)
 {
 	bx::MemoryBlock* memBlock = BX_NEW(m_Allocator, bx::MemoryBlock)(m_Allocator);
 	Shape* shape = BX_NEW(m_Allocator, Shape)(memBlock);
+
+	shape->m_Flags = flags & (ShapeFlag::AllowCommandReordering | ShapeFlag::EnableCaching);
 
 	// TODO: Keep the shape ptr to make sure we aren't leaking any memory 
 	// even if the owner of the shape forgets to destroy it.
@@ -2632,13 +2667,65 @@ Shape* Context::createShape()
 
 void Context::destroyShape(Shape* shape)
 {
+	if (shape->m_RendererData) {
+		BX_DELETE(m_Allocator, shape->m_RendererData);
+		shape->m_RendererData = nullptr;
+	}
+
 	BX_DELETE(m_Allocator, shape->m_CmdList);
+	shape->m_CmdList = nullptr;
+
 	BX_DELETE(m_Allocator, shape);
 }
 
 void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void* userData)
 {
-#define READ(type, buffer) *(type*)buffer; buffer += sizeof(type);
+#if ENABLE_SHAPE_CACHING
+	const State* state = getState();
+
+	// TODO: Currently only the shapes with solid color draw commands can be cached (no gradients and no images).
+	bool canCache = (shape->m_Flags & (ShapeFlag::HasGradients | ShapeFlag::HasImages)) == 0;
+
+	// If there are text commands in the shape, allow caching only if command reordering is allowed (render text
+	// after geometry, in a separate loop).
+	if (canCache && (shape->m_Flags & (ShapeFlag::HasText | ShapeFlag::HasDynamicText))) {
+		canCache = (shape->m_Flags & ShapeFlag::AllowCommandReordering) != 0;
+	}
+
+	if (canCache) {
+		canCache = (shape->m_Flags & ShapeFlag::EnableCaching) != 0;
+	}
+
+	CachedShape* cachedShape = canCache ? (CachedShape*)shape->m_RendererData : nullptr;
+	if (cachedShape && cachedShape->m_AvgScale == state->m_AvgScale) {
+		cachedShapeRender(cachedShape, stringCallback, userData);
+		return;
+	}
+
+	// Either there's no cached version of this shape or the scaling has changed.
+	if (canCache) {
+		if (cachedShape) {
+			cachedShapeReset(cachedShape);
+		} else {
+			cachedShape = BX_NEW(m_Allocator, CachedShape)();
+			shape->m_RendererData = cachedShape;
+		}
+
+		cachedShape->m_AvgScale = state->m_AvgScale;
+		invertMatrix3(state->m_TransformMtx, cachedShape->m_InvTransformMtx);
+	} else {
+		if (cachedShape) {
+			// This shape used to be cachable but now it's not (user reset the EnableCache flag).
+			// Destroy the cached shape.
+			cachedShapeReset(cachedShape);
+			BX_DELETE(m_Allocator, cachedShape);
+			shape->m_RendererData = nullptr;
+			cachedShape = nullptr;
+		}
+	}
+
+	// Now execute the command stream and keep every new DrawCommand in the cachedShape.
+#endif // ENABLE_SHAPE_CACHING
 
 	const uint8_t* cmdList = (uint8_t*)shape->m_CmdList->more(0);
 	const uint32_t cmdListSize = shape->m_CmdList->getSize();
@@ -2716,15 +2803,36 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 		}
 		case ShapeCommand::FillConvexColor:
 		{
-			Color col = READ(Color, cmdList);
-			bool aa = READ(bool, cmdList);
+#if ENABLE_SHAPE_CACHING
+			if (canCache) {
+				// Force a new draw command to easily determine which triangles 
+				// have been generated for this call.
+				m_ForceNewDrawCommand = true;
+			}
+
+			// Keep the current DrawCommand, just in case this call doesn't 
+			// generate any triangles.
+			const uint32_t prevDrawCommandID = m_NumDrawCommands - 1;
+#endif
+
+			Color col = CMD_READ(Color, cmdList);
+			bool aa = CMD_READ(bool, cmdList);
 			fillConvexPath(col, aa);
+
+#if ENABLE_SHAPE_CACHING
+			if (canCache) {
+				if (prevDrawCommandID != m_NumDrawCommands - 1) {
+					cachedShapeAddDrawCommand(cachedShape, &m_DrawCommands[m_NumDrawCommands - 1]);
+				}
+			}
+#endif
 			break;
 		}
 		case ShapeCommand::FillConvexGradient:
 		{
-			GradientHandle handle = READ(GradientHandle, cmdList);
-			bool aa = READ(bool, cmdList);
+			// TODO: Cache gradient fills.
+			GradientHandle handle = CMD_READ(GradientHandle, cmdList);
+			bool aa = CMD_READ(bool, cmdList);
 
 			handle.idx += firstGradientID;
 			fillConvexPath(handle, aa);
@@ -2732,8 +2840,9 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 		}
 		case ShapeCommand::FillConvexImage:
 		{
-			ImagePatternHandle handle = READ(ImagePatternHandle, cmdList);
-			bool aa = READ(bool, cmdList);
+			// TODO: Cache image fills
+			ImagePatternHandle handle = CMD_READ(ImagePatternHandle, cmdList);
+			bool aa = CMD_READ(bool, cmdList);
 
 			handle.idx += firstImagePatternID;
 			fillConvexPath(handle, aa);
@@ -2741,76 +2850,119 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 		}
 		case ShapeCommand::FillConcaveColor:
 		{
-			Color col = READ(Color, cmdList);
-			bool aa = READ(bool, cmdList);
+#if ENABLE_SHAPE_CACHING
+			if (canCache) {
+				m_ForceNewDrawCommand = true;
+			}
+
+			const uint32_t prevDrawCommandID = m_NumDrawCommands - 1;
+#endif
+
+			Color col = CMD_READ(Color, cmdList);
+			bool aa = CMD_READ(bool, cmdList);
 			fillConcavePath(col, aa);
+
+#if ENABLE_SHAPE_CACHING
+			if (canCache) {
+				if (prevDrawCommandID != m_NumDrawCommands - 1) {
+					// TODO: Assume only 1 (batched) draw command will generated for this path.
+					// Since this is a concave polygon, it will be broken up into at least 2 convex
+					// parts. There's a chance the first convex part ends up in the current VB but the
+					// the rest of the parts are placed in a new VB (can happen if the VB is nearly full).
+					// Loop over all commands and add them to the CachedShape.
+					cachedShapeAddDrawCommand(cachedShape, &m_DrawCommands[m_NumDrawCommands - 1]);
+				}
+			}
+#endif
 			break;
 		}
 		case ShapeCommand::Stroke:
 		{
-			Color col = READ(Color, cmdList);
-			float width = READ(float, cmdList);
-			bool aa = READ(bool, cmdList);
-			LineCap::Enum lineCap = READ(LineCap::Enum, cmdList);
-			LineJoin::Enum lineJoin = READ(LineJoin::Enum, cmdList);
+#if ENABLE_SHAPE_CACHING
+			if (canCache) {
+				m_ForceNewDrawCommand = true;
+			}
+
+			const uint32_t prevDrawCommandID = m_NumDrawCommands - 1;
+#endif
+
+			Color col = CMD_READ(Color, cmdList);
+			float width = CMD_READ(float, cmdList);
+			bool aa = CMD_READ(bool, cmdList);
+			LineCap::Enum lineCap = CMD_READ(LineCap::Enum, cmdList);
+			LineJoin::Enum lineJoin = CMD_READ(LineJoin::Enum, cmdList);
 			strokePath(col, width, aa, lineCap, lineJoin);
+
+#if ENABLE_SHAPE_CACHING
+			if (canCache) {
+				if (prevDrawCommandID != m_NumDrawCommands - 1) {
+					cachedShapeAddDrawCommand(cachedShape, &m_DrawCommands[m_NumDrawCommands - 1]);
+				}
+			}
+#endif
 			break;
 		}
 		case ShapeCommand::LinearGradient:
 		{
-			float sx = READ(float, cmdList);
-			float sy = READ(float, cmdList);
-			float ex = READ(float, cmdList);
-			float ey = READ(float, cmdList);
-			Color icol = READ(Color, cmdList);
-			Color ocol = READ(Color, cmdList);
+			float sx = CMD_READ(float, cmdList);
+			float sy = CMD_READ(float, cmdList);
+			float ex = CMD_READ(float, cmdList);
+			float ey = CMD_READ(float, cmdList);
+			Color icol = CMD_READ(Color, cmdList);
+			Color ocol = CMD_READ(Color, cmdList);
 			createLinearGradient(sx, sy, ex, ey, icol, ocol);
 			break;
 		}
 		case ShapeCommand::BoxGradient:
 		{
-			float x = READ(float, cmdList);
-			float y = READ(float, cmdList);
-			float w = READ(float, cmdList);
-			float h = READ(float, cmdList);
-			float r = READ(float, cmdList);
-			float f = READ(float, cmdList);
-			Color icol = READ(Color, cmdList);
-			Color ocol = READ(Color, cmdList);
+			float x = CMD_READ(float, cmdList);
+			float y = CMD_READ(float, cmdList);
+			float w = CMD_READ(float, cmdList);
+			float h = CMD_READ(float, cmdList);
+			float r = CMD_READ(float, cmdList);
+			float f = CMD_READ(float, cmdList);
+			Color icol = CMD_READ(Color, cmdList);
+			Color ocol = CMD_READ(Color, cmdList);
 			createBoxGradient(x, y, w, h, r, f, icol, ocol);
 			break;
 		}
 		case ShapeCommand::RadialGradient:
 		{
-			float cx = READ(float, cmdList);
-			float cy = READ(float, cmdList);
-			float inr = READ(float, cmdList);
-			float outr = READ(float, cmdList);
-			Color icol = READ(Color, cmdList);
-			Color ocol = READ(Color, cmdList);
+			float cx = CMD_READ(float, cmdList);
+			float cy = CMD_READ(float, cmdList);
+			float inr = CMD_READ(float, cmdList);
+			float outr = CMD_READ(float, cmdList);
+			Color icol = CMD_READ(Color, cmdList);
+			Color ocol = CMD_READ(Color, cmdList);
 			createRadialGradient(cx, cy, inr, outr, icol, ocol);
 			break;
 		}
 		case ShapeCommand::ImagePattern:
 		{
-			float cx = READ(float, cmdList);
-			float cy = READ(float, cmdList);
-			float w = READ(float, cmdList);
-			float h = READ(float, cmdList);
-			float angle = READ(float, cmdList);
-			ImageHandle image = READ(ImageHandle, cmdList);
-			float alpha = READ(float, cmdList);
+			float cx = CMD_READ(float, cmdList);
+			float cy = CMD_READ(float, cmdList);
+			float w = CMD_READ(float, cmdList);
+			float h = CMD_READ(float, cmdList);
+			float angle = CMD_READ(float, cmdList);
+			ImageHandle image = CMD_READ(ImageHandle, cmdList);
+			float alpha = CMD_READ(float, cmdList);
 			createImagePattern(cx, cy, w, h, angle, image, alpha);
 			break;
 		}
 		case ShapeCommand::TextStatic:
 		{
-			Font font = READ(Font, cmdList);
-			uint32_t alignment = READ(uint32_t, cmdList);
-			Color col = READ(Color, cmdList);
-			float x = READ(float, cmdList);
-			float y = READ(float, cmdList);
-			uint32_t len = READ(uint32_t, cmdList);
+#if ENABLE_SHAPE_CACHING
+			if (canCache) {
+				cachedShapeAddTextCommand(cachedShape, cmdList - sizeof(ShapeCommand::Enum));
+			}
+#endif
+
+			Font font = CMD_READ(Font, cmdList);
+			uint32_t alignment = CMD_READ(uint32_t, cmdList);
+			Color col = CMD_READ(Color, cmdList);
+			float x = CMD_READ(float, cmdList);
+			float y = CMD_READ(float, cmdList);
+			uint32_t len = CMD_READ(uint32_t, cmdList);
 			const char* str = (const char*)cmdList;
 			cmdList += len;
 			text(font, alignment, col, x, y, str, str + len);
@@ -2819,12 +2971,18 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 #if VG_SHAPE_DYNAMIC_TEXT
 		case ShapeCommand::TextDynamic:
 		{
-			Font font = READ(Font, cmdList);
-			uint32_t alignment = READ(uint32_t, cmdList);
-			Color col = READ(Color, cmdList);
-			float x = READ(float, cmdList);
-			float y = READ(float, cmdList);
-			uint32_t stringID = READ(uint32_t, cmdList);
+#if ENABLE_SHAPE_CACHING
+			if (canCache) {
+				cachedShapeAddTextCommand(cachedShape, cmdList - sizeof(ShapeCommand::Enum));
+			}
+#endif
+
+			Font font = CMD_READ(Font, cmdList);
+			uint32_t alignment = CMD_READ(uint32_t, cmdList);
+			Color col = CMD_READ(Color, cmdList);
+			float x = CMD_READ(float, cmdList);
+			float y = CMD_READ(float, cmdList);
+			uint32_t stringID = CMD_READ(uint32_t, cmdList);
 
 			assert(stringCallback);
 			if (stringCallback) {
@@ -2843,8 +3001,342 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 	// Free shape gradients and image patterns
 	m_NextGradientID = firstGradientID;
 	m_NextImagePatternID = firstImagePatternID;
+}
 
-#undef READ
+void transformDrawVertices(const DrawVertex* __restrict src, uint32_t n, DrawVertex* __restrict dst, const float* __restrict mtx)
+{
+#if 0
+	const uint32_t iter = n >> 2;
+	for (uint32_t i = 0; i < iter; ++i) {
+		Vec2 p0 = transformPos2D(src[0].x, src[0].y, mtx);
+		Vec2 p1 = transformPos2D(src[1].x, src[1].y, mtx);
+		Vec2 p2 = transformPos2D(src[2].x, src[2].y, mtx);
+		Vec2 p3 = transformPos2D(src[3].x, src[3].y, mtx);
+		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
+		SET_DRAW_VERTEX(dst, p1.x, p1.y, src[1].u, src[1].v, src[1].color); ++dst;
+		SET_DRAW_VERTEX(dst, p2.x, p2.y, src[2].u, src[2].v, src[2].color); ++dst;
+		SET_DRAW_VERTEX(dst, p3.x, p3.y, src[3].u, src[3].v, src[3].color); ++dst;
+		
+		src += 4;
+	}
+
+	Vec2 p0;
+	const uint32_t rem = n & 3;
+	switch (rem) {
+	case 3:
+		p0 = transformPos2D(src[0].x, src[0].y, mtx);
+		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
+		src++;
+	case 2:
+		p0 = transformPos2D(src[0].x, src[0].y, mtx);
+		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
+		src++;
+	case 1:
+		p0 = transformPos2D(src[0].x, src[0].y, mtx);
+		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
+		src++;
+	}
+#else
+	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
+	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);
+	const bx::simd128_t mtx2 = bx::simd_splat(mtx[2]);
+	const bx::simd128_t mtx3 = bx::simd_splat(mtx[3]);
+	const bx::simd128_t mtx4 = bx::simd_splat(mtx[4]);
+	const bx::simd128_t mtx5 = bx::simd_splat(mtx[5]);
+
+	const uint32_t iter = n >> 2;
+	for (uint32_t i = 0; i < iter; ++i) {
+		// Unaligned loads because DrawVertex is 20 bytes (until bgfx supports multiple vertex streams)
+		// TODO: If bgfx supports multiple vertex streams at some point in the future, positions, uv and 
+		// color data can be separated into different streams. This way, I can transform vertices and 
+		// memcpy uv/color data directly to the target buffers. It shouldn't make a noticable difference
+		// but the code below will be simplified a bit.
+		bx::simd128_t p0 = _mm_loadu_ps(&src[0].x); // {x0, y0, u0, v0}
+		bx::simd128_t p1 = _mm_loadu_ps(&src[1].x); // {x1, y1, u1, v1}
+		bx::simd128_t p2 = _mm_loadu_ps(&src[2].x); // {x2, y2, u2, v2}
+		bx::simd128_t p3 = _mm_loadu_ps(&src[3].x); // {x3, y3, u3, v3}
+		
+		bx::simd128_t p01 = bx::simd_shuf_xyAB(p0, p1); // {x0, y0, x1, y1}
+		bx::simd128_t p23 = bx::simd_shuf_xyAB(p2, p3); // {x2, y2, x3, y3}
+
+		bx::simd128_t x0123 = bx::simd_shuf_xyAB(bx::simd_swiz_xzxz(p01), bx::simd_swiz_xzxz(p23)); // (x0, x1, x2, x3)
+		bx::simd128_t y0123 = bx::simd_shuf_xyAB(bx::simd_swiz_ywyw(p01), bx::simd_swiz_ywyw(p23)); // (y0, y1, y2, y3)
+		bx::simd128_t x0123_m0 = bx::simd_mul(x0123, mtx0); // (x0, x1, x2, x3) * mtx[0]
+		bx::simd128_t x0123_m1 = bx::simd_mul(x0123, mtx1); // (x0, x1, x2, x3) * mtx[1]
+		bx::simd128_t y0123_m2 = bx::simd_mul(y0123, mtx2); // (y0, y1, y2, y3) * mtx[2]
+		bx::simd128_t y0123_m3 = bx::simd_mul(y0123, mtx3); // (y0, y1, y2, y3) * mtx[3]
+
+		// v0.x = x0_m0 + y0_m2 + m4
+		// v1.x = x1_m0 + y1_m2 + m4
+		// v2.x = x2_m0 + y2_m2 + m4
+		// v3.x = x3_m0 + y3_m2 + m4
+		// v0.y = x0_m1 + y0_m3 + m5
+		// v1.y = x1_m1 + y1_m3 + m5
+		// v2.y = x2_m1 + y2_m3 + m5
+		// v3.y = x3_m1 + y3_m3 + m5
+		bx::simd128_t v0123_x = bx::simd_add(x0123_m0, bx::simd_add(y0123_m2, mtx4));
+		bx::simd128_t v0123_y = bx::simd_add(x0123_m1, bx::simd_add(y0123_m3, mtx5));
+
+		bx::simd128_t v01 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(v0123_x, v0123_y)); // {x0', y0', x1', y1'}
+		bx::simd128_t v23 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(v0123_x, v0123_y)); // {x2', y2', x3', y3'}
+
+		bx::simd128_t d0 = bx::simd_shuf_xyAB(v01, bx::simd_swiz_zwxy(p0));
+		bx::simd128_t d1 = bx::simd_shuf_zwCD(v01, p1);
+		bx::simd128_t d2 = bx::simd_shuf_xyAB(v23, bx::simd_swiz_zwxy(p2));
+		bx::simd128_t d3 = bx::simd_shuf_zwCD(v23, p3);
+
+		// Unaligned stores because the destination buffer isn't guaranteed to be 16-byte aligned, 
+		// (it's part of a larger vertex buffer).
+		_mm_storeu_ps(&dst[0].x, d0);
+		_mm_storeu_ps(&dst[1].x, d1);
+		_mm_storeu_ps(&dst[2].x, d2);
+		_mm_storeu_ps(&dst[3].x, d3);
+
+		dst[0].color = src[0].color;
+		dst[1].color = src[1].color;
+		dst[2].color = src[2].color;
+		dst[3].color = src[3].color;
+
+		dst += 4;
+		src += 4;
+	}
+
+	Vec2 p0;
+	const uint32_t rem = n & 3;
+	switch (rem) {
+	case 3:
+		p0 = transformPos2D(src[0].x, src[0].y, mtx);
+		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
+		src++;
+	case 2:
+		p0 = transformPos2D(src[0].x, src[0].y, mtx);
+		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
+		src++;
+	case 1:
+		p0 = transformPos2D(src[0].x, src[0].y, mtx);
+		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
+		src++;
+	}
+#endif
+}
+
+// NOTE: Assumes src is 16-byte aligned. Don't care about dst (unaligned stores)
+void transformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint16_t* __restrict dst, uint16_t delta)
+{
+#if 0
+	for (uint32_t i = 0; i < n; ++i) {
+		*dst++ = *src + delta;
+		src++;
+	}
+#else
+	const __m128i xmm_delta = _mm_set1_epi16(delta);
+
+	const uint32_t iter32 = n >> 5;
+	for (uint32_t i = 0; i < iter32; ++i) {
+		__m128i s0 = _mm_load_si128((const __m128i*)src);
+		__m128i s1 = _mm_load_si128((const __m128i*)(src + 8));
+		__m128i s2 = _mm_load_si128((const __m128i*)(src + 16));
+		__m128i s3 = _mm_load_si128((const __m128i*)(src + 24));
+		
+		__m128i d0 = _mm_add_epi16(s0, xmm_delta);
+		__m128i d1 = _mm_add_epi16(s1, xmm_delta);
+		__m128i d2 = _mm_add_epi16(s2, xmm_delta);
+		__m128i d3 = _mm_add_epi16(s3, xmm_delta);
+
+		// NOTE: Proper alignment of dst buffer isn't guaranteed because it's part of the global IndexBuffer.
+		_mm_storeu_si128((__m128i*)dst, d0);
+		_mm_storeu_si128((__m128i*)(dst + 8), d1);
+		_mm_storeu_si128((__m128i*)(dst + 16), d2);
+		_mm_storeu_si128((__m128i*)(dst + 24), d3);
+
+		src += 32;
+		dst += 32;
+	}
+
+	uint32_t rem = n & 31;
+	if (rem >= 16) {
+		__m128i s0 = _mm_load_si128((const __m128i*)src);
+		__m128i s1 = _mm_load_si128((const __m128i*)(src + 8));
+		__m128i d0 = _mm_add_epi16(s0, xmm_delta);
+		__m128i d1 = _mm_add_epi16(s1, xmm_delta);
+		_mm_storeu_si128((__m128i*)dst, d0);
+		_mm_storeu_si128((__m128i*)(dst + 8), d1);
+
+		src += 16;
+		dst += 16;
+		rem -= 16;
+	}
+
+	if (rem >= 8) {
+		__m128i s0 = _mm_load_si128((const __m128i*)src);
+		__m128i d0 = _mm_add_epi16(s0, xmm_delta);
+		_mm_storeu_si128((__m128i*)dst, d0);
+
+		src += 8;
+		dst += 8;
+		rem -= 8;
+	}
+
+	switch (rem) {
+	case 7:
+		*dst++ = *src++ + delta;
+	case 6:
+		*dst++ = *src++ + delta;
+	case 5:
+		*dst++ = *src++ + delta;
+	case 4:
+		*dst++ = *src++ + delta;
+	case 3:
+		*dst++ = *src++ + delta;
+	case 2:
+		*dst++ = *src++ + delta;
+	case 1:
+		*dst++ = *src++ + delta;
+	}
+#endif
+}
+
+void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* stringCallback, void* userData)
+{
+	const State* state = getState();
+	const float* stateMtx = state->m_TransformMtx;
+
+	float mtx[6];
+	multiplyMatrix3(stateMtx, shape->m_InvTransformMtx, mtx);
+
+	const uint32_t numCommands = shape->m_NumDrawCommands;
+	for (uint32_t iCmd = 0; iCmd < numCommands; ++iCmd) {
+		const CachedDrawCommand* cachedCmd = &shape->m_DrawCommands[iCmd];
+
+		DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(cachedCmd->m_NumVertices, cachedCmd->m_NumIndices, m_FontImages[0]);
+
+		DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
+		uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+
+		const uint16_t startVertexID = (uint16_t)cmd->m_NumVertices;
+
+		transformDrawVertices(cachedCmd->m_Vertices, cachedCmd->m_NumVertices, dstVertex, mtx);
+		transformDrawIndices(cachedCmd->m_Indices, cachedCmd->m_NumIndices, dstIndex, startVertexID);
+
+		cmd->m_NumVertices += cachedCmd->m_NumVertices;
+		cmd->m_NumIndices += cachedCmd->m_NumIndices;
+	}
+
+	// Render all text commands...
+	const uint32_t numTextCommands = shape->m_NumTextCommands;
+	for (uint32_t iText = 0; iText < numTextCommands; ++iText) {
+		const uint8_t* cmdData = shape->m_TextCommands[iText];
+
+		ShapeCommand::Enum cmdType = *(ShapeCommand::Enum*)cmdData;
+		cmdData += sizeof(ShapeCommand::Enum);
+
+		switch (cmdType) {
+		case ShapeCommand::TextStatic:
+		{
+			Font font = CMD_READ(Font, cmdData);
+			uint32_t alignment = CMD_READ(uint32_t, cmdData);
+			Color col = CMD_READ(Color, cmdData);
+			float x = CMD_READ(float, cmdData);
+			float y = CMD_READ(float, cmdData);
+			uint32_t len = CMD_READ(uint32_t, cmdData);
+			const char* str = (const char*)cmdData;
+			cmdData += len;
+			text(font, alignment, col, x, y, str, str + len);
+			break;
+		}
+#if VG_SHAPE_DYNAMIC_TEXT
+		case ShapeCommand::TextDynamic:
+		{
+			Font font = CMD_READ(Font, cmdData);
+			uint32_t alignment = CMD_READ(uint32_t, cmdData);
+			Color col = CMD_READ(Color, cmdData);
+			float x = CMD_READ(float, cmdData);
+			float y = CMD_READ(float, cmdData);
+			uint32_t stringID = CMD_READ(uint32_t, cmdData);
+
+			assert(stringCallback);
+			if (stringCallback) {
+				uint32_t len;
+				const char* str = (*stringCallback)(stringID, len, userData);
+				const char* end = len != ~0u ? str + len : str + strlen(str);
+
+				text(font, alignment, col, x, y, str, end);
+				break;
+			}
+		}
+#endif
+		default:
+			assert(false);
+		}
+	}
+}
+
+void Context::cachedShapeReset(CachedShape* shape)
+{
+	for (uint32_t i = 0; i < shape->m_NumDrawCommands; ++i) {
+		BX_ALIGNED_FREE(m_Allocator, shape->m_DrawCommands[i].m_Vertices, 16);
+		BX_ALIGNED_FREE(m_Allocator, shape->m_DrawCommands[i].m_Indices, 16);
+	}
+	BX_FREE(m_Allocator, shape->m_DrawCommands);
+	BX_FREE(m_Allocator, shape->m_TextCommands);
+	shape->m_DrawCommands = nullptr;
+	shape->m_TextCommands = nullptr;
+	shape->m_NumDrawCommands = 0;
+	shape->m_NumTextCommands = 0;
+}
+
+void Context::cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* cmd)
+{
+	assert(cmd->m_NumVertices < 65536);
+	assert(cmd->m_NumIndices < 65536);
+	assert(cmd->m_Type == DrawCommand::Type_TexturedVertexColor && cmd->m_ImageHandle.idx == m_FontImages[0].idx);
+
+	// TODO: Currently only solid color untextured paths are cached. So all draw commands can be batched into a single VB/IB.
+	CachedDrawCommand* cachedCmd = nullptr;
+	if (shape->m_NumDrawCommands < 1) {
+		shape->m_NumDrawCommands++;
+		shape->m_DrawCommands = (CachedDrawCommand*)BX_REALLOC(m_Allocator, shape->m_DrawCommands, sizeof(CachedDrawCommand) * shape->m_NumDrawCommands);
+
+		cachedCmd = &shape->m_DrawCommands[0];
+		cachedCmd->m_Indices = nullptr;
+		cachedCmd->m_Vertices = nullptr;
+		cachedCmd->m_NumVertices = 0;
+		cachedCmd->m_NumIndices = 0;
+	} else {
+		cachedCmd = &shape->m_DrawCommands[shape->m_NumDrawCommands - 1];
+	}
+
+	const uint16_t firstVertexID = cachedCmd->m_NumVertices;
+	const uint16_t firstIndexID = cachedCmd->m_NumIndices;
+
+	assert(cachedCmd->m_NumVertices + cmd->m_NumVertices < 65536);
+	assert(cachedCmd->m_NumIndices + cmd->m_NumIndices < 65536);
+	cachedCmd->m_NumVertices += (uint16_t)cmd->m_NumVertices;
+	cachedCmd->m_NumIndices += (uint16_t)cmd->m_NumIndices;
+	cachedCmd->m_Vertices = (DrawVertex*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Vertices, sizeof(DrawVertex) * cachedCmd->m_NumVertices, 16);
+	cachedCmd->m_Indices = (uint16_t*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Indices, sizeof(uint16_t) * cachedCmd->m_NumIndices, 16);
+
+	const DrawVertex* srcDrawVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID];
+	const uint16_t* srcIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID];
+
+	DrawVertex* dstDrawVertex = &cachedCmd->m_Vertices[firstVertexID];
+	uint16_t* dstIndex = &cachedCmd->m_Indices[firstIndexID];
+
+	memcpy(dstDrawVertex, srcDrawVertex, sizeof(DrawVertex) * cmd->m_NumVertices);
+
+	// NOTE: Don't use the SIMD version because the alignment of srcIndex isn't guaranteed.
+//	transformDrawIndices(srcIndex, cmd->m_NumIndices, dstIndex, firstVertexID);
+	const uint32_t numIndices = cmd->m_NumIndices;
+	for (uint32_t i = 0; i < numIndices; ++i) {
+		*dstIndex++ = *srcIndex++ + firstVertexID;
+	}
+}
+
+void Context::cachedShapeAddTextCommand(CachedShape* shape, const uint8_t* cmdData)
+{
+	shape->m_NumTextCommands++;
+	shape->m_TextCommands = (const uint8_t**)BX_REALLOC(m_Allocator, shape->m_TextCommands, sizeof(uint8_t*) * shape->m_NumTextCommands);
+	shape->m_TextCommands[shape->m_NumTextCommands - 1] = cmdData;
 }
 
 void Context::getImageSize(ImageHandle image, int* w, int* h)

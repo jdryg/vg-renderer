@@ -415,12 +415,13 @@ Font NanoVGRenderer::CreateFontWithSize(const char* name, float size)
 	return f;
 }
 
-Shape* NanoVGRenderer::CreateShape()
+Shape* NanoVGRenderer::CreateShape(uint32_t /*flags*/)
 {
 	bx::AllocatorI* allocator = m_Allocator;
 
 	bx::MemoryBlock* memBlock = BX_NEW(allocator, bx::MemoryBlock)(allocator);
 	Shape* shape = BX_NEW(allocator, Shape)(memBlock);
+	shape->m_Flags = 0; // Caching isn't supported so ignore all flags.
 
 	// TODO: Keep the shape ptr to make sure we aren't leaking any memory 
 	// even if the owner of the shape forgets to destroy it.
