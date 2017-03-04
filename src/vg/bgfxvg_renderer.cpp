@@ -56,6 +56,7 @@ namespace vg
 #define APPROXIMATE_MATH         1
 #define BEZIER_CIRCLE            0
 #define ENABLE_SHAPE_CACHING     1
+#define SEPARATE_VERTEX_STREAMS  0
 
 #if BATCH_TRANSFORM
 #if !defined(FONS_QUAD_SIMD) || !FONS_QUAD_SIMD
@@ -114,7 +115,13 @@ struct DrawVertex
 
 struct VertexBuffer
 {
+#if SEPARATE_VERTEX_STREAMS
+	Vec2* m_Pos;
+	Vec2* m_UV;
+	uint32_t* m_Color;
+#else
 	DrawVertex* m_Vertices;
+#endif
 	uint32_t m_Count;
 	bgfx::DynamicVertexBufferHandle m_bgfxHandle;
 };
@@ -189,7 +196,13 @@ struct DrawCommand
 
 struct CachedDrawCommand
 {
+#if SEPARATE_VERTEX_STREAMS
+	Vec2* m_Pos;
+	Vec2* m_UV;
+	uint32_t* m_Color;
+#else
 	DrawVertex* m_Vertices;
+#endif
 	uint16_t* m_Indices;
 	uint16_t m_NumVertices;
 	uint16_t m_NumIndices;
@@ -531,6 +544,194 @@ inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
 
 	return v;
 }
+
+#if SEPARATE_VERTEX_STREAMS
+void memset32(void* __restrict dst, uint32_t n, const void* __restrict src)
+{
+#if 0
+	const uint32_t s = *(const uint32_t*)src;
+	uint32_t* d = (uint32_t*)dst;
+	while (n-- > 0) {
+		*d++ = s;
+	}
+#else
+	const __m128 s128 = _mm_load1_ps((const float*)src);
+	float* d = (float*)dst;
+
+	uint32_t iter = n >> 4;
+	while (iter-- > 0) {
+		_mm_storeu_ps(d + 0, s128);
+		_mm_storeu_ps(d + 4, s128);
+		_mm_storeu_ps(d + 8, s128);
+		_mm_storeu_ps(d + 12, s128);
+		d += 16;
+	}
+
+	uint32_t rem = n & 15;
+	if (rem >= 8) {
+		_mm_storeu_ps(d + 0, s128);
+		_mm_storeu_ps(d + 4, s128);
+		d += 8;
+		rem -= 8;
+	}
+
+	if (rem >= 4) {
+		_mm_storeu_ps(d, s128);
+		d += 4;
+		rem -= 4;
+	}
+
+	switch (rem) {
+	case 3:
+		*d++ = *(const float*)src;
+	case 2:
+		*d++ = *(const float*)src;
+	case 1:
+		*d++ = *(const float*)src;
+	}
+#endif
+}
+
+void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src)
+{
+#if 0
+	const uint32_t s0 = *((const uint32_t*)src + 0);
+	const uint32_t s1 = *((const uint32_t*)src + 1);
+	uint32_t* d = (uint32_t*)dst;
+	while (n-- > 0) {
+		d[0] = s0;
+		d[1] = s1;
+		d += 2;
+	}
+#else
+	const float* s = (const float*)src;
+	const __m128 s0 = _mm_load_ss(&s[0]);
+	const __m128 s1 = _mm_load_ss(&s[1]);
+	const __m128 s0011 = _mm_shuffle_ps(s0, s1, 0);
+	const __m128 s128 = _mm_shuffle_ps(s0011, s0011, _MM_SHUFFLE(2, 0, 2, 0));
+	float* d = (float*)dst;
+
+	uint32_t iter = n64 >> 3; // 8 64-bit values per iteration (== 16 floats / iter)
+	while (iter-- > 0) {
+		_mm_storeu_ps(d + 0, s128);
+		_mm_storeu_ps(d + 4, s128);
+		_mm_storeu_ps(d + 8, s128);
+		_mm_storeu_ps(d + 12, s128);
+		d += 16;
+	}
+
+	uint32_t rem = n64 & 7;
+	if (rem >= 4) {
+		_mm_storeu_ps(d + 0, s128);
+		_mm_storeu_ps(d + 4, s128);
+		d += 8;
+		rem -= 4;
+	}
+
+	if (rem >= 2) {
+		_mm_storeu_ps(d, s128);
+		d += 4;
+		rem -= 2;
+	}
+
+	if (rem) {
+		d[0] = s[0];
+		d[1] = s[1];
+	}
+#endif
+}
+
+void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src)
+{
+#if 0
+	const uint32_t s0 = *((const uint32_t*)src + 0);
+	const uint32_t s1 = *((const uint32_t*)src + 1);
+	const uint32_t s2 = *((const uint32_t*)src + 2);
+	const uint32_t s3 = *((const uint32_t*)src + 3);
+	uint32_t* d = (uint32_t*)dst;
+	while (n-- > 0) {
+		d[0] = s0;
+		d[1] = s1;
+		d[2] = s2;
+		d[3] = s3;
+		d += 4;
+	}
+#else
+	const __m128 s128 = _mm_loadu_ps((const float*)src);
+	float* d = (float*)dst;
+
+	uint32_t iter = n128 >> 2; // 4 128-bit values per iteration (== 16 floats / iter)
+	while (iter-- > 0) {
+		_mm_storeu_ps(d + 0, s128);
+		_mm_storeu_ps(d + 4, s128);
+		_mm_storeu_ps(d + 8, s128);
+		_mm_storeu_ps(d + 12, s128);
+		d += 16;
+	}
+
+	uint32_t rem = n128 & 3;
+	if (rem >= 2) {
+		_mm_storeu_ps(d + 0, s128);
+		_mm_storeu_ps(d + 4, s128);
+		d += 8;
+		rem -= 2;
+	}
+
+	if (rem) {
+		_mm_storeu_ps(d, s128);
+	}
+#endif
+}
+
+void swizzleVertexBufferData(const Vec2* __restrict pos, const Vec2* __restrict uv, const uint32_t* __restrict color, uint32_t n, DrawVertex* __restrict dv)
+{
+#if 0
+	while (n-- > 0) {
+		SET_DRAW_VERTEX(dv, pos->x, pos->y, uv->x, uv->y, *color);
+		pos++;
+		uv++;
+		color++;
+		dv++;
+	}
+#else
+	const uint32_t iter = n >> 2;
+	for (uint32_t i = 0; i < iter; ++i) {
+		bx::simd128_t p01 = bx::simd_ld(pos);     // {p0.x, p0.y, p1.x, p1.y}
+		bx::simd128_t p23 = bx::simd_ld(pos + 2); // {p2.x, p2.y, p3.x, p3.y}
+		bx::simd128_t uv01 = bx::simd_ld(uv);     // {u0, v0, u1, v1}
+		bx::simd128_t uv23 = bx::simd_ld(uv + 2); // {u2, v2, u3, v3}
+
+		bx::simd128_t vertex0 = bx::simd_shuf_xyAB(p01, uv01);
+		bx::simd128_t vertex1 = bx::simd_shuf_zwCD(p01, uv01);
+		bx::simd128_t vertex2 = bx::simd_shuf_xyAB(p23, uv23);
+		bx::simd128_t vertex3 = bx::simd_shuf_zwCD(p23, uv23);
+
+		_mm_storeu_ps(&dv[0].x, vertex0);
+		_mm_storeu_ps(&dv[1].x, vertex1);
+		_mm_storeu_ps(&dv[2].x, vertex2);
+		_mm_storeu_ps(&dv[3].x, vertex3);
+		dv[0].color = color[0];
+		dv[1].color = color[1];
+		dv[2].color = color[2];
+		dv[3].color = color[3];
+
+		pos += 4;
+		uv += 4;
+		color += 4;
+		dv += 4;
+	}
+
+	uint32_t rem = n & 3;
+	while (rem-- > 0) {
+		SET_DRAW_VERTEX(dv, pos->x, pos->y, uv->x, uv->y, *color);
+		pos++;
+		uv++;
+		color++;
+		dv++;
+	}
+#endif
+}
+#endif // SEPARATE_VERTEX_STREAMS
 
 //////////////////////////////////////////////////////////////////////////
 // BGFXVGRenderer
@@ -1043,11 +1244,19 @@ void Context::endFrame()
 			vb->m_bgfxHandle = bgfx::createDynamicVertexBuffer(MAX_VB_VERTICES, m_DrawVertexDecl, 0);
 		}
 
+#if SEPARATE_VERTEX_STREAMS
+		DrawVertex* vbData = allocVertexBufferData();
+		swizzleVertexBufferData(vb->m_Pos, vb->m_UV, vb->m_Color, vb->m_Count, vbData);
+
+		const bgfx::Memory* mem = bgfx::makeRef(vbData, sizeof(DrawVertex) * vb->m_Count, releaseVertexBufferDataCallback, this);
+		bgfx::updateDynamicVertexBuffer(vb->m_bgfxHandle, 0, mem);
+#else
 		const bgfx::Memory* mem = bgfx::makeRef(vb->m_Vertices, sizeof(DrawVertex) * vb->m_Count, releaseVertexBufferDataCallback, this);
 		bgfx::updateDynamicVertexBuffer(vb->m_bgfxHandle, 0, mem);
 
 		// Null out the buffer. Will be allocated again from the pool on the next frame.
 		vb->m_Vertices = nullptr;
+#endif
 	}
 
 	// Update bgfx index buffer...
@@ -1674,6 +1883,62 @@ void transformPointsSSE(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p
 	}
 }
 #endif // BATCH_TRANSFORM
+
+#if SEPARATE_VERTEX_STREAMS
+void transformPointsSSE_Unaligned(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx)
+{
+	const float* src = &v->x;
+	float* dst = &p->x;
+
+	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
+	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);
+	const bx::simd128_t mtx2 = bx::simd_splat(mtx[2]);
+	const bx::simd128_t mtx3 = bx::simd_splat(mtx[3]);
+	const bx::simd128_t mtx4 = bx::simd_splat(mtx[4]);
+	const bx::simd128_t mtx5 = bx::simd_splat(mtx[5]);
+
+	const uint32_t iter = n >> 2;
+	for (uint32_t i = 0; i < iter; ++i) {
+//		bx::simd128_t src0123 = bx::simd_ld(src);
+//		bx::simd128_t src4567 = bx::simd_ld(src + 4);
+		bx::simd128_t src0123 = _mm_loadu_ps(src);
+		bx::simd128_t src4567 = _mm_loadu_ps(src + 4);
+
+		bx::simd128_t src0246 = bx::simd_shuf_xyAB(bx::simd_swiz_xzxz(src0123), bx::simd_swiz_xzxz(src4567));
+		bx::simd128_t src1357 = bx::simd_shuf_xyAB(bx::simd_swiz_ywyw(src0123), bx::simd_swiz_ywyw(src4567));
+
+		bx::simd128_t dst0246 = bx::simd_add(bx::simd_add(bx::simd_mul(src0246, mtx0), bx::simd_mul(src1357, mtx2)), mtx4);
+		bx::simd128_t dst1357 = bx::simd_add(bx::simd_add(bx::simd_mul(src0246, mtx1), bx::simd_mul(src1357, mtx3)), mtx5);
+
+		bx::simd128_t dst0123 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(dst0246, dst1357));
+		bx::simd128_t dst4567 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(dst0246, dst1357));
+
+//		bx::simd_st(dst, dst0123);
+//		bx::simd_st(dst + 4, dst4567);
+		_mm_storeu_ps(dst, dst0123);
+		_mm_storeu_ps(dst + 4, dst4567);
+
+		src += 8;
+		dst += 8;
+	}
+
+	const uint32_t rem = n & 3;
+	switch (rem) {
+	case 3:
+		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
+		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
+		src += 2;
+	case 2:
+		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
+		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
+		src += 2;
+	case 1:
+		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
+		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
+		src += 2;
+	}
+}
+#endif // SEPARATE_VERTEX_STREAMS
 
 void Context::fillConvexPath(Color col, bool aa)
 {
@@ -3003,6 +3268,7 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 	m_NextImagePatternID = firstImagePatternID;
 }
 
+#if !SEPARATE_VERTEX_STREAMS
 void transformDrawVertices(const DrawVertex* __restrict src, uint32_t n, DrawVertex* __restrict dst, const float* __restrict mtx)
 {
 #if 0
@@ -3119,6 +3385,7 @@ void transformDrawVertices(const DrawVertex* __restrict src, uint32_t n, DrawVer
 	}
 #endif
 }
+#endif // SEPARATE_VERTEX_STREAMS
 
 // NOTE: Assumes src is 16-byte aligned. Don't care about dst (unaligned stores)
 void transformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint16_t* __restrict dst, uint16_t delta)
@@ -3210,6 +3477,21 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 
 		DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(cachedCmd->m_NumVertices, cachedCmd->m_NumIndices, m_FontImages[0]);
 
+#if SEPARATE_VERTEX_STREAMS
+		VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+		const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+		Vec2* dstPos = &vb->m_Pos[vbOffset];
+		Vec2* dstUV = &vb->m_UV[vbOffset];
+		uint32_t* dstColor = &vb->m_Color[vbOffset];
+		uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+
+		const uint16_t startVertexID = (uint16_t)cmd->m_NumVertices;
+
+		transformPointsSSE_Unaligned(cachedCmd->m_Pos, cachedCmd->m_NumVertices, dstPos, mtx);
+		memcpy(dstUV, cachedCmd->m_UV, sizeof(Vec2) * cachedCmd->m_NumVertices);
+		memcpy(dstColor, cachedCmd->m_Color, sizeof(uint32_t) * cachedCmd->m_NumVertices);
+		transformDrawIndices(cachedCmd->m_Indices, cachedCmd->m_NumIndices, dstIndex, startVertexID);
+#else
 		DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
 		uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
@@ -3217,6 +3499,7 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 
 		transformDrawVertices(cachedCmd->m_Vertices, cachedCmd->m_NumVertices, dstVertex, mtx);
 		transformDrawIndices(cachedCmd->m_Indices, cachedCmd->m_NumIndices, dstIndex, startVertexID);
+#endif
 
 		cmd->m_NumVertices += cachedCmd->m_NumVertices;
 		cmd->m_NumIndices += cachedCmd->m_NumIndices;
@@ -3274,7 +3557,13 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 void Context::cachedShapeReset(CachedShape* shape)
 {
 	for (uint32_t i = 0; i < shape->m_NumDrawCommands; ++i) {
+#if SEPARATE_VERTEX_STREAMS
+		BX_ALIGNED_FREE(m_Allocator, shape->m_DrawCommands[i].m_Pos, 16);
+		BX_ALIGNED_FREE(m_Allocator, shape->m_DrawCommands[i].m_UV, 16);
+		BX_ALIGNED_FREE(m_Allocator, shape->m_DrawCommands[i].m_Color, 16);
+#else
 		BX_ALIGNED_FREE(m_Allocator, shape->m_DrawCommands[i].m_Vertices, 16);
+#endif
 		BX_ALIGNED_FREE(m_Allocator, shape->m_DrawCommands[i].m_Indices, 16);
 	}
 	BX_FREE(m_Allocator, shape->m_DrawCommands);
@@ -3299,7 +3588,13 @@ void Context::cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* c
 
 		cachedCmd = &shape->m_DrawCommands[0];
 		cachedCmd->m_Indices = nullptr;
+#if SEPARATE_VERTEX_STREAMS
+		cachedCmd->m_Pos = nullptr;
+		cachedCmd->m_UV = nullptr;
+		cachedCmd->m_Color = nullptr;
+#else
 		cachedCmd->m_Vertices = nullptr;
+#endif
 		cachedCmd->m_NumVertices = 0;
 		cachedCmd->m_NumIndices = 0;
 	} else {
@@ -3312,20 +3607,31 @@ void Context::cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* c
 	assert(cachedCmd->m_NumVertices + cmd->m_NumVertices < 65536);
 	assert(cachedCmd->m_NumIndices + cmd->m_NumIndices < 65536);
 	cachedCmd->m_NumVertices += (uint16_t)cmd->m_NumVertices;
-	cachedCmd->m_NumIndices += (uint16_t)cmd->m_NumIndices;
+#if SEPARATE_VERTEX_STREAMS
+	cachedCmd->m_Pos = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Pos, sizeof(Vec2) * cachedCmd->m_NumVertices, 16);
+	cachedCmd->m_UV = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_UV, sizeof(Vec2) * cachedCmd->m_NumVertices, 16);
+	cachedCmd->m_Color = (uint32_t*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Color, sizeof(uint32_t) * cachedCmd->m_NumVertices, 16);
+
+	const Vec2* srcPos = &m_VertexBuffers[cmd->m_VertexBufferID].m_Pos[cmd->m_FirstVertexID];
+	const Vec2* srcUV = &m_VertexBuffers[cmd->m_VertexBufferID].m_UV[cmd->m_FirstVertexID];
+	const uint32_t* srcColor = &m_VertexBuffers[cmd->m_VertexBufferID].m_Color[cmd->m_FirstVertexID];
+	memcpy(&cachedCmd->m_Pos[firstVertexID], srcPos, sizeof(Vec2) * cmd->m_NumVertices);
+	memcpy(&cachedCmd->m_UV[firstVertexID], srcUV, sizeof(Vec2) * cmd->m_NumVertices);
+	memcpy(&cachedCmd->m_Color[firstVertexID], srcColor, sizeof(uint32_t) * cmd->m_NumVertices);
+#else
 	cachedCmd->m_Vertices = (DrawVertex*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Vertices, sizeof(DrawVertex) * cachedCmd->m_NumVertices, 16);
-	cachedCmd->m_Indices = (uint16_t*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Indices, sizeof(uint16_t) * cachedCmd->m_NumIndices, 16);
 
 	const DrawVertex* srcDrawVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID];
-	const uint16_t* srcIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID];
-
 	DrawVertex* dstDrawVertex = &cachedCmd->m_Vertices[firstVertexID];
-	uint16_t* dstIndex = &cachedCmd->m_Indices[firstIndexID];
-
 	memcpy(dstDrawVertex, srcDrawVertex, sizeof(DrawVertex) * cmd->m_NumVertices);
+#endif
 
-	// NOTE: Don't use the SIMD version because the alignment of srcIndex isn't guaranteed.
-//	transformDrawIndices(srcIndex, cmd->m_NumIndices, dstIndex, firstVertexID);
+	// Copy the indices...
+	cachedCmd->m_NumIndices += (uint16_t)cmd->m_NumIndices;
+	cachedCmd->m_Indices = (uint16_t*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Indices, sizeof(uint16_t) * cachedCmd->m_NumIndices, 16);
+
+	const uint16_t* srcIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID];
+	uint16_t* dstIndex = &cachedCmd->m_Indices[firstIndexID];
 	const uint32_t numIndices = cmd->m_NumIndices;
 	for (uint32_t i = 0; i < numIndices; ++i) {
 		*dstIndex++ = *srcIndex++ + firstVertexID;
@@ -3572,7 +3878,19 @@ void Context::renderTextQuads(uint32_t numQuads, Color color)
 
 	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[m_FontImageID]);
 
+#if SEPARATE_VERTEX_STREAMS
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+	memcpy(dstPos, m_TextVertices, sizeof(Vec2) * numDrawVertices);
+	memset32(dstColor, numDrawVertices, &color);
+#else
 	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
+#endif
+
 	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 	uint32_t startVertexID = cmd->m_NumVertices;
@@ -3581,18 +3899,29 @@ void Context::renderTextQuads(uint32_t numQuads, Color color)
 	cmd->m_NumIndices += numDrawIndices;
 
 	const FONSquad* q = m_TextQuads;
+#if !SEPARATE_VERTEX_STREAMS
 	const Vec2* v = m_TextVertices;
+#endif
+
 	while (numQuads-- > 0) {
+#if SEPARATE_VERTEX_STREAMS
+		dstUV[0].x = q->s0; dstUV[0].y = q->t0;
+		dstUV[1].x = q->s1; dstUV[1].y = q->t0;
+		dstUV[2].x = q->s1; dstUV[2].y = q->t1;
+		dstUV[3].x = q->s0; dstUV[3].y = q->t1;
+		dstUV += 4;
+#else
 		SET_DRAW_VERTEX(dstVertex, v[0].x, v[0].y, q->s0, q->t0, color); ++dstVertex;
 		SET_DRAW_VERTEX(dstVertex, v[1].x, v[1].y, q->s1, q->t0, color); ++dstVertex;
 		SET_DRAW_VERTEX(dstVertex, v[2].x, v[2].y, q->s1, q->t1, color); ++dstVertex;
 		SET_DRAW_VERTEX(dstVertex, v[3].x, v[3].y, q->s0, q->t1, color); ++dstVertex;
+		v += 4;
+#endif
 
 		*dstIndex++ = (uint16_t)startVertexID; *dstIndex++ = (uint16_t)(startVertexID + 1); *dstIndex++ = (uint16_t)(startVertexID + 2);
 		*dstIndex++ = (uint16_t)startVertexID; *dstIndex++ = (uint16_t)(startVertexID + 2); *dstIndex++ = (uint16_t)(startVertexID + 3);
 
 		startVertexID += 4;
-		v += 4;
 		++q;
 	}
 }
@@ -3614,7 +3943,19 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 
 	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
 
+#if SEPARATE_VERTEX_STREAMS
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+	memcpy(dstPos, vtx, sizeof(Vec2) * numDrawVertices);
+	memset64(dstUV, numDrawVertices, &uv.x);
+	memset32(dstColor, numDrawVertices, &c);
+#else
 	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
+#endif
 	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 	const uint32_t startVertexID = cmd->m_NumVertices;
@@ -3622,11 +3963,13 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 	cmd->m_NumVertices += numDrawVertices;
 	cmd->m_NumIndices += numDrawIndices;
 
+#if !SEPARATE_VERTEX_STREAMS
 	while (numPathVertices-- > 0) {
 		SET_DRAW_VERTEX(dstVertex, vtx->x, vtx->y, uv.x, uv.y, c);
 		++dstVertex;
 		++vtx;
 	}
+#endif
 
 	uint32_t secondTriVertex = startVertexID + 1;
 	while (numTris-- > 0) {
@@ -3658,7 +4001,20 @@ void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, C
 
 	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
 
+#if SEPARATE_VERTEX_STREAMS
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+	const uint32_t colors[2] = { c, c0 };
+
+	memset64(dstUV, numDrawVertices, &uv.x);
+	memset64(dstColor, numDrawVertices >> 1, &colors[0]);
+#else
 	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
+#endif
 	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 	const uint32_t startVertexID = cmd->m_NumVertices;
@@ -3699,8 +4055,14 @@ void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, C
 		const Vec2 v = calcExtrusionVector(d01, d12);
 		const Vec2 v_aa = v * aa;
 
+#if SEPARATE_VERTEX_STREAMS
+		dstPos[0] = p1 - v_aa;
+		dstPos[1] = p1 + v_aa;
+		dstPos += 2;
+#else
 		SET_DRAW_VERTEX(dstVertex, p1.x - v_aa.x, p1.y - v_aa.y, uv.x, uv.y, c); ++dstVertex;
 		SET_DRAW_VERTEX(dstVertex, p1.x + v_aa.x, p1.y + v_aa.y, uv.x, uv.y, c0); ++dstVertex;
+#endif
 
 		d01 = d12;
 	}
@@ -3755,7 +4117,19 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 
 	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, img->m_ImageHandle);
 
+#if SEPARATE_VERTEX_STREAMS
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+	memcpy(dstPos, vtx, sizeof(Vec2) * numDrawVertices);
+	memset32(dstColor, numDrawVertices, &c);
+	transformPointsSSE_Unaligned(vtx, numDrawVertices, dstUV, mtx);
+#else
 	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
+#endif
 	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 	const uint32_t startVertexID = cmd->m_NumVertices;
@@ -3763,6 +4137,7 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 	cmd->m_NumVertices += numDrawVertices;
 	cmd->m_NumIndices += numDrawIndices;
 
+#if !SEPARATE_VERTEX_STREAMS
 	for (uint32_t i = 0; i < numPathVertices; ++i) {
 		const Vec2& p = vtx[i];
 		Vec2 uv = transformPos2D(p.x, p.y, mtx);
@@ -3770,6 +4145,7 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 		SET_DRAW_VERTEX(dstVertex, p.x, p.y, uv.x, uv.y, c);
 		++dstVertex;
 	}
+#endif
 
 	uint32_t secondTriVertex = startVertexID + 1;
 	while (numTris-- > 0) {
@@ -3790,7 +4166,21 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 
 	DrawCommand* cmd = allocDrawCommand_ColorGradient(numDrawVertices, numDrawIndices, handle);
 
+#if SEPARATE_VERTEX_STREAMS
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+	const uint32_t color = ColorRGBA::White;
+	const float uv[2] = { 0.0f, 0.0f };
+	memcpy(dstPos, vtx, sizeof(Vec2) * numDrawVertices);
+	memset64(dstUV, numDrawVertices, &uv[0]);
+	memset32(dstColor, numDrawVertices, &color);
+#else
 	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
+#endif
 	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 	const uint32_t startVertexID = cmd->m_NumVertices;
@@ -3798,11 +4188,13 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 	cmd->m_NumVertices += numDrawVertices;
 	cmd->m_NumIndices += numDrawIndices;
 
+#if !SEPARATE_VERTEX_STREAMS
 	while (numPathVertices-- > 0) {
 		SET_DRAW_VERTEX(dstVertex, vtx->x, vtx->y, 0.0f, 0.0f, ColorRGBA::White);
 		++dstVertex;
 		++vtx;
 	}
+#endif
 
 	uint32_t secondTriVertex = startVertexID + 1;
 	while (numTris-- > 0) {
@@ -3850,7 +4242,19 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 
 		DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
 
+#if SEPARATE_VERTEX_STREAMS
+		VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+		const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+		Vec2* dstPos = &vb->m_Pos[vbOffset];
+		Vec2* dstUV = &vb->m_UV[vbOffset];
+		uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+		const uint32_t colors[4] = { c0, c, c, c0 };
+		memset64(dstUV, numDrawVertices, &uv.x);
+		memset128(dstColor, numDrawVertices >> 2, &colors[0]);
+#else
 		DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
+#endif
 		uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 		const uint32_t startVertexID = cmd->m_NumVertices;
@@ -3941,10 +4345,18 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 			const Vec2 leftPointAA = leftPoint * sidePointFactor - pScaled;
 			const Vec2 rightPointAA = rightPoint * sidePointFactor - pScaled;
 
+#if SEPARATE_VERTEX_STREAMS
+			dstPos[0] = leftPointAA;
+			dstPos[1] = leftPoint;
+			dstPos[2] = rightPoint;
+			dstPos[3] = rightPointAA;
+			dstPos += 4;
+#else
 			SET_DRAW_VERTEX(dstVertex, leftPointAA.x, leftPointAA.y, uv.x, uv.y, c0); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, rightPointAA.x, rightPointAA.y, uv.x, uv.y, c0); ++dstVertex;
+#endif
 		} else {
 			d01 = vtx[0] - vtx[numPathVertices - 1];
 			vec2Normalize(&d01);
@@ -3969,10 +4381,18 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 			const Vec2 rightPoint = p1 - v_hsw;
 			const Vec2 rightPointAA = p1 - v_hsw_aa;
 
+#if SEPARATE_VERTEX_STREAMS
+			dstPos[0] = leftPointAA;
+			dstPos[1] = leftPoint;
+			dstPos[2] = rightPoint;
+			dstPos[3] = rightPointAA;
+			dstPos += 4;
+#else
 			SET_DRAW_VERTEX(dstVertex, leftPointAA.x, leftPointAA.y, uv.x, uv.y, c0); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, rightPointAA.x, rightPointAA.y, uv.x, uv.y, c0); ++dstVertex;
+#endif
 
 			d01 = d12;
 		}
@@ -3996,10 +4416,18 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 			Vec2 leftPointAA = leftPoint * sidePointFactor - pScaled;
 			Vec2 rightPointAA = rightPoint * sidePointFactor - pScaled;
 
+#if SEPARATE_VERTEX_STREAMS
+			dstPos[0] = leftPointAA;
+			dstPos[1] = leftPoint;
+			dstPos[2] = rightPoint;
+			dstPos[3] = rightPointAA;
+			dstPos += 4;
+#else
 			SET_DRAW_VERTEX(dstVertex, leftPointAA.x, leftPointAA.y, uv.x, uv.y, c0); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, rightPointAA.x, rightPointAA.y, uv.x, uv.y, c0); ++dstVertex;
+#endif
 		}
 
 		// Generate indices...
@@ -4057,7 +4485,17 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 
 		DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
 
+#if SEPARATE_VERTEX_STREAMS
+		VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+		const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+		Vec2* dstPos = &vb->m_Pos[vbOffset];
+		Vec2* dstUV = &vb->m_UV[vbOffset];
+		uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+		memset64(dstUV, numDrawVertices, &uv.x);
+#else
 		DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
+#endif
 		uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 		const uint32_t startVertexID = cmd->m_NumVertices;
@@ -4135,9 +4573,21 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 				// TODO: Even if lineCap == Round assume Butt.
 			}
 
+#if SEPARATE_VERTEX_STREAMS
+			dstPos[0] = leftPoint;
+			dstPos[1] = p0;
+			dstPos[2] = rightPoint;
+			dstPos += 3;
+
+			dstColor[0] = c0;
+			dstColor[1] = c;
+			dstColor[2] = c0;
+			dstColor += 3;
+#else
 			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c0); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, p0.x, p0.y, uv.x, uv.y, c); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c0); ++dstVertex;
+#endif
 		} else {
 			d01 = vtx[0] - vtx[numPathVertices - 1];
 			vec2Normalize(&d01);
@@ -4159,9 +4609,21 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 			const Vec2 leftPoint = p1 + v_hsw;
 			const Vec2 rightPoint = p1 - v_hsw;
 
+#if SEPARATE_VERTEX_STREAMS
+			dstPos[0] = leftPoint;
+			dstPos[1] = p1;
+			dstPos[2] = rightPoint;
+			dstPos += 3;
+
+			dstColor[0] = c0;
+			dstColor[1] = c;
+			dstColor[2] = c0;
+			dstColor += 3;
+#else
 			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c0); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, p1.x, p1.y, uv.x, uv.y, c); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c0); ++dstVertex;
+#endif
 
 			d01 = d12;
 		}
@@ -4181,9 +4643,21 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 				// TODO: Even if lineCap == Round assume Butt.
 			}
 
+#if SEPARATE_VERTEX_STREAMS
+			dstPos[0] = leftPoint;
+			dstPos[1] = p1;
+			dstPos[2] = rightPoint;
+			dstPos += 3;
+
+			dstColor[0] = c0;
+			dstColor[1] = c;
+			dstColor[2] = c0;
+			dstColor += 3;
+#else
 			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c0); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, p1.x, p1.y, uv.x, uv.y, c); ++dstVertex;
 			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c0); ++dstVertex;
+#endif
 		}
 
 		// Generate indices...
@@ -4256,7 +4730,18 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 
 	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
 
+#if SEPARATE_VERTEX_STREAMS
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+	memset64(dstUV, numDrawVertices, &uv.x);
+	memset32(dstColor, numDrawVertices, &c);
+#else
 	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
+#endif
 	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 	const uint32_t startVertexID = cmd->m_NumVertices;
@@ -4330,8 +4815,14 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 			// TODO: Even if lineCap == Round assume Butt.
 		}
 
+#if SEPARATE_VERTEX_STREAMS
+		dstPos[0] = leftPoint;
+		dstPos[1] = rightPoint;
+		dstPos += 2;
+#else
 		SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
 		SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
+#endif
 	} else {
 		d01 = vtx[0] - vtx[numPathVertices - 1];
 		vec2Normalize(&d01);
@@ -4352,8 +4843,14 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 		const Vec2 leftPoint = p1 + v_hsw;
 		const Vec2 rightPoint = p1 - v_hsw;
 
+#if SEPARATE_VERTEX_STREAMS
+		dstPos[0] = leftPoint;
+		dstPos[1] = rightPoint;
+		dstPos += 2;
+#else
 		SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
 		SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
+#endif
 
 		d01 = d12;
 	}
@@ -4373,8 +4870,14 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 			// TODO: Even if lineCap == Round assume Butt.
 		}
 
+#if SEPARATE_VERTEX_STREAMS
+		dstPos[0] = leftPoint;
+		dstPos[1] = rightPoint;
+		dstPos += 2;
+#else
 		SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
 		SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
+#endif
 	}
 
 	// Generate indices...
@@ -4540,11 +5043,20 @@ VertexBuffer* Context::allocVertexBuffer()
 		m_VertexBufferCapacity++;
 		m_VertexBuffers = (VertexBuffer*)BX_REALLOC(m_Allocator, m_VertexBuffers, sizeof(VertexBuffer) * m_VertexBufferCapacity);
 		
-		m_VertexBuffers[m_VertexBufferCapacity - 1].m_bgfxHandle = BGFX_INVALID_HANDLE;
+		VertexBuffer* vb = &m_VertexBuffers[m_VertexBufferCapacity - 1];
+		vb->m_bgfxHandle = BGFX_INVALID_HANDLE;
+
+#if SEPARATE_VERTEX_STREAMS
+		vb->m_Pos = (Vec2*)BX_ALIGNED_ALLOC(m_Allocator, sizeof(Vec2) * MAX_VB_VERTICES, 16);
+		vb->m_UV = (Vec2*)BX_ALIGNED_ALLOC(m_Allocator, sizeof(Vec2) * MAX_VB_VERTICES, 16);
+		vb->m_Color = (uint32_t*)BX_ALIGNED_ALLOC(m_Allocator, sizeof(uint32_t) * MAX_VB_VERTICES, 16);
+#endif
 	}
 
 	VertexBuffer* vb = &m_VertexBuffers[m_NumVertexBuffers++];
+#if !SEPARATE_VERTEX_STREAMS
 	vb->m_Vertices = (DrawVertex*)allocVertexBufferData();
+#endif
 	vb->m_Count = 0;
 
 	return vb;
