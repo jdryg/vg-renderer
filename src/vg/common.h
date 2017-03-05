@@ -7,6 +7,18 @@
 #	define VG_SHAPE_DYNAMIC_TEXT 1
 #endif
 
+#ifndef VG_MAX_GRADIENTS
+#	define VG_MAX_GRADIENTS 64
+#endif
+
+#ifndef VG_MAX_IMAGE_PATTERNS
+#	define VG_MAX_IMAGE_PATTERNS 64
+#endif
+
+#ifndef VG_MAX_FONTS
+#	define VG_MAX_FONTS 8
+#endif
+
 #define VG_COLOR_RED_SHIFT   0
 #define VG_COLOR_GREEN_SHIFT 8
 #define VG_COLOR_BLUE_SHIFT  16

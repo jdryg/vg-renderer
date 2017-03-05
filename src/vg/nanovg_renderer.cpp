@@ -4,10 +4,6 @@
 #include <bx/allocator.h>
 #include <assert.h>
 
-#define MAX_GRADIENTS 64
-#define MAX_IMAGE_PATTERNS 64
-#define MAX_FONTS 8
-
 namespace vg
 {
 NanoVGRenderer::NanoVGRenderer() : 
@@ -27,7 +23,7 @@ NanoVGRenderer::~NanoVGRenderer()
 		m_Context = nullptr;
 	}
 	
-	for (uint32_t i = 0; i < MAX_FONTS; ++i) {
+	for (uint32_t i = 0; i < VG_MAX_FONTS; ++i) {
 		if (m_FontData[i]) {
 			BX_FREE(m_Allocator, m_FontData[i]);
 		}
@@ -47,10 +43,10 @@ bool NanoVGRenderer::init(bool edgeAA, uint8_t viewID, bx::AllocatorI* allocator
 		return false;
 	}
 
-	m_Gradients = (NVGpaint*)BX_ALLOC(allocator, sizeof(NVGpaint) * MAX_GRADIENTS);
-	m_ImagePatterns = (NVGpaint*)BX_ALLOC(allocator, sizeof(NVGpaint) * MAX_IMAGE_PATTERNS);
-	m_FontData = (void**)BX_ALLOC(allocator, sizeof(void*) * MAX_FONTS);
-	memset(m_FontData, 0, sizeof(void*) * MAX_FONTS);
+	m_Gradients = (NVGpaint*)BX_ALLOC(allocator, sizeof(NVGpaint) * VG_MAX_GRADIENTS);
+	m_ImagePatterns = (NVGpaint*)BX_ALLOC(allocator, sizeof(NVGpaint) * VG_MAX_IMAGE_PATTERNS);
+	m_FontData = (void**)BX_ALLOC(allocator, sizeof(void*) * VG_MAX_FONTS);
+	memset(m_FontData, 0, sizeof(void*) * VG_MAX_FONTS);
 	
 	return true;
 }
@@ -146,7 +142,7 @@ void NanoVGRenderer::FillConvexPath(GradientHandle handle, bool aa)
 {
 	BX_UNUSED(aa);
 	assert(m_Context != nullptr);
-	assert(handle.idx < MAX_GRADIENTS);
+	assert(handle.idx < VG_MAX_GRADIENTS);
 
 	NVGpaint* paint = &m_Gradients[handle.idx];
 	nvgFillPaint(m_Context, *paint);
@@ -157,7 +153,7 @@ void NanoVGRenderer::FillConvexPath(ImagePatternHandle handle, bool aa)
 {
 	BX_UNUSED(aa);
 	assert(m_Context != nullptr);
-	assert(handle.idx < MAX_IMAGE_PATTERNS);
+	assert(handle.idx < VG_MAX_IMAGE_PATTERNS);
 
 	NVGpaint* paint = &m_ImagePatterns[handle.idx];
 	nvgFillPaint(m_Context, *paint);
@@ -319,7 +315,7 @@ ImagePatternHandle NanoVGRenderer::ImagePattern(float cx, float cy, float w, flo
 	NVGpaint* paint = &m_ImagePatterns[paintID];
 	*paint = nvgImagePattern(m_Context, cx, cy, w, h, angle, (int)image.idx, alpha);
 
-	m_NextImagePatternID = (m_NextImagePatternID + 1) % MAX_IMAGE_PATTERNS;
+	m_NextImagePatternID = (m_NextImagePatternID + 1) % VG_MAX_IMAGE_PATTERNS;
 
 	return { (uint16_t)paintID };
 }
@@ -331,7 +327,7 @@ GradientHandle NanoVGRenderer::LinearGradient(float sx, float sy, float ex, floa
 
 	*paint = nvgLinearGradient(m_Context, sx, sy, ex, ey, nvgRGBA32(icol), nvgRGBA32(ocol));
 
-	m_NextGradientID = (m_NextGradientID + 1) % MAX_GRADIENTS;
+	m_NextGradientID = (m_NextGradientID + 1) % VG_MAX_GRADIENTS;
 
 	return { (uint16_t)paintID };
 }
@@ -343,7 +339,7 @@ GradientHandle NanoVGRenderer::BoxGradient(float x, float y, float w, float h, f
 
 	*paint = nvgBoxGradient(m_Context, x, y, w, h, r, f, nvgRGBA32(icol), nvgRGBA32(ocol));
 
-	m_NextGradientID = (m_NextGradientID + 1) % MAX_GRADIENTS;
+	m_NextGradientID = (m_NextGradientID + 1) % VG_MAX_GRADIENTS;
 
 	return { (uint16_t)paintID };
 }
@@ -355,7 +351,7 @@ GradientHandle NanoVGRenderer::RadialGradient(float cx, float cy, float inr, flo
 
 	*paint = nvgRadialGradient(m_Context, cx, cy, inr, outr, nvgRGBA32(icol), nvgRGBA32(ocol));
 
-	m_NextGradientID = (m_NextGradientID + 1) % MAX_GRADIENTS;
+	m_NextGradientID = (m_NextGradientID + 1) % VG_MAX_GRADIENTS;
 
 	return { (uint16_t)paintID };
 }
@@ -389,7 +385,7 @@ bool NanoVGRenderer::IsImageHandleValid(ImageHandle image)
 
 FontHandle NanoVGRenderer::LoadFontFromMemory(const char* name, const uint8_t* data, uint32_t size)
 {
-	if (m_NextFontID == MAX_FONTS) {
+	if (m_NextFontID == VG_MAX_FONTS) {
 		return BGFX_INVALID_HANDLE;
 	}
 
@@ -448,8 +444,8 @@ void NanoVGRenderer::SubmitShape(Shape* shape)
 
 	const uint16_t firstGradientID = (uint16_t)m_NextGradientID;
 	const uint16_t firstImagePatternID = (uint16_t)m_NextImagePatternID;
-	assert(firstGradientID + shape->m_NumGradients <= MAX_GRADIENTS);
-	assert(firstImagePatternID + shape->m_NumImagePatterns <= MAX_IMAGE_PATTERNS);
+	assert(firstGradientID + shape->m_NumGradients <= VG_MAX_GRADIENTS);
+	assert(firstImagePatternID + shape->m_NumImagePatterns <= VG_MAX_IMAGE_PATTERNS);
 
 	while (cmdList < cmdListEnd) {
 		ShapeCommand::Enum cmdType = *(ShapeCommand::Enum*)cmdList;
@@ -651,8 +647,8 @@ void NanoVGRenderer::SubmitShape(Shape* shape, GetStringByIDFunc stringCallback,
 
 	const uint16_t firstGradientID = (uint16_t)m_NextGradientID;
 	const uint16_t firstImagePatternID = (uint16_t)m_NextImagePatternID;
-	assert(firstGradientID + shape->m_NumGradients <= MAX_GRADIENTS);
-	assert(firstImagePatternID + shape->m_NumImagePatterns <= MAX_IMAGE_PATTERNS);
+	assert(firstGradientID + shape->m_NumGradients <= VG_MAX_GRADIENTS);
+	assert(firstImagePatternID + shape->m_NumImagePatterns <= VG_MAX_IMAGE_PATTERNS);
 
 	while (cmdList < cmdListEnd) {
 		ShapeCommand::Enum cmdType = *(ShapeCommand::Enum*)cmdList;

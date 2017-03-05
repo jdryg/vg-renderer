@@ -4,8 +4,6 @@
 // 3) LineCap::Round
 // 4) Layers
 // 5) Check polygon winding and force CCW order because otherwise AA fringes are generated inside the polygon!
-// 6) Preprocess path vertices before emitting any triangles in Stroke/Fill to avoid calculating directions/normals multiple times in case
-//    a path is both Stroke'd and Fill'ed. Problem is that concave polygon decomposition won't work correctly. 
 
 #pragma warning(disable: 4127) // conditional expression is constant (e.g. BezierTo)
 #pragma warning(disable: 4706) // assignment withing conditional expression
@@ -45,11 +43,8 @@ namespace vg
 {
 #define MAX_STATE_STACK_SIZE     16
 #define MAX_VB_VERTICES          65536
-#define MAX_GRADIENTS            64
-#define MAX_IMAGE_PATTERNS       64
 #define MAX_TEXTURES             64
 #define MAX_FONT_IMAGES          4
-#define MAX_FONTS                8
 
 #define BATCH_TRANSFORM          1
 #define BATCH_PATH_DIRECTIONS    0
@@ -273,13 +268,13 @@ struct Context
 	FONScontext* m_FontStashContext;
 	ImageHandle m_FontImages[MAX_FONT_IMAGES];
 	int m_FontImageID;
-	void* m_FontData[MAX_FONTS];
+	void* m_FontData[VG_MAX_FONTS];
 	uint32_t m_NextFontID;
 
-	Gradient m_Gradients[MAX_GRADIENTS];
+	Gradient m_Gradients[VG_MAX_GRADIENTS];
 	uint32_t m_NextGradientID;
 
-	ImagePattern m_ImagePatterns[MAX_IMAGE_PATTERNS];
+	ImagePattern m_ImagePatterns[VG_MAX_IMAGE_PATTERNS];
 	uint32_t m_NextImagePatternID;
 
 	bgfx::VertexDecl m_DrawVertexDecl;
@@ -545,193 +540,22 @@ inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
 	return v;
 }
 
+#if BATCH_TRANSFORM
+void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx);
+#endif
+#if !SEPARATE_VERTEX_STREAMS
+void batchTransformDrawVertices(const DrawVertex* __restrict src, uint32_t n, DrawVertex* __restrict dst, const float* __restrict mtx);
+#endif
+void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint16_t* __restrict dst, uint16_t delta);
+void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, Vec2* __restrict transformedVertices);
+
 #if SEPARATE_VERTEX_STREAMS
-void memset32(void* __restrict dst, uint32_t n, const void* __restrict src)
-{
-#if 0
-	const uint32_t s = *(const uint32_t*)src;
-	uint32_t* d = (uint32_t*)dst;
-	while (n-- > 0) {
-		*d++ = s;
-	}
-#else
-	const __m128 s128 = _mm_load1_ps((const float*)src);
-	float* d = (float*)dst;
-
-	uint32_t iter = n >> 4;
-	while (iter-- > 0) {
-		_mm_storeu_ps(d + 0, s128);
-		_mm_storeu_ps(d + 4, s128);
-		_mm_storeu_ps(d + 8, s128);
-		_mm_storeu_ps(d + 12, s128);
-		d += 16;
-	}
-
-	uint32_t rem = n & 15;
-	if (rem >= 8) {
-		_mm_storeu_ps(d + 0, s128);
-		_mm_storeu_ps(d + 4, s128);
-		d += 8;
-		rem -= 8;
-	}
-
-	if (rem >= 4) {
-		_mm_storeu_ps(d, s128);
-		d += 4;
-		rem -= 4;
-	}
-
-	switch (rem) {
-	case 3:
-		*d++ = *(const float*)src;
-	case 2:
-		*d++ = *(const float*)src;
-	case 1:
-		*d++ = *(const float*)src;
-	}
+void swizzleVertexBufferData(const Vec2* __restrict pos, const Vec2* __restrict uv, const uint32_t* __restrict color, uint32_t n, DrawVertex* __restrict dv);
+void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx);
+void memset32(void* __restrict dst, uint32_t n32, const void* __restrict src);
+void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src);
+void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src);
 #endif
-}
-
-void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src)
-{
-#if 0
-	const uint32_t s0 = *((const uint32_t*)src + 0);
-	const uint32_t s1 = *((const uint32_t*)src + 1);
-	uint32_t* d = (uint32_t*)dst;
-	while (n-- > 0) {
-		d[0] = s0;
-		d[1] = s1;
-		d += 2;
-	}
-#else
-	const float* s = (const float*)src;
-	const __m128 s0 = _mm_load_ss(&s[0]);
-	const __m128 s1 = _mm_load_ss(&s[1]);
-	const __m128 s0011 = _mm_shuffle_ps(s0, s1, 0);
-	const __m128 s128 = _mm_shuffle_ps(s0011, s0011, _MM_SHUFFLE(2, 0, 2, 0));
-	float* d = (float*)dst;
-
-	uint32_t iter = n64 >> 3; // 8 64-bit values per iteration (== 16 floats / iter)
-	while (iter-- > 0) {
-		_mm_storeu_ps(d + 0, s128);
-		_mm_storeu_ps(d + 4, s128);
-		_mm_storeu_ps(d + 8, s128);
-		_mm_storeu_ps(d + 12, s128);
-		d += 16;
-	}
-
-	uint32_t rem = n64 & 7;
-	if (rem >= 4) {
-		_mm_storeu_ps(d + 0, s128);
-		_mm_storeu_ps(d + 4, s128);
-		d += 8;
-		rem -= 4;
-	}
-
-	if (rem >= 2) {
-		_mm_storeu_ps(d, s128);
-		d += 4;
-		rem -= 2;
-	}
-
-	if (rem) {
-		d[0] = s[0];
-		d[1] = s[1];
-	}
-#endif
-}
-
-void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src)
-{
-#if 0
-	const uint32_t s0 = *((const uint32_t*)src + 0);
-	const uint32_t s1 = *((const uint32_t*)src + 1);
-	const uint32_t s2 = *((const uint32_t*)src + 2);
-	const uint32_t s3 = *((const uint32_t*)src + 3);
-	uint32_t* d = (uint32_t*)dst;
-	while (n-- > 0) {
-		d[0] = s0;
-		d[1] = s1;
-		d[2] = s2;
-		d[3] = s3;
-		d += 4;
-	}
-#else
-	const __m128 s128 = _mm_loadu_ps((const float*)src);
-	float* d = (float*)dst;
-
-	uint32_t iter = n128 >> 2; // 4 128-bit values per iteration (== 16 floats / iter)
-	while (iter-- > 0) {
-		_mm_storeu_ps(d + 0, s128);
-		_mm_storeu_ps(d + 4, s128);
-		_mm_storeu_ps(d + 8, s128);
-		_mm_storeu_ps(d + 12, s128);
-		d += 16;
-	}
-
-	uint32_t rem = n128 & 3;
-	if (rem >= 2) {
-		_mm_storeu_ps(d + 0, s128);
-		_mm_storeu_ps(d + 4, s128);
-		d += 8;
-		rem -= 2;
-	}
-
-	if (rem) {
-		_mm_storeu_ps(d, s128);
-	}
-#endif
-}
-
-void swizzleVertexBufferData(const Vec2* __restrict pos, const Vec2* __restrict uv, const uint32_t* __restrict color, uint32_t n, DrawVertex* __restrict dv)
-{
-#if 0
-	while (n-- > 0) {
-		SET_DRAW_VERTEX(dv, pos->x, pos->y, uv->x, uv->y, *color);
-		pos++;
-		uv++;
-		color++;
-		dv++;
-	}
-#else
-	const uint32_t iter = n >> 2;
-	for (uint32_t i = 0; i < iter; ++i) {
-		bx::simd128_t p01 = bx::simd_ld(pos);     // {p0.x, p0.y, p1.x, p1.y}
-		bx::simd128_t p23 = bx::simd_ld(pos + 2); // {p2.x, p2.y, p3.x, p3.y}
-		bx::simd128_t uv01 = bx::simd_ld(uv);     // {u0, v0, u1, v1}
-		bx::simd128_t uv23 = bx::simd_ld(uv + 2); // {u2, v2, u3, v3}
-
-		bx::simd128_t vertex0 = bx::simd_shuf_xyAB(p01, uv01);
-		bx::simd128_t vertex1 = bx::simd_shuf_zwCD(p01, uv01);
-		bx::simd128_t vertex2 = bx::simd_shuf_xyAB(p23, uv23);
-		bx::simd128_t vertex3 = bx::simd_shuf_zwCD(p23, uv23);
-
-		_mm_storeu_ps(&dv[0].x, vertex0);
-		_mm_storeu_ps(&dv[1].x, vertex1);
-		_mm_storeu_ps(&dv[2].x, vertex2);
-		_mm_storeu_ps(&dv[3].x, vertex3);
-		dv[0].color = color[0];
-		dv[1].color = color[1];
-		dv[2].color = color[2];
-		dv[3].color = color[3];
-
-		pos += 4;
-		uv += 4;
-		color += 4;
-		dv += 4;
-	}
-
-	uint32_t rem = n & 3;
-	while (rem-- > 0) {
-		SET_DRAW_VERTEX(dv, pos->x, pos->y, uv->x, uv->y, *color);
-		pos++;
-		uv++;
-		color++;
-		dv++;
-	}
-#endif
-}
-#endif // SEPARATE_VERTEX_STREAMS
 
 //////////////////////////////////////////////////////////////////////////
 // BGFXVGRenderer
@@ -1069,7 +893,7 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID) :
 	m_InnerColorUniform = BGFX_INVALID_HANDLE;
 	m_OuterColorUniform = BGFX_INVALID_HANDLE;
 
-	memset(m_FontData, 0, sizeof(void*) * MAX_FONTS);
+	memset(m_FontData, 0, sizeof(void*) * VG_MAX_FONTS);
 }
 
 Context::~Context()
@@ -1109,7 +933,7 @@ Context::~Context()
 	BX_FREE(m_Allocator, m_DrawCommands);
 
 	// Manually delete font data
-	for (int i = 0; i < MAX_FONTS; ++i) {
+	for (int i = 0; i < VG_MAX_FONTS; ++i) {
 		if (m_FontData[i]) {
 			BX_FREE(m_Allocator, m_FontData[i]);
 		}
@@ -1729,223 +1553,12 @@ void Context::closePath()
 	}
 }
 
-#if BATCH_PATH_DIRECTIONS
-void calcPathDirectionsSSE(const Vec2* __restrict v, uint32_t n, Vec2* __restrict d, bool isClosed)
-{
-	const bx::simd128_t eps = bx::simd_splat(1e-5f);
-
-	const float* src = &v->x;
-	float* dst = &d->x;
-
-	if (n == 2) {
-		assert(!isClosed);
-
-		bx::simd128_t src0123 = bx::simd_ld(src);
-		bx::simd128_t src0101 = bx::simd_swiz_xyxy(src0123);
-		bx::simd128_t src2323 = bx::simd_swiz_zwzw(src0123);
-
-		bx::simd128_t d20_31_20_31 = bx::simd_sub(src2323, src0101);
-		bx::simd128_t d20_31_20_31_sqr = bx::simd_mul(d20_31_20_31, d20_31_20_31);
-		bx::simd128_t d31_20_31_20_sqr = bx::simd_swiz_yxzw(d20_31_20_31_sqr);
-		bx::simd128_t l2 = bx::simd_add(d20_31_20_31_sqr, d31_20_31_20_sqr);
-		bx::simd128_t mask = bx::simd_cmpgt(l2, eps);
-#if 0 && APPROXIMATE_MATH
-		bx::simd128_t inv_l = bx::simd_rsqrt_carmack(l2);
-#else
-		bx::simd128_t inv_l = bx::simd_rsqrt(l2);
-#endif
-		bx::simd128_t inv_l_masked = bx::simd_and(inv_l, mask);
-
-		bx::simd128_t inv_l_0011 = bx::simd_swiz_xxyy(inv_l_masked);
-
-		bx::simd128_t dn_01 = bx::simd_mul(d20_31_20_31, inv_l_0011);
-
-		bx::simd_st(dst, dn_01);
-
-		assert((d[0] - d[1]).length() == 0.0f);
-	} else {
-		const uint32_t iter = (n >> 2) - ((n & 3) > 1 ? 0 : 1);
-		for (uint32_t i = 0; i < iter; ++i) {
-			bx::simd128_t src0123 = bx::simd_ld(src);
-			bx::simd128_t src4567 = bx::simd_ld(src + 4);
-			bx::simd128_t src89xx = bx::simd_ld(src + 8);
-
-			bx::simd128_t src2323 = bx::simd_swiz_zwzw(src0123);
-			bx::simd128_t src6767 = bx::simd_swiz_zwzw(src4567);
-
-			bx::simd128_t src2345 = bx::simd_shuf_xyAB(src2323, src4567);
-			bx::simd128_t src6789 = bx::simd_shuf_xyAB(src6767, src89xx);
-
-			bx::simd128_t d20_31_42_53 = bx::simd_sub(src2345, src0123);
-			bx::simd128_t d64_75_86_97 = bx::simd_sub(src6789, src4567);
-
-			bx::simd128_t d20_31_42_53_sqr = bx::simd_mul(d20_31_42_53, d20_31_42_53);
-			bx::simd128_t d64_75_86_97_sqr = bx::simd_mul(d64_75_86_97, d64_75_86_97);
-
-			bx::simd128_t d20_42_20_42_sqr = bx::simd_swiz_xzxz(d20_31_42_53_sqr);
-			bx::simd128_t d31_53_31_53_sqr = bx::simd_swiz_ywyw(d20_31_42_53_sqr);
-			bx::simd128_t d64_86_64_86_sqr = bx::simd_swiz_xzxz(d64_75_86_97_sqr);
-			bx::simd128_t d75_97_75_97_sqr = bx::simd_swiz_ywyw(d64_75_86_97_sqr);
-
-			bx::simd128_t d20_42_64_86_sqr = bx::simd_shuf_xyAB(d20_42_20_42_sqr, d64_86_64_86_sqr);
-			bx::simd128_t d31_53_75_97_sqr = bx::simd_shuf_xyAB(d31_53_31_53_sqr, d75_97_75_97_sqr);
-
-			bx::simd128_t l2 = bx::simd_add(d20_42_64_86_sqr, d31_53_75_97_sqr);
-
-			bx::simd128_t mask = bx::simd_cmpgt(l2, eps);
-#if 0 && APPROXIMATE_MATH
-			bx::simd128_t inv_l = bx::simd_rsqrt_carmack(l2);
-#else
-			bx::simd128_t inv_l = bx::simd_rsqrt(l2);
-#endif
-			bx::simd128_t inv_l_masked = bx::simd_and(inv_l, mask);
-
-			bx::simd128_t inv_l_0011 = bx::simd_swiz_xxyy(inv_l_masked);
-			bx::simd128_t inv_l_2233 = bx::simd_swiz_zzww(inv_l_masked);
-			bx::simd128_t dn_01 = bx::simd_mul(d20_31_42_53, inv_l_0011);
-			bx::simd128_t dn_23 = bx::simd_mul(d64_75_86_97, inv_l_2233);
-
-			bx::simd_st(dst, dn_01);
-			bx::simd_st(dst + 4, dn_23);
-
-			src += 8;
-			dst += 8;
-		}
-
-		Vec2* dstVec = (Vec2*)dst;
-		const Vec2* srcVec = (const Vec2*)src;
-		uint32_t rem = n - (iter << 2) - 1;
-		while (rem-- > 0) {
-			*dstVec = srcVec[1] - srcVec[0];
-			vec2Normalize(dstVec);
-			dstVec++;
-			srcVec++;
-		}
-
-		if (isClosed) {
-			*dstVec = v[0] - srcVec[0];
-			vec2Normalize(dstVec);
-		} else {
-			*dstVec = *(dstVec - 1);
-		}
-	}
-}
-#endif // BATCH_PATH_DIRECTIONS
-
-#if BATCH_TRANSFORM
-void transformPointsSSE(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx)
-{
-	const float* src = &v->x;
-	float* dst = &p->x;
-
-	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
-	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);
-	const bx::simd128_t mtx2 = bx::simd_splat(mtx[2]);
-	const bx::simd128_t mtx3 = bx::simd_splat(mtx[3]);
-	const bx::simd128_t mtx4 = bx::simd_splat(mtx[4]);
-	const bx::simd128_t mtx5 = bx::simd_splat(mtx[5]);
-
-	const uint32_t iter = n >> 2;
-	for (uint32_t i = 0; i < iter; ++i) {
-		bx::simd128_t src0123 = bx::simd_ld(src);
-		bx::simd128_t src4567 = bx::simd_ld(src + 4);
-
-		bx::simd128_t src0246 = bx::simd_shuf_xyAB(bx::simd_swiz_xzxz(src0123), bx::simd_swiz_xzxz(src4567));
-		bx::simd128_t src1357 = bx::simd_shuf_xyAB(bx::simd_swiz_ywyw(src0123), bx::simd_swiz_ywyw(src4567));
-
-		bx::simd128_t dst0246 = bx::simd_add(bx::simd_add(bx::simd_mul(src0246, mtx0), bx::simd_mul(src1357, mtx2)), mtx4);
-		bx::simd128_t dst1357 = bx::simd_add(bx::simd_add(bx::simd_mul(src0246, mtx1), bx::simd_mul(src1357, mtx3)), mtx5);
-
-		bx::simd128_t dst0123 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(dst0246, dst1357));
-		bx::simd128_t dst4567 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(dst0246, dst1357));
-
-		bx::simd_st(dst, dst0123);
-		bx::simd_st(dst + 4, dst4567);
-
-		src += 8;
-		dst += 8;
-	}
-
-	const uint32_t rem = n & 3;
-	switch (rem) {
-	case 3:
-		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
-		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
-		src += 2;
-	case 2:
-		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
-		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
-		src += 2;
-	case 1:
-		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
-		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
-		src += 2;
-	}
-}
-#endif // BATCH_TRANSFORM
-
-#if SEPARATE_VERTEX_STREAMS
-void transformPointsSSE_Unaligned(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx)
-{
-	const float* src = &v->x;
-	float* dst = &p->x;
-
-	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
-	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);
-	const bx::simd128_t mtx2 = bx::simd_splat(mtx[2]);
-	const bx::simd128_t mtx3 = bx::simd_splat(mtx[3]);
-	const bx::simd128_t mtx4 = bx::simd_splat(mtx[4]);
-	const bx::simd128_t mtx5 = bx::simd_splat(mtx[5]);
-
-	const uint32_t iter = n >> 2;
-	for (uint32_t i = 0; i < iter; ++i) {
-//		bx::simd128_t src0123 = bx::simd_ld(src);
-//		bx::simd128_t src4567 = bx::simd_ld(src + 4);
-		bx::simd128_t src0123 = _mm_loadu_ps(src);
-		bx::simd128_t src4567 = _mm_loadu_ps(src + 4);
-
-		bx::simd128_t src0246 = bx::simd_shuf_xyAB(bx::simd_swiz_xzxz(src0123), bx::simd_swiz_xzxz(src4567));
-		bx::simd128_t src1357 = bx::simd_shuf_xyAB(bx::simd_swiz_ywyw(src0123), bx::simd_swiz_ywyw(src4567));
-
-		bx::simd128_t dst0246 = bx::simd_add(bx::simd_add(bx::simd_mul(src0246, mtx0), bx::simd_mul(src1357, mtx2)), mtx4);
-		bx::simd128_t dst1357 = bx::simd_add(bx::simd_add(bx::simd_mul(src0246, mtx1), bx::simd_mul(src1357, mtx3)), mtx5);
-
-		bx::simd128_t dst0123 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(dst0246, dst1357));
-		bx::simd128_t dst4567 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(dst0246, dst1357));
-
-//		bx::simd_st(dst, dst0123);
-//		bx::simd_st(dst + 4, dst4567);
-		_mm_storeu_ps(dst, dst0123);
-		_mm_storeu_ps(dst + 4, dst4567);
-
-		src += 8;
-		dst += 8;
-	}
-
-	const uint32_t rem = n & 3;
-	switch (rem) {
-	case 3:
-		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
-		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
-		src += 2;
-	case 2:
-		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
-		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
-		src += 2;
-	case 1:
-		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
-		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
-		src += 2;
-	}
-}
-#endif // SEPARATE_VERTEX_STREAMS
-
 void Context::fillConvexPath(Color col, bool aa)
 {
 #if BATCH_TRANSFORM
 	if (!m_PathVerticesTransformed) {
 		const State* state = getState();
-		transformPointsSSE(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
+		batchTransformPositions(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
 		m_PathVerticesTransformed = true;
 	}
 
@@ -1974,7 +1587,7 @@ void Context::fillConvexPath(GradientHandle gradient, bool aa)
 #if BATCH_TRANSFORM
 	if (!m_PathVerticesTransformed) {
 		const State* state = getState();
-		transformPointsSSE(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
+		batchTransformPositions(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
 		m_PathVerticesTransformed = true;
 	}
 
@@ -2002,7 +1615,7 @@ void Context::fillConvexPath(ImagePatternHandle img, bool aa)
 #if BATCH_TRANSFORM
 	if (!m_PathVerticesTransformed) {
 		const State* state = getState();
-		transformPointsSSE(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
+		batchTransformPositions(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
 		m_PathVerticesTransformed = true;
 	}
 
@@ -2029,7 +1642,7 @@ void Context::fillConcavePath(Color col, bool aa)
 #if BATCH_TRANSFORM
 	if (!m_PathVerticesTransformed) {
 		const State* state = getState();
-		transformPointsSSE(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
+		batchTransformPositions(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
 		m_PathVerticesTransformed = true;
 	}
 
@@ -2054,7 +1667,7 @@ void Context::strokePath(Color col, float width, bool aa, LineCap::Enum lineCap,
 #if BATCH_TRANSFORM
 	if (!m_PathVerticesTransformed) {
 		const State* state = getState();
-		transformPointsSSE(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
+		batchTransformPositions(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
 		m_PathVerticesTransformed = true;
 	}
 
@@ -2081,7 +1694,7 @@ void Context::strokePath(Color col, float width, bool aa, LineCap::Enum lineCap,
 // NOTE: In contrast to NanoVG these Gradients are State dependent (the current transformation matrix is baked in the Gradient matrix).
 GradientHandle Context::createLinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol)
 {
-	if (m_NextGradientID >= MAX_GRADIENTS) {
+	if (m_NextGradientID >= VG_MAX_GRADIENTS) {
 		return BGFX_INVALID_HANDLE;
 	}
 
@@ -2143,7 +1756,7 @@ GradientHandle Context::createLinearGradient(float sx, float sy, float ex, float
 
 GradientHandle Context::createBoxGradient(float x, float y, float w, float h, float r, float f, Color icol, Color ocol)
 {
-	if (m_NextGradientID >= MAX_GRADIENTS) {
+	if (m_NextGradientID >= VG_MAX_GRADIENTS) {
 		return BGFX_INVALID_HANDLE;
 	}
 
@@ -2193,7 +1806,7 @@ GradientHandle Context::createBoxGradient(float x, float y, float w, float h, fl
 
 GradientHandle Context::createRadialGradient(float cx, float cy, float inr, float outr, Color icol, Color ocol)
 {
-	if (m_NextGradientID >= MAX_GRADIENTS) {
+	if (m_NextGradientID >= VG_MAX_GRADIENTS) {
 		return BGFX_INVALID_HANDLE;
 	}
 
@@ -2246,7 +1859,7 @@ GradientHandle Context::createRadialGradient(float cx, float cy, float inr, floa
 
 ImagePatternHandle Context::createImagePattern(float cx, float cy, float w, float h, float angle, ImageHandle image, float alpha)
 {
-	if (m_NextImagePatternID >= MAX_IMAGE_PATTERNS) {
+	if (m_NextImagePatternID >= VG_MAX_IMAGE_PATTERNS) {
 		return BGFX_INVALID_HANDLE;
 	}
 
@@ -2999,8 +2612,8 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 
 	const uint16_t firstGradientID = (uint16_t)m_NextGradientID;
 	const uint16_t firstImagePatternID = (uint16_t)m_NextImagePatternID;
-	assert(firstGradientID + shape->m_NumGradients <= MAX_GRADIENTS);
-	assert(firstImagePatternID + shape->m_NumImagePatterns <= MAX_IMAGE_PATTERNS);
+	assert(firstGradientID + shape->m_NumGradients <= VG_MAX_GRADIENTS);
+	assert(firstImagePatternID + shape->m_NumImagePatterns <= VG_MAX_IMAGE_PATTERNS);
 
 	while (cmdList < cmdListEnd) {
 		ShapeCommand::Enum cmdType = *(ShapeCommand::Enum*)cmdList;
@@ -3268,201 +2881,6 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 	m_NextImagePatternID = firstImagePatternID;
 }
 
-#if !SEPARATE_VERTEX_STREAMS
-void transformDrawVertices(const DrawVertex* __restrict src, uint32_t n, DrawVertex* __restrict dst, const float* __restrict mtx)
-{
-#if 0
-	const uint32_t iter = n >> 2;
-	for (uint32_t i = 0; i < iter; ++i) {
-		Vec2 p0 = transformPos2D(src[0].x, src[0].y, mtx);
-		Vec2 p1 = transformPos2D(src[1].x, src[1].y, mtx);
-		Vec2 p2 = transformPos2D(src[2].x, src[2].y, mtx);
-		Vec2 p3 = transformPos2D(src[3].x, src[3].y, mtx);
-		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
-		SET_DRAW_VERTEX(dst, p1.x, p1.y, src[1].u, src[1].v, src[1].color); ++dst;
-		SET_DRAW_VERTEX(dst, p2.x, p2.y, src[2].u, src[2].v, src[2].color); ++dst;
-		SET_DRAW_VERTEX(dst, p3.x, p3.y, src[3].u, src[3].v, src[3].color); ++dst;
-		
-		src += 4;
-	}
-
-	Vec2 p0;
-	const uint32_t rem = n & 3;
-	switch (rem) {
-	case 3:
-		p0 = transformPos2D(src[0].x, src[0].y, mtx);
-		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
-		src++;
-	case 2:
-		p0 = transformPos2D(src[0].x, src[0].y, mtx);
-		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
-		src++;
-	case 1:
-		p0 = transformPos2D(src[0].x, src[0].y, mtx);
-		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
-		src++;
-	}
-#else
-	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
-	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);
-	const bx::simd128_t mtx2 = bx::simd_splat(mtx[2]);
-	const bx::simd128_t mtx3 = bx::simd_splat(mtx[3]);
-	const bx::simd128_t mtx4 = bx::simd_splat(mtx[4]);
-	const bx::simd128_t mtx5 = bx::simd_splat(mtx[5]);
-
-	const uint32_t iter = n >> 2;
-	for (uint32_t i = 0; i < iter; ++i) {
-		// Unaligned loads because DrawVertex is 20 bytes (until bgfx supports multiple vertex streams)
-		// TODO: If bgfx supports multiple vertex streams at some point in the future, positions, uv and 
-		// color data can be separated into different streams. This way, I can transform vertices and 
-		// memcpy uv/color data directly to the target buffers. It shouldn't make a noticable difference
-		// but the code below will be simplified a bit.
-		bx::simd128_t p0 = _mm_loadu_ps(&src[0].x); // {x0, y0, u0, v0}
-		bx::simd128_t p1 = _mm_loadu_ps(&src[1].x); // {x1, y1, u1, v1}
-		bx::simd128_t p2 = _mm_loadu_ps(&src[2].x); // {x2, y2, u2, v2}
-		bx::simd128_t p3 = _mm_loadu_ps(&src[3].x); // {x3, y3, u3, v3}
-		
-		bx::simd128_t p01 = bx::simd_shuf_xyAB(p0, p1); // {x0, y0, x1, y1}
-		bx::simd128_t p23 = bx::simd_shuf_xyAB(p2, p3); // {x2, y2, x3, y3}
-
-		bx::simd128_t x0123 = bx::simd_shuf_xyAB(bx::simd_swiz_xzxz(p01), bx::simd_swiz_xzxz(p23)); // (x0, x1, x2, x3)
-		bx::simd128_t y0123 = bx::simd_shuf_xyAB(bx::simd_swiz_ywyw(p01), bx::simd_swiz_ywyw(p23)); // (y0, y1, y2, y3)
-		bx::simd128_t x0123_m0 = bx::simd_mul(x0123, mtx0); // (x0, x1, x2, x3) * mtx[0]
-		bx::simd128_t x0123_m1 = bx::simd_mul(x0123, mtx1); // (x0, x1, x2, x3) * mtx[1]
-		bx::simd128_t y0123_m2 = bx::simd_mul(y0123, mtx2); // (y0, y1, y2, y3) * mtx[2]
-		bx::simd128_t y0123_m3 = bx::simd_mul(y0123, mtx3); // (y0, y1, y2, y3) * mtx[3]
-
-		// v0.x = x0_m0 + y0_m2 + m4
-		// v1.x = x1_m0 + y1_m2 + m4
-		// v2.x = x2_m0 + y2_m2 + m4
-		// v3.x = x3_m0 + y3_m2 + m4
-		// v0.y = x0_m1 + y0_m3 + m5
-		// v1.y = x1_m1 + y1_m3 + m5
-		// v2.y = x2_m1 + y2_m3 + m5
-		// v3.y = x3_m1 + y3_m3 + m5
-		bx::simd128_t v0123_x = bx::simd_add(x0123_m0, bx::simd_add(y0123_m2, mtx4));
-		bx::simd128_t v0123_y = bx::simd_add(x0123_m1, bx::simd_add(y0123_m3, mtx5));
-
-		bx::simd128_t v01 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(v0123_x, v0123_y)); // {x0', y0', x1', y1'}
-		bx::simd128_t v23 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(v0123_x, v0123_y)); // {x2', y2', x3', y3'}
-
-		bx::simd128_t d0 = bx::simd_shuf_xyAB(v01, bx::simd_swiz_zwxy(p0));
-		bx::simd128_t d1 = bx::simd_shuf_zwCD(v01, p1);
-		bx::simd128_t d2 = bx::simd_shuf_xyAB(v23, bx::simd_swiz_zwxy(p2));
-		bx::simd128_t d3 = bx::simd_shuf_zwCD(v23, p3);
-
-		// Unaligned stores because the destination buffer isn't guaranteed to be 16-byte aligned, 
-		// (it's part of a larger vertex buffer).
-		_mm_storeu_ps(&dst[0].x, d0);
-		_mm_storeu_ps(&dst[1].x, d1);
-		_mm_storeu_ps(&dst[2].x, d2);
-		_mm_storeu_ps(&dst[3].x, d3);
-
-		dst[0].color = src[0].color;
-		dst[1].color = src[1].color;
-		dst[2].color = src[2].color;
-		dst[3].color = src[3].color;
-
-		dst += 4;
-		src += 4;
-	}
-
-	Vec2 p0;
-	const uint32_t rem = n & 3;
-	switch (rem) {
-	case 3:
-		p0 = transformPos2D(src[0].x, src[0].y, mtx);
-		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
-		src++;
-	case 2:
-		p0 = transformPos2D(src[0].x, src[0].y, mtx);
-		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
-		src++;
-	case 1:
-		p0 = transformPos2D(src[0].x, src[0].y, mtx);
-		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
-		src++;
-	}
-#endif
-}
-#endif // SEPARATE_VERTEX_STREAMS
-
-// NOTE: Assumes src is 16-byte aligned. Don't care about dst (unaligned stores)
-void transformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint16_t* __restrict dst, uint16_t delta)
-{
-#if 0
-	for (uint32_t i = 0; i < n; ++i) {
-		*dst++ = *src + delta;
-		src++;
-	}
-#else
-	const __m128i xmm_delta = _mm_set1_epi16(delta);
-
-	const uint32_t iter32 = n >> 5;
-	for (uint32_t i = 0; i < iter32; ++i) {
-		__m128i s0 = _mm_load_si128((const __m128i*)src);
-		__m128i s1 = _mm_load_si128((const __m128i*)(src + 8));
-		__m128i s2 = _mm_load_si128((const __m128i*)(src + 16));
-		__m128i s3 = _mm_load_si128((const __m128i*)(src + 24));
-		
-		__m128i d0 = _mm_add_epi16(s0, xmm_delta);
-		__m128i d1 = _mm_add_epi16(s1, xmm_delta);
-		__m128i d2 = _mm_add_epi16(s2, xmm_delta);
-		__m128i d3 = _mm_add_epi16(s3, xmm_delta);
-
-		// NOTE: Proper alignment of dst buffer isn't guaranteed because it's part of the global IndexBuffer.
-		_mm_storeu_si128((__m128i*)dst, d0);
-		_mm_storeu_si128((__m128i*)(dst + 8), d1);
-		_mm_storeu_si128((__m128i*)(dst + 16), d2);
-		_mm_storeu_si128((__m128i*)(dst + 24), d3);
-
-		src += 32;
-		dst += 32;
-	}
-
-	uint32_t rem = n & 31;
-	if (rem >= 16) {
-		__m128i s0 = _mm_load_si128((const __m128i*)src);
-		__m128i s1 = _mm_load_si128((const __m128i*)(src + 8));
-		__m128i d0 = _mm_add_epi16(s0, xmm_delta);
-		__m128i d1 = _mm_add_epi16(s1, xmm_delta);
-		_mm_storeu_si128((__m128i*)dst, d0);
-		_mm_storeu_si128((__m128i*)(dst + 8), d1);
-
-		src += 16;
-		dst += 16;
-		rem -= 16;
-	}
-
-	if (rem >= 8) {
-		__m128i s0 = _mm_load_si128((const __m128i*)src);
-		__m128i d0 = _mm_add_epi16(s0, xmm_delta);
-		_mm_storeu_si128((__m128i*)dst, d0);
-
-		src += 8;
-		dst += 8;
-		rem -= 8;
-	}
-
-	switch (rem) {
-	case 7:
-		*dst++ = *src++ + delta;
-	case 6:
-		*dst++ = *src++ + delta;
-	case 5:
-		*dst++ = *src++ + delta;
-	case 4:
-		*dst++ = *src++ + delta;
-	case 3:
-		*dst++ = *src++ + delta;
-	case 2:
-		*dst++ = *src++ + delta;
-	case 1:
-		*dst++ = *src++ + delta;
-	}
-#endif
-}
-
 void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* stringCallback, void* userData)
 {
 	const State* state = getState();
@@ -3487,18 +2905,18 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 
 		const uint16_t startVertexID = (uint16_t)cmd->m_NumVertices;
 
-		transformPointsSSE_Unaligned(cachedCmd->m_Pos, cachedCmd->m_NumVertices, dstPos, mtx);
+		batchTransformPositions_Unaligned(cachedCmd->m_Pos, cachedCmd->m_NumVertices, dstPos, mtx);
 		memcpy(dstUV, cachedCmd->m_UV, sizeof(Vec2) * cachedCmd->m_NumVertices);
 		memcpy(dstColor, cachedCmd->m_Color, sizeof(uint32_t) * cachedCmd->m_NumVertices);
-		transformDrawIndices(cachedCmd->m_Indices, cachedCmd->m_NumIndices, dstIndex, startVertexID);
+		batchTransformDrawIndices(cachedCmd->m_Indices, cachedCmd->m_NumIndices, dstIndex, startVertexID);
 #else
 		DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
 		uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 		const uint16_t startVertexID = (uint16_t)cmd->m_NumVertices;
 
-		transformDrawVertices(cachedCmd->m_Vertices, cachedCmd->m_NumVertices, dstVertex, mtx);
-		transformDrawIndices(cachedCmd->m_Indices, cachedCmd->m_NumIndices, dstIndex, startVertexID);
+		batchTransformDrawVertices(cachedCmd->m_Vertices, cachedCmd->m_NumVertices, dstVertex, mtx);
+		batchTransformDrawIndices(cachedCmd->m_Indices, cachedCmd->m_NumIndices, dstIndex, startVertexID);
 #endif
 
 		cmd->m_NumVertices += cachedCmd->m_NumVertices;
@@ -3741,121 +3159,6 @@ inline void Context::addPathVertex(const Vec2& p)
 	path->m_NumVertices++;
 }
 
-void transformQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, Vec2* __restrict transformedVertices)
-{
-#if 1
-	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
-	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);
-	const bx::simd128_t mtx2 = bx::simd_splat(mtx[2]);
-	const bx::simd128_t mtx3 = bx::simd_splat(mtx[3]);
-	const bx::simd128_t mtx4 = bx::simd_splat(mtx[4]);
-	const bx::simd128_t mtx5 = bx::simd_splat(mtx[5]);
-
-	const uint32_t iter = n >> 1; // 2 quads per iteration
-	for (uint32_t i = 0; i < iter; ++i) {
-		bx::simd128_t q0 = bx::simd_ld(quads);     // (x0, y0, x1, y1)
-		bx::simd128_t q1 = bx::simd_ld(quads + 1); // (x2, y2, x3, y3)
-
-		bx::simd128_t x0123 = bx::simd_shuf_xyAB(bx::simd_swiz_xzxz(q0), bx::simd_swiz_xzxz(q1)); // (x0, x1, x2, x3)
-		bx::simd128_t y0123 = bx::simd_shuf_xyAB(bx::simd_swiz_ywyw(q0), bx::simd_swiz_ywyw(q1)); // (y0, y1, y2, y3)
-		bx::simd128_t x0123_m0 = bx::simd_mul(x0123, mtx0); // (x0, x1, x2, x3) * mtx[0]
-		bx::simd128_t x0123_m1 = bx::simd_mul(x0123, mtx1); // (x0, x1, x2, x3) * mtx[1]
-		bx::simd128_t y0123_m2 = bx::simd_mul(y0123, mtx2); // (y0, y1, y2, y3) * mtx[2]
-		bx::simd128_t y0123_m3 = bx::simd_mul(y0123, mtx3); // (y0, y1, y2, y3) * mtx[3]
-
-		// v0.x = x0_m0 + y0_m2 + m4
-		// v1.x = x1_m0 + y0_m2 + m4
-		// v2.x = x1_m0 + y1_m2 + m4
-		// v3.x = x0_m0 + y1_m2 + m4
-		// v0.y = x0_m1 + y0_m3 + m5
-		// v1.y = x1_m1 + y0_m3 + m5
-		// v2.y = x1_m1 + y1_m3 + m5
-		// v3.y = x0_m1 + y1_m3 + m5
-		bx::simd128_t x0110_m0 = bx::simd_swiz_xyyx(x0123_m0);
-		bx::simd128_t x0110_m1 = bx::simd_swiz_xyyx(x0123_m1);
-		bx::simd128_t y0011_m2 = bx::simd_swiz_xxyy(y0123_m2);
-		bx::simd128_t y0011_m3 = bx::simd_swiz_xxyy(y0123_m3);
-
-		bx::simd128_t v0123_x = bx::simd_add(x0110_m0, bx::simd_add(y0011_m2, mtx4));
-		bx::simd128_t v0123_y = bx::simd_add(x0110_m1, bx::simd_add(y0011_m3, mtx5));
-
-		bx::simd128_t v01 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(v0123_x, v0123_y));
-		bx::simd128_t v23 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(v0123_x, v0123_y));
-
-		bx::simd_st(transformedVertices, v01);
-		bx::simd_st(transformedVertices + 2, v23);
-
-		// v4.x = x2_m0 + y2_m2 + m4
-		// v5.x = x3_m0 + y2_m2 + m4
-		// v6.x = x3_m0 + y3_m2 + m4
-		// v7.x = x2_m0 + y3_m2 + m4
-		// v4.y = x2_m1 + y2_m3 + m5
-		// v5.y = x3_m1 + y2_m3 + m5
-		// v6.y = x3_m1 + y3_m3 + m5
-		// v7.y = x2_m1 + y3_m3 + m5
-		bx::simd128_t x2332_m0 = bx::simd_swiz_zwwz(x0123_m0);
-		bx::simd128_t x2332_m1 = bx::simd_swiz_zwwz(x0123_m1);
-		bx::simd128_t y2233_m2 = bx::simd_swiz_zzww(y0123_m2);
-		bx::simd128_t y2233_m3 = bx::simd_swiz_zzww(y0123_m3);
-
-		bx::simd128_t v4567_x = bx::simd_add(x2332_m0, bx::simd_add(y2233_m2, mtx4));
-		bx::simd128_t v4567_y = bx::simd_add(x2332_m1, bx::simd_add(y2233_m3, mtx5));
-
-		bx::simd128_t v45 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(v4567_x, v4567_y));
-		bx::simd128_t v67 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(v4567_x, v4567_y));
-
-		bx::simd_st(transformedVertices + 4, v45);
-		bx::simd_st(transformedVertices + 6, v67);
-		
-		quads += 2;
-		transformedVertices += 8;
-	}
-
-	const uint32_t rem = n & 1;
-	if (rem) {
-		bx::simd128_t q0 = bx::simd_ld(quads);
-
-		bx::simd128_t x0101 = bx::simd_swiz_xzxz(q0); // (x0, x1, x0, x1)
-		bx::simd128_t y0101 = bx::simd_swiz_ywyw(q0); // (y0, y1, y0, y1)
-		bx::simd128_t x0101_m0 = bx::simd_mul(x0101, mtx0); // (x0, x1, x0, x1) * mtx[0]
-		bx::simd128_t x0101_m1 = bx::simd_mul(x0101, mtx1); // (x0, x1, x0, x1) * mtx[1]
-		bx::simd128_t y0101_m2 = bx::simd_mul(y0101, mtx2); // (y0, y1, y0, y1) * mtx[2]
-		bx::simd128_t y0101_m3 = bx::simd_mul(y0101, mtx3); // (y0, y1, y0, y1) * mtx[3]
-
-		// v0.x = x0_m0 + y0_m2 + m4
-		// v1.x = x1_m0 + y0_m2 + m4
-		// v2.x = x1_m0 + y1_m2 + m4
-		// v3.x = x0_m0 + y1_m2 + m4
-		// v0.y = x0_m1 + y0_m3 + m5
-		// v1.y = x1_m1 + y0_m3 + m5
-		// v2.y = x1_m1 + y1_m3 + m5
-		// v3.y = x0_m1 + y1_m3 + m5
-		bx::simd128_t x0110_m0 = bx::simd_swiz_xyyx(x0101_m0);
-		bx::simd128_t x0110_m1 = bx::simd_swiz_xyyx(x0101_m1);
-		bx::simd128_t y0011_m2 = bx::simd_swiz_xxyy(y0101_m2);
-		bx::simd128_t y0011_m3 = bx::simd_swiz_xxyy(y0101_m3);
-
-		bx::simd128_t v0123_x = bx::simd_add(x0110_m0, bx::simd_add(y0011_m2, mtx4));
-		bx::simd128_t v0123_y = bx::simd_add(x0110_m1, bx::simd_add(y0011_m3, mtx5));
-
-		bx::simd128_t v01 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(v0123_x, v0123_y));
-		bx::simd128_t v23 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(v0123_x, v0123_y));
-
-		bx::simd_st(transformedVertices, v01);
-		bx::simd_st(transformedVertices + 2, v23);
-	}
-#else
-	for (uint32_t i = 0; i < n; ++i) {
-		const FONSquad* q = &quads[i];
-		const uint32_t s = i << 2;
-		transformedVertices[s + 0] = transformPos2D(q->x0, q->y0, mtx);
-		transformedVertices[s + 1] = transformPos2D(q->x1, q->y0, mtx);
-		transformedVertices[s + 2] = transformPos2D(q->x1, q->y1, mtx);
-		transformedVertices[s + 3] = transformPos2D(q->x0, q->y1, mtx);
-	}
-#endif
-}
-
 void Context::renderTextQuads(uint32_t numQuads, Color color)
 {
 	State* state = getState();
@@ -3871,7 +3174,7 @@ void Context::renderTextQuads(uint32_t numQuads, Color color)
 	mtx[5] = state->m_TransformMtx[5];
 
 	// TODO: Calculate bounding rect of the quads.
-	transformQuads(m_TextQuads, numQuads, mtx, m_TextVertices);
+	batchTransformTextQuads(m_TextQuads, numQuads, mtx, m_TextVertices);
 
 	const uint32_t numDrawVertices = numQuads * 4;
 	const uint32_t numDrawIndices = numQuads * 6;
@@ -4126,7 +3429,7 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 
 	memcpy(dstPos, vtx, sizeof(Vec2) * numDrawVertices);
 	memset32(dstColor, numDrawVertices, &c);
-	transformPointsSSE_Unaligned(vtx, numDrawVertices, dstUV, mtx);
+	batchTransformPositions_Unaligned(vtx, numDrawVertices, dstUV, mtx);
 #else
 	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
 #endif
@@ -5126,7 +4429,7 @@ ImageHandle Context::allocImage()
 
 FontHandle Context::loadFontFromMemory(const char* name, const uint8_t* data, uint32_t size)
 {
-	if (m_NextFontID == MAX_FONTS) {
+	if (m_NextFontID == VG_MAX_FONTS) {
 		return BGFX_INVALID_HANDLE;
 	}
 
@@ -5529,5 +4832,717 @@ void Context::decomposeAndFillConcavePolygon(const Vec2* points, uint32_t numPoi
 	} else {
 		renderConvexPolygonNoAA(points, numPoints, col);
 	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+// SIMD functions
+//
+#if SEPARATE_VERTEX_STREAMS
+void memset32(void* __restrict dst, uint32_t n, const void* __restrict src)
+{
+#if 0
+	const uint32_t s = *(const uint32_t*)src;
+	uint32_t* d = (uint32_t*)dst;
+	while (n-- > 0) {
+		*d++ = s;
+	}
+#else
+	const __m128 s128 = _mm_load1_ps((const float*)src);
+	float* d = (float*)dst;
+
+	uint32_t iter = n >> 4;
+	while (iter-- > 0) {
+		_mm_storeu_ps(d + 0, s128);
+		_mm_storeu_ps(d + 4, s128);
+		_mm_storeu_ps(d + 8, s128);
+		_mm_storeu_ps(d + 12, s128);
+		d += 16;
+	}
+
+	uint32_t rem = n & 15;
+	if (rem >= 8) {
+		_mm_storeu_ps(d + 0, s128);
+		_mm_storeu_ps(d + 4, s128);
+		d += 8;
+		rem -= 8;
+	}
+
+	if (rem >= 4) {
+		_mm_storeu_ps(d, s128);
+		d += 4;
+		rem -= 4;
+	}
+
+	switch (rem) {
+	case 3:
+		*d++ = *(const float*)src;
+	case 2:
+		*d++ = *(const float*)src;
+	case 1:
+		*d++ = *(const float*)src;
+	}
+#endif
+}
+
+void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src)
+{
+#if 0
+	const uint32_t s0 = *((const uint32_t*)src + 0);
+	const uint32_t s1 = *((const uint32_t*)src + 1);
+	uint32_t* d = (uint32_t*)dst;
+	while (n-- > 0) {
+		d[0] = s0;
+		d[1] = s1;
+		d += 2;
+	}
+#else
+	const float* s = (const float*)src;
+	const __m128 s0 = _mm_load_ss(&s[0]);
+	const __m128 s1 = _mm_load_ss(&s[1]);
+	const __m128 s0011 = _mm_shuffle_ps(s0, s1, 0);
+	const __m128 s128 = _mm_shuffle_ps(s0011, s0011, _MM_SHUFFLE(2, 0, 2, 0));
+	float* d = (float*)dst;
+
+	uint32_t iter = n64 >> 3; // 8 64-bit values per iteration (== 16 floats / iter)
+	while (iter-- > 0) {
+		_mm_storeu_ps(d + 0, s128);
+		_mm_storeu_ps(d + 4, s128);
+		_mm_storeu_ps(d + 8, s128);
+		_mm_storeu_ps(d + 12, s128);
+		d += 16;
+	}
+
+	uint32_t rem = n64 & 7;
+	if (rem >= 4) {
+		_mm_storeu_ps(d + 0, s128);
+		_mm_storeu_ps(d + 4, s128);
+		d += 8;
+		rem -= 4;
+	}
+
+	if (rem >= 2) {
+		_mm_storeu_ps(d, s128);
+		d += 4;
+		rem -= 2;
+	}
+
+	if (rem) {
+		d[0] = s[0];
+		d[1] = s[1];
+	}
+#endif
+}
+
+void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src)
+{
+#if 0
+	const uint32_t s0 = *((const uint32_t*)src + 0);
+	const uint32_t s1 = *((const uint32_t*)src + 1);
+	const uint32_t s2 = *((const uint32_t*)src + 2);
+	const uint32_t s3 = *((const uint32_t*)src + 3);
+	uint32_t* d = (uint32_t*)dst;
+	while (n-- > 0) {
+		d[0] = s0;
+		d[1] = s1;
+		d[2] = s2;
+		d[3] = s3;
+		d += 4;
+	}
+#else
+	const __m128 s128 = _mm_loadu_ps((const float*)src);
+	float* d = (float*)dst;
+
+	uint32_t iter = n128 >> 2; // 4 128-bit values per iteration (== 16 floats / iter)
+	while (iter-- > 0) {
+		_mm_storeu_ps(d + 0, s128);
+		_mm_storeu_ps(d + 4, s128);
+		_mm_storeu_ps(d + 8, s128);
+		_mm_storeu_ps(d + 12, s128);
+		d += 16;
+	}
+
+	uint32_t rem = n128 & 3;
+	if (rem >= 2) {
+		_mm_storeu_ps(d + 0, s128);
+		_mm_storeu_ps(d + 4, s128);
+		d += 8;
+		rem -= 2;
+	}
+
+	if (rem) {
+		_mm_storeu_ps(d, s128);
+	}
+#endif
+}
+
+void swizzleVertexBufferData(const Vec2* __restrict pos, const Vec2* __restrict uv, const uint32_t* __restrict color, uint32_t n, DrawVertex* __restrict dv)
+{
+#if 0
+	while (n-- > 0) {
+		SET_DRAW_VERTEX(dv, pos->x, pos->y, uv->x, uv->y, *color);
+		pos++;
+		uv++;
+		color++;
+		dv++;
+	}
+#else
+	const uint32_t iter = n >> 2;
+	for (uint32_t i = 0; i < iter; ++i) {
+		bx::simd128_t p01 = bx::simd_ld(pos);     // {p0.x, p0.y, p1.x, p1.y}
+		bx::simd128_t p23 = bx::simd_ld(pos + 2); // {p2.x, p2.y, p3.x, p3.y}
+		bx::simd128_t uv01 = bx::simd_ld(uv);     // {u0, v0, u1, v1}
+		bx::simd128_t uv23 = bx::simd_ld(uv + 2); // {u2, v2, u3, v3}
+
+		bx::simd128_t vertex0 = bx::simd_shuf_xyAB(p01, uv01);
+		bx::simd128_t vertex1 = bx::simd_shuf_zwCD(p01, uv01);
+		bx::simd128_t vertex2 = bx::simd_shuf_xyAB(p23, uv23);
+		bx::simd128_t vertex3 = bx::simd_shuf_zwCD(p23, uv23);
+
+		_mm_storeu_ps(&dv[0].x, vertex0);
+		_mm_storeu_ps(&dv[1].x, vertex1);
+		_mm_storeu_ps(&dv[2].x, vertex2);
+		_mm_storeu_ps(&dv[3].x, vertex3);
+		dv[0].color = color[0];
+		dv[1].color = color[1];
+		dv[2].color = color[2];
+		dv[3].color = color[3];
+
+		pos += 4;
+		uv += 4;
+		color += 4;
+		dv += 4;
+	}
+
+	uint32_t rem = n & 3;
+	while (rem-- > 0) {
+		SET_DRAW_VERTEX(dv, pos->x, pos->y, uv->x, uv->y, *color);
+		pos++;
+		uv++;
+		color++;
+		dv++;
+	}
+#endif
+}
+#endif // SEPARATE_VERTEX_STREAMS
+
+void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, Vec2* __restrict transformedVertices)
+{
+#if 1
+	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
+	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);
+	const bx::simd128_t mtx2 = bx::simd_splat(mtx[2]);
+	const bx::simd128_t mtx3 = bx::simd_splat(mtx[3]);
+	const bx::simd128_t mtx4 = bx::simd_splat(mtx[4]);
+	const bx::simd128_t mtx5 = bx::simd_splat(mtx[5]);
+
+	const uint32_t iter = n >> 1; // 2 quads per iteration
+	for (uint32_t i = 0; i < iter; ++i) {
+		bx::simd128_t q0 = bx::simd_ld(quads);     // (x0, y0, x1, y1)
+		bx::simd128_t q1 = bx::simd_ld(quads + 1); // (x2, y2, x3, y3)
+
+		bx::simd128_t x0123 = bx::simd_shuf_xyAB(bx::simd_swiz_xzxz(q0), bx::simd_swiz_xzxz(q1)); // (x0, x1, x2, x3)
+		bx::simd128_t y0123 = bx::simd_shuf_xyAB(bx::simd_swiz_ywyw(q0), bx::simd_swiz_ywyw(q1)); // (y0, y1, y2, y3)
+		bx::simd128_t x0123_m0 = bx::simd_mul(x0123, mtx0); // (x0, x1, x2, x3) * mtx[0]
+		bx::simd128_t x0123_m1 = bx::simd_mul(x0123, mtx1); // (x0, x1, x2, x3) * mtx[1]
+		bx::simd128_t y0123_m2 = bx::simd_mul(y0123, mtx2); // (y0, y1, y2, y3) * mtx[2]
+		bx::simd128_t y0123_m3 = bx::simd_mul(y0123, mtx3); // (y0, y1, y2, y3) * mtx[3]
+
+		// v0.x = x0_m0 + y0_m2 + m4
+		// v1.x = x1_m0 + y0_m2 + m4
+		// v2.x = x1_m0 + y1_m2 + m4
+		// v3.x = x0_m0 + y1_m2 + m4
+		// v0.y = x0_m1 + y0_m3 + m5
+		// v1.y = x1_m1 + y0_m3 + m5
+		// v2.y = x1_m1 + y1_m3 + m5
+		// v3.y = x0_m1 + y1_m3 + m5
+		bx::simd128_t x0110_m0 = bx::simd_swiz_xyyx(x0123_m0);
+		bx::simd128_t x0110_m1 = bx::simd_swiz_xyyx(x0123_m1);
+		bx::simd128_t y0011_m2 = bx::simd_swiz_xxyy(y0123_m2);
+		bx::simd128_t y0011_m3 = bx::simd_swiz_xxyy(y0123_m3);
+
+		bx::simd128_t v0123_x = bx::simd_add(x0110_m0, bx::simd_add(y0011_m2, mtx4));
+		bx::simd128_t v0123_y = bx::simd_add(x0110_m1, bx::simd_add(y0011_m3, mtx5));
+
+		bx::simd128_t v01 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(v0123_x, v0123_y));
+		bx::simd128_t v23 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(v0123_x, v0123_y));
+
+		bx::simd_st(transformedVertices, v01);
+		bx::simd_st(transformedVertices + 2, v23);
+
+		// v4.x = x2_m0 + y2_m2 + m4
+		// v5.x = x3_m0 + y2_m2 + m4
+		// v6.x = x3_m0 + y3_m2 + m4
+		// v7.x = x2_m0 + y3_m2 + m4
+		// v4.y = x2_m1 + y2_m3 + m5
+		// v5.y = x3_m1 + y2_m3 + m5
+		// v6.y = x3_m1 + y3_m3 + m5
+		// v7.y = x2_m1 + y3_m3 + m5
+		bx::simd128_t x2332_m0 = bx::simd_swiz_zwwz(x0123_m0);
+		bx::simd128_t x2332_m1 = bx::simd_swiz_zwwz(x0123_m1);
+		bx::simd128_t y2233_m2 = bx::simd_swiz_zzww(y0123_m2);
+		bx::simd128_t y2233_m3 = bx::simd_swiz_zzww(y0123_m3);
+
+		bx::simd128_t v4567_x = bx::simd_add(x2332_m0, bx::simd_add(y2233_m2, mtx4));
+		bx::simd128_t v4567_y = bx::simd_add(x2332_m1, bx::simd_add(y2233_m3, mtx5));
+
+		bx::simd128_t v45 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(v4567_x, v4567_y));
+		bx::simd128_t v67 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(v4567_x, v4567_y));
+
+		bx::simd_st(transformedVertices + 4, v45);
+		bx::simd_st(transformedVertices + 6, v67);
+
+		quads += 2;
+		transformedVertices += 8;
+	}
+
+	const uint32_t rem = n & 1;
+	if (rem) {
+		bx::simd128_t q0 = bx::simd_ld(quads);
+
+		bx::simd128_t x0101 = bx::simd_swiz_xzxz(q0); // (x0, x1, x0, x1)
+		bx::simd128_t y0101 = bx::simd_swiz_ywyw(q0); // (y0, y1, y0, y1)
+		bx::simd128_t x0101_m0 = bx::simd_mul(x0101, mtx0); // (x0, x1, x0, x1) * mtx[0]
+		bx::simd128_t x0101_m1 = bx::simd_mul(x0101, mtx1); // (x0, x1, x0, x1) * mtx[1]
+		bx::simd128_t y0101_m2 = bx::simd_mul(y0101, mtx2); // (y0, y1, y0, y1) * mtx[2]
+		bx::simd128_t y0101_m3 = bx::simd_mul(y0101, mtx3); // (y0, y1, y0, y1) * mtx[3]
+
+		// v0.x = x0_m0 + y0_m2 + m4
+		// v1.x = x1_m0 + y0_m2 + m4
+		// v2.x = x1_m0 + y1_m2 + m4
+		// v3.x = x0_m0 + y1_m2 + m4
+		// v0.y = x0_m1 + y0_m3 + m5
+		// v1.y = x1_m1 + y0_m3 + m5
+		// v2.y = x1_m1 + y1_m3 + m5
+		// v3.y = x0_m1 + y1_m3 + m5
+		bx::simd128_t x0110_m0 = bx::simd_swiz_xyyx(x0101_m0);
+		bx::simd128_t x0110_m1 = bx::simd_swiz_xyyx(x0101_m1);
+		bx::simd128_t y0011_m2 = bx::simd_swiz_xxyy(y0101_m2);
+		bx::simd128_t y0011_m3 = bx::simd_swiz_xxyy(y0101_m3);
+
+		bx::simd128_t v0123_x = bx::simd_add(x0110_m0, bx::simd_add(y0011_m2, mtx4));
+		bx::simd128_t v0123_y = bx::simd_add(x0110_m1, bx::simd_add(y0011_m3, mtx5));
+
+		bx::simd128_t v01 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(v0123_x, v0123_y));
+		bx::simd128_t v23 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(v0123_x, v0123_y));
+
+		bx::simd_st(transformedVertices, v01);
+		bx::simd_st(transformedVertices + 2, v23);
+	}
+#else
+	for (uint32_t i = 0; i < n; ++i) {
+		const FONSquad* q = &quads[i];
+		const uint32_t s = i << 2;
+		transformedVertices[s + 0] = transformPos2D(q->x0, q->y0, mtx);
+		transformedVertices[s + 1] = transformPos2D(q->x1, q->y0, mtx);
+		transformedVertices[s + 2] = transformPos2D(q->x1, q->y1, mtx);
+		transformedVertices[s + 3] = transformPos2D(q->x0, q->y1, mtx);
+	}
+#endif
+}
+
+#if BATCH_PATH_DIRECTIONS
+void calcPathDirectionsSSE(const Vec2* __restrict v, uint32_t n, Vec2* __restrict d, bool isClosed)
+{
+	const bx::simd128_t eps = bx::simd_splat(1e-5f);
+
+	const float* src = &v->x;
+	float* dst = &d->x;
+
+	if (n == 2) {
+		assert(!isClosed);
+
+		bx::simd128_t src0123 = bx::simd_ld(src);
+		bx::simd128_t src0101 = bx::simd_swiz_xyxy(src0123);
+		bx::simd128_t src2323 = bx::simd_swiz_zwzw(src0123);
+
+		bx::simd128_t d20_31_20_31 = bx::simd_sub(src2323, src0101);
+		bx::simd128_t d20_31_20_31_sqr = bx::simd_mul(d20_31_20_31, d20_31_20_31);
+		bx::simd128_t d31_20_31_20_sqr = bx::simd_swiz_yxzw(d20_31_20_31_sqr);
+		bx::simd128_t l2 = bx::simd_add(d20_31_20_31_sqr, d31_20_31_20_sqr);
+		bx::simd128_t mask = bx::simd_cmpgt(l2, eps);
+#if 0 && APPROXIMATE_MATH
+		bx::simd128_t inv_l = bx::simd_rsqrt_carmack(l2);
+#else
+		bx::simd128_t inv_l = bx::simd_rsqrt(l2);
+#endif
+		bx::simd128_t inv_l_masked = bx::simd_and(inv_l, mask);
+
+		bx::simd128_t inv_l_0011 = bx::simd_swiz_xxyy(inv_l_masked);
+
+		bx::simd128_t dn_01 = bx::simd_mul(d20_31_20_31, inv_l_0011);
+
+		bx::simd_st(dst, dn_01);
+
+		assert((d[0] - d[1]).length() == 0.0f);
+	} else {
+		const uint32_t iter = (n >> 2) - ((n & 3) > 1 ? 0 : 1);
+		for (uint32_t i = 0; i < iter; ++i) {
+			bx::simd128_t src0123 = bx::simd_ld(src);
+			bx::simd128_t src4567 = bx::simd_ld(src + 4);
+			bx::simd128_t src89xx = bx::simd_ld(src + 8);
+
+			bx::simd128_t src2323 = bx::simd_swiz_zwzw(src0123);
+			bx::simd128_t src6767 = bx::simd_swiz_zwzw(src4567);
+
+			bx::simd128_t src2345 = bx::simd_shuf_xyAB(src2323, src4567);
+			bx::simd128_t src6789 = bx::simd_shuf_xyAB(src6767, src89xx);
+
+			bx::simd128_t d20_31_42_53 = bx::simd_sub(src2345, src0123);
+			bx::simd128_t d64_75_86_97 = bx::simd_sub(src6789, src4567);
+
+			bx::simd128_t d20_31_42_53_sqr = bx::simd_mul(d20_31_42_53, d20_31_42_53);
+			bx::simd128_t d64_75_86_97_sqr = bx::simd_mul(d64_75_86_97, d64_75_86_97);
+
+			bx::simd128_t d20_42_20_42_sqr = bx::simd_swiz_xzxz(d20_31_42_53_sqr);
+			bx::simd128_t d31_53_31_53_sqr = bx::simd_swiz_ywyw(d20_31_42_53_sqr);
+			bx::simd128_t d64_86_64_86_sqr = bx::simd_swiz_xzxz(d64_75_86_97_sqr);
+			bx::simd128_t d75_97_75_97_sqr = bx::simd_swiz_ywyw(d64_75_86_97_sqr);
+
+			bx::simd128_t d20_42_64_86_sqr = bx::simd_shuf_xyAB(d20_42_20_42_sqr, d64_86_64_86_sqr);
+			bx::simd128_t d31_53_75_97_sqr = bx::simd_shuf_xyAB(d31_53_31_53_sqr, d75_97_75_97_sqr);
+
+			bx::simd128_t l2 = bx::simd_add(d20_42_64_86_sqr, d31_53_75_97_sqr);
+
+			bx::simd128_t mask = bx::simd_cmpgt(l2, eps);
+#if 0 && APPROXIMATE_MATH
+			bx::simd128_t inv_l = bx::simd_rsqrt_carmack(l2);
+#else
+			bx::simd128_t inv_l = bx::simd_rsqrt(l2);
+#endif
+			bx::simd128_t inv_l_masked = bx::simd_and(inv_l, mask);
+
+			bx::simd128_t inv_l_0011 = bx::simd_swiz_xxyy(inv_l_masked);
+			bx::simd128_t inv_l_2233 = bx::simd_swiz_zzww(inv_l_masked);
+			bx::simd128_t dn_01 = bx::simd_mul(d20_31_42_53, inv_l_0011);
+			bx::simd128_t dn_23 = bx::simd_mul(d64_75_86_97, inv_l_2233);
+
+			bx::simd_st(dst, dn_01);
+			bx::simd_st(dst + 4, dn_23);
+
+			src += 8;
+			dst += 8;
+		}
+
+		Vec2* dstVec = (Vec2*)dst;
+		const Vec2* srcVec = (const Vec2*)src;
+		uint32_t rem = n - (iter << 2) - 1;
+		while (rem-- > 0) {
+			*dstVec = srcVec[1] - srcVec[0];
+			vec2Normalize(dstVec);
+			dstVec++;
+			srcVec++;
+		}
+
+		if (isClosed) {
+			*dstVec = v[0] - srcVec[0];
+			vec2Normalize(dstVec);
+		} else {
+			*dstVec = *(dstVec - 1);
+		}
+	}
+}
+#endif // BATCH_PATH_DIRECTIONS
+
+#if BATCH_TRANSFORM
+void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx)
+{
+	const float* src = &v->x;
+	float* dst = &p->x;
+
+	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
+	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);
+	const bx::simd128_t mtx2 = bx::simd_splat(mtx[2]);
+	const bx::simd128_t mtx3 = bx::simd_splat(mtx[3]);
+	const bx::simd128_t mtx4 = bx::simd_splat(mtx[4]);
+	const bx::simd128_t mtx5 = bx::simd_splat(mtx[5]);
+
+	const uint32_t iter = n >> 2;
+	for (uint32_t i = 0; i < iter; ++i) {
+		bx::simd128_t src0123 = bx::simd_ld(src);
+		bx::simd128_t src4567 = bx::simd_ld(src + 4);
+
+		bx::simd128_t src0246 = bx::simd_shuf_xyAB(bx::simd_swiz_xzxz(src0123), bx::simd_swiz_xzxz(src4567));
+		bx::simd128_t src1357 = bx::simd_shuf_xyAB(bx::simd_swiz_ywyw(src0123), bx::simd_swiz_ywyw(src4567));
+
+		bx::simd128_t dst0246 = bx::simd_add(bx::simd_add(bx::simd_mul(src0246, mtx0), bx::simd_mul(src1357, mtx2)), mtx4);
+		bx::simd128_t dst1357 = bx::simd_add(bx::simd_add(bx::simd_mul(src0246, mtx1), bx::simd_mul(src1357, mtx3)), mtx5);
+
+		bx::simd128_t dst0123 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(dst0246, dst1357));
+		bx::simd128_t dst4567 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(dst0246, dst1357));
+
+		bx::simd_st(dst, dst0123);
+		bx::simd_st(dst + 4, dst4567);
+
+		src += 8;
+		dst += 8;
+	}
+
+	const uint32_t rem = n & 3;
+	switch (rem) {
+	case 3:
+		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
+		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
+		src += 2;
+	case 2:
+		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
+		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
+		src += 2;
+	case 1:
+		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
+		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
+		src += 2;
+	}
+}
+#endif // BATCH_TRANSFORM
+
+#if SEPARATE_VERTEX_STREAMS
+void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx)
+{
+	const float* src = &v->x;
+	float* dst = &p->x;
+
+	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
+	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);
+	const bx::simd128_t mtx2 = bx::simd_splat(mtx[2]);
+	const bx::simd128_t mtx3 = bx::simd_splat(mtx[3]);
+	const bx::simd128_t mtx4 = bx::simd_splat(mtx[4]);
+	const bx::simd128_t mtx5 = bx::simd_splat(mtx[5]);
+
+	const uint32_t iter = n >> 2;
+	for (uint32_t i = 0; i < iter; ++i) {
+		//		bx::simd128_t src0123 = bx::simd_ld(src);
+		//		bx::simd128_t src4567 = bx::simd_ld(src + 4);
+		bx::simd128_t src0123 = _mm_loadu_ps(src);
+		bx::simd128_t src4567 = _mm_loadu_ps(src + 4);
+
+		bx::simd128_t src0246 = bx::simd_shuf_xyAB(bx::simd_swiz_xzxz(src0123), bx::simd_swiz_xzxz(src4567));
+		bx::simd128_t src1357 = bx::simd_shuf_xyAB(bx::simd_swiz_ywyw(src0123), bx::simd_swiz_ywyw(src4567));
+
+		bx::simd128_t dst0246 = bx::simd_add(bx::simd_add(bx::simd_mul(src0246, mtx0), bx::simd_mul(src1357, mtx2)), mtx4);
+		bx::simd128_t dst1357 = bx::simd_add(bx::simd_add(bx::simd_mul(src0246, mtx1), bx::simd_mul(src1357, mtx3)), mtx5);
+
+		bx::simd128_t dst0123 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(dst0246, dst1357));
+		bx::simd128_t dst4567 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(dst0246, dst1357));
+
+		//		bx::simd_st(dst, dst0123);
+		//		bx::simd_st(dst + 4, dst4567);
+		_mm_storeu_ps(dst, dst0123);
+		_mm_storeu_ps(dst + 4, dst4567);
+
+		src += 8;
+		dst += 8;
+	}
+
+	const uint32_t rem = n & 3;
+	switch (rem) {
+	case 3:
+		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
+		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
+		src += 2;
+	case 2:
+		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
+		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
+		src += 2;
+	case 1:
+		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
+		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
+		src += 2;
+	}
+}
+#endif // SEPARATE_VERTEX_STREAMS
+
+#if !SEPARATE_VERTEX_STREAMS
+void batchTransformDrawVertices(const DrawVertex* __restrict src, uint32_t n, DrawVertex* __restrict dst, const float* __restrict mtx)
+{
+#if 0
+	const uint32_t iter = n >> 2;
+	for (uint32_t i = 0; i < iter; ++i) {
+		Vec2 p0 = transformPos2D(src[0].x, src[0].y, mtx);
+		Vec2 p1 = transformPos2D(src[1].x, src[1].y, mtx);
+		Vec2 p2 = transformPos2D(src[2].x, src[2].y, mtx);
+		Vec2 p3 = transformPos2D(src[3].x, src[3].y, mtx);
+		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
+		SET_DRAW_VERTEX(dst, p1.x, p1.y, src[1].u, src[1].v, src[1].color); ++dst;
+		SET_DRAW_VERTEX(dst, p2.x, p2.y, src[2].u, src[2].v, src[2].color); ++dst;
+		SET_DRAW_VERTEX(dst, p3.x, p3.y, src[3].u, src[3].v, src[3].color); ++dst;
+
+		src += 4;
+	}
+
+	Vec2 p0;
+	const uint32_t rem = n & 3;
+	switch (rem) {
+	case 3:
+		p0 = transformPos2D(src[0].x, src[0].y, mtx);
+		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
+		src++;
+	case 2:
+		p0 = transformPos2D(src[0].x, src[0].y, mtx);
+		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
+		src++;
+	case 1:
+		p0 = transformPos2D(src[0].x, src[0].y, mtx);
+		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
+		src++;
+	}
+#else
+	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
+	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);
+	const bx::simd128_t mtx2 = bx::simd_splat(mtx[2]);
+	const bx::simd128_t mtx3 = bx::simd_splat(mtx[3]);
+	const bx::simd128_t mtx4 = bx::simd_splat(mtx[4]);
+	const bx::simd128_t mtx5 = bx::simd_splat(mtx[5]);
+
+	const uint32_t iter = n >> 2;
+	for (uint32_t i = 0; i < iter; ++i) {
+		// Unaligned loads because DrawVertex is 20 bytes (until bgfx supports multiple vertex streams)
+		// TODO: If bgfx supports multiple vertex streams at some point in the future, positions, uv and 
+		// color data can be separated into different streams. This way, I can transform vertices and 
+		// memcpy uv/color data directly to the target buffers. It shouldn't make a noticable difference
+		// but the code below will be simplified a bit.
+		bx::simd128_t p0 = _mm_loadu_ps(&src[0].x); // {x0, y0, u0, v0}
+		bx::simd128_t p1 = _mm_loadu_ps(&src[1].x); // {x1, y1, u1, v1}
+		bx::simd128_t p2 = _mm_loadu_ps(&src[2].x); // {x2, y2, u2, v2}
+		bx::simd128_t p3 = _mm_loadu_ps(&src[3].x); // {x3, y3, u3, v3}
+
+		bx::simd128_t p01 = bx::simd_shuf_xyAB(p0, p1); // {x0, y0, x1, y1}
+		bx::simd128_t p23 = bx::simd_shuf_xyAB(p2, p3); // {x2, y2, x3, y3}
+
+		bx::simd128_t x0123 = bx::simd_shuf_xyAB(bx::simd_swiz_xzxz(p01), bx::simd_swiz_xzxz(p23)); // (x0, x1, x2, x3)
+		bx::simd128_t y0123 = bx::simd_shuf_xyAB(bx::simd_swiz_ywyw(p01), bx::simd_swiz_ywyw(p23)); // (y0, y1, y2, y3)
+		bx::simd128_t x0123_m0 = bx::simd_mul(x0123, mtx0); // (x0, x1, x2, x3) * mtx[0]
+		bx::simd128_t x0123_m1 = bx::simd_mul(x0123, mtx1); // (x0, x1, x2, x3) * mtx[1]
+		bx::simd128_t y0123_m2 = bx::simd_mul(y0123, mtx2); // (y0, y1, y2, y3) * mtx[2]
+		bx::simd128_t y0123_m3 = bx::simd_mul(y0123, mtx3); // (y0, y1, y2, y3) * mtx[3]
+
+		// v0.x = x0_m0 + y0_m2 + m4
+		// v1.x = x1_m0 + y1_m2 + m4
+		// v2.x = x2_m0 + y2_m2 + m4
+		// v3.x = x3_m0 + y3_m2 + m4
+		// v0.y = x0_m1 + y0_m3 + m5
+		// v1.y = x1_m1 + y1_m3 + m5
+		// v2.y = x2_m1 + y2_m3 + m5
+		// v3.y = x3_m1 + y3_m3 + m5
+		bx::simd128_t v0123_x = bx::simd_add(x0123_m0, bx::simd_add(y0123_m2, mtx4));
+		bx::simd128_t v0123_y = bx::simd_add(x0123_m1, bx::simd_add(y0123_m3, mtx5));
+
+		bx::simd128_t v01 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(v0123_x, v0123_y)); // {x0', y0', x1', y1'}
+		bx::simd128_t v23 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(v0123_x, v0123_y)); // {x2', y2', x3', y3'}
+
+		bx::simd128_t d0 = bx::simd_shuf_xyAB(v01, bx::simd_swiz_zwxy(p0));
+		bx::simd128_t d1 = bx::simd_shuf_zwCD(v01, p1);
+		bx::simd128_t d2 = bx::simd_shuf_xyAB(v23, bx::simd_swiz_zwxy(p2));
+		bx::simd128_t d3 = bx::simd_shuf_zwCD(v23, p3);
+
+		// Unaligned stores because the destination buffer isn't guaranteed to be 16-byte aligned, 
+		// (it's part of a larger vertex buffer).
+		_mm_storeu_ps(&dst[0].x, d0);
+		_mm_storeu_ps(&dst[1].x, d1);
+		_mm_storeu_ps(&dst[2].x, d2);
+		_mm_storeu_ps(&dst[3].x, d3);
+
+		dst[0].color = src[0].color;
+		dst[1].color = src[1].color;
+		dst[2].color = src[2].color;
+		dst[3].color = src[3].color;
+
+		dst += 4;
+		src += 4;
+	}
+
+	Vec2 p0;
+	const uint32_t rem = n & 3;
+	switch (rem) {
+	case 3:
+		p0 = transformPos2D(src[0].x, src[0].y, mtx);
+		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
+		src++;
+	case 2:
+		p0 = transformPos2D(src[0].x, src[0].y, mtx);
+		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
+		src++;
+	case 1:
+		p0 = transformPos2D(src[0].x, src[0].y, mtx);
+		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
+		src++;
+	}
+#endif
+}
+#endif // SEPARATE_VERTEX_STREAMS
+
+// NOTE: Assumes src is 16-byte aligned. Don't care about dst (unaligned stores)
+void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint16_t* __restrict dst, uint16_t delta)
+{
+#if 0
+	for (uint32_t i = 0; i < n; ++i) {
+		*dst++ = *src + delta;
+		src++;
+	}
+#else
+	const __m128i xmm_delta = _mm_set1_epi16(delta);
+
+	const uint32_t iter32 = n >> 5;
+	for (uint32_t i = 0; i < iter32; ++i) {
+		__m128i s0 = _mm_load_si128((const __m128i*)src);
+		__m128i s1 = _mm_load_si128((const __m128i*)(src + 8));
+		__m128i s2 = _mm_load_si128((const __m128i*)(src + 16));
+		__m128i s3 = _mm_load_si128((const __m128i*)(src + 24));
+
+		__m128i d0 = _mm_add_epi16(s0, xmm_delta);
+		__m128i d1 = _mm_add_epi16(s1, xmm_delta);
+		__m128i d2 = _mm_add_epi16(s2, xmm_delta);
+		__m128i d3 = _mm_add_epi16(s3, xmm_delta);
+
+		// NOTE: Proper alignment of dst buffer isn't guaranteed because it's part of the global IndexBuffer.
+		_mm_storeu_si128((__m128i*)dst, d0);
+		_mm_storeu_si128((__m128i*)(dst + 8), d1);
+		_mm_storeu_si128((__m128i*)(dst + 16), d2);
+		_mm_storeu_si128((__m128i*)(dst + 24), d3);
+
+		src += 32;
+		dst += 32;
+	}
+
+	uint32_t rem = n & 31;
+	if (rem >= 16) {
+		__m128i s0 = _mm_load_si128((const __m128i*)src);
+		__m128i s1 = _mm_load_si128((const __m128i*)(src + 8));
+		__m128i d0 = _mm_add_epi16(s0, xmm_delta);
+		__m128i d1 = _mm_add_epi16(s1, xmm_delta);
+		_mm_storeu_si128((__m128i*)dst, d0);
+		_mm_storeu_si128((__m128i*)(dst + 8), d1);
+
+		src += 16;
+		dst += 16;
+		rem -= 16;
+	}
+
+	if (rem >= 8) {
+		__m128i s0 = _mm_load_si128((const __m128i*)src);
+		__m128i d0 = _mm_add_epi16(s0, xmm_delta);
+		_mm_storeu_si128((__m128i*)dst, d0);
+
+		src += 8;
+		dst += 8;
+		rem -= 8;
+	}
+
+	switch (rem) {
+	case 7:
+		*dst++ = *src++ + delta;
+	case 6:
+		*dst++ = *src++ + delta;
+	case 5:
+		*dst++ = *src++ + delta;
+	case 4:
+		*dst++ = *src++ + delta;
+	case 3:
+		*dst++ = *src++ + delta;
+	case 2:
+		*dst++ = *src++ + delta;
+	case 1:
+		*dst++ = *src++ + delta;
+	}
+#endif
 }
 }
