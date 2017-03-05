@@ -52,6 +52,7 @@ namespace vg
 #define BEZIER_CIRCLE            0
 #define ENABLE_SHAPE_CACHING     1
 #define SEPARATE_VERTEX_STREAMS  0
+#define USE_SIMD                 1
 
 #if BATCH_TRANSFORM
 #if !defined(FONS_QUAD_SIMD) || !FONS_QUAD_SIMD
@@ -4840,7 +4841,7 @@ void Context::decomposeAndFillConcavePolygon(const Vec2* points, uint32_t numPoi
 #if SEPARATE_VERTEX_STREAMS
 void memset32(void* __restrict dst, uint32_t n, const void* __restrict src)
 {
-#if 0
+#if !USE_SIMD
 	const uint32_t s = *(const uint32_t*)src;
 	uint32_t* d = (uint32_t*)dst;
 	while (n-- > 0) {
@@ -4886,7 +4887,7 @@ void memset32(void* __restrict dst, uint32_t n, const void* __restrict src)
 
 void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src)
 {
-#if 0
+#if !USE_SIMD
 	const uint32_t s0 = *((const uint32_t*)src + 0);
 	const uint32_t s1 = *((const uint32_t*)src + 1);
 	uint32_t* d = (uint32_t*)dst;
@@ -4935,7 +4936,7 @@ void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src)
 
 void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src)
 {
-#if 0
+#if !USE_SIMD
 	const uint32_t s0 = *((const uint32_t*)src + 0);
 	const uint32_t s1 = *((const uint32_t*)src + 1);
 	const uint32_t s2 = *((const uint32_t*)src + 2);
@@ -4977,7 +4978,7 @@ void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src)
 
 void swizzleVertexBufferData(const Vec2* __restrict pos, const Vec2* __restrict uv, const uint32_t* __restrict color, uint32_t n, DrawVertex* __restrict dv)
 {
-#if 0
+#if !USE_SIMD
 	while (n-- > 0) {
 		SET_DRAW_VERTEX(dv, pos->x, pos->y, uv->x, uv->y, *color);
 		pos++;
@@ -5027,7 +5028,7 @@ void swizzleVertexBufferData(const Vec2* __restrict pos, const Vec2* __restrict 
 
 void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, Vec2* __restrict transformedVertices)
 {
-#if 1
+#if USE_SIMD
 	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
 	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);
 	const bx::simd128_t mtx2 = bx::simd_splat(mtx[2]);
@@ -5246,6 +5247,11 @@ void calcPathDirectionsSSE(const Vec2* __restrict v, uint32_t n, Vec2* __restric
 #if BATCH_TRANSFORM
 void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx)
 {
+#if !USE_SIMD
+	for (uint32_t i = 0; i < n; ++i) {
+		p[i] = transformPos2D(v[i].x, v[i].y, mtx);
+	}
+#else
 	const float* src = &v->x;
 	float* dst = &p->x;
 
@@ -5292,6 +5298,7 @@ void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restr
 		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
 		src += 2;
 	}
+#endif
 }
 #endif // BATCH_TRANSFORM
 
@@ -5310,8 +5317,6 @@ void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec
 
 	const uint32_t iter = n >> 2;
 	for (uint32_t i = 0; i < iter; ++i) {
-		//		bx::simd128_t src0123 = bx::simd_ld(src);
-		//		bx::simd128_t src4567 = bx::simd_ld(src + 4);
 		bx::simd128_t src0123 = _mm_loadu_ps(src);
 		bx::simd128_t src4567 = _mm_loadu_ps(src + 4);
 
@@ -5324,8 +5329,6 @@ void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec
 		bx::simd128_t dst0123 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(dst0246, dst1357));
 		bx::simd128_t dst4567 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(dst0246, dst1357));
 
-		//		bx::simd_st(dst, dst0123);
-		//		bx::simd_st(dst + 4, dst4567);
 		_mm_storeu_ps(dst, dst0123);
 		_mm_storeu_ps(dst + 4, dst4567);
 
@@ -5354,7 +5357,7 @@ void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec
 #if !SEPARATE_VERTEX_STREAMS
 void batchTransformDrawVertices(const DrawVertex* __restrict src, uint32_t n, DrawVertex* __restrict dst, const float* __restrict mtx)
 {
-#if 0
+#if !USE_SIMD
 	const uint32_t iter = n >> 2;
 	for (uint32_t i = 0; i < iter; ++i) {
 		Vec2 p0 = transformPos2D(src[0].x, src[0].y, mtx);
@@ -5473,7 +5476,7 @@ void batchTransformDrawVertices(const DrawVertex* __restrict src, uint32_t n, Dr
 // NOTE: Assumes src is 16-byte aligned. Don't care about dst (unaligned stores)
 void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint16_t* __restrict dst, uint16_t delta)
 {
-#if 0
+#if !USE_SIMD
 	for (uint32_t i = 0; i < n; ++i) {
 		*dst++ = *src + delta;
 		src++;
