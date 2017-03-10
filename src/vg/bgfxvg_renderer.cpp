@@ -327,6 +327,7 @@ struct Context
 	void rect(float x, float y, float w, float h);
 	void roundedRect(float x, float y, float w, float h, float r);
 	void circle(float cx, float cy, float r);
+	void polyline(const Vec2* coords, uint32_t numPoints);
 	void closePath();
 	void fillConvexPath(Color col, bool aa);
 	void fillConvexPath(GradientHandle gradient, bool aa);
@@ -641,6 +642,11 @@ void BGFXVGRenderer::RoundedRect(float x, float y, float w, float h, float r)
 void BGFXVGRenderer::Circle(float cx, float cy, float r)
 {
 	m_Context->circle(cx, cy, r);
+}
+
+void BGFXVGRenderer::Polyline(const float* coords, uint32_t numPoints)
+{
+	m_Context->polyline((const Vec2*)coords, numPoints);
 }
 
 void BGFXVGRenderer::ClosePath()
@@ -1550,6 +1556,40 @@ void Context::circle(float cx, float cy, float r)
 	path->m_NumVertices += (numPoints - 1);
 	closePath();
 #endif
+}
+
+void Context::polyline(const Vec2* coords, uint32_t numPoints)
+{
+	assert(numPoints > 1);
+#if BATCH_TRANSFORM
+	assert(!m_PathVerticesTransformed);
+#endif
+
+	SubPath* path = getSubPath();
+	assert(!path->m_IsClosed);
+		
+	if (path->m_NumVertices > 0) {
+		Vec2 d = m_PathVertices[path->m_FirstVertexID + path->m_NumVertices - 1] - coords[0];
+		if (d.dot(d) < 1e-5f) {
+			coords++;
+			numPoints--;
+		}
+	}
+
+#if !BATCH_TRANSFORM
+	const State* state = getState();
+	const float* mtx = state->m_TransformMtx;
+#endif
+	
+	Vec2* vertices = allocPathVertices(numPoints);
+	for (uint32_t i = 0; i < numPoints; ++i) {
+#if BATCH_TRANSFORM
+		vertices[i] = coords[i];
+#else
+		vertices[i] = transformPos2D(coords[i].x, coords[i].y, mtx);
+#endif
+	}
+	path->m_NumVertices += numPoints;
 }
 
 void Context::closePath()
@@ -3162,7 +3202,7 @@ inline void Context::addPathVertex(const Vec2& p)
 	assert(!path->m_IsClosed);
 
 	if (path->m_NumVertices != 0) {
-		Vec2 d = m_PathVertices[path->m_NumVertices - 1] - p;
+		Vec2 d = m_PathVertices[path->m_FirstVertexID + path->m_NumVertices - 1] - p;
 		if (d.dot(d) < 1e-5f) {
 			return;
 		}

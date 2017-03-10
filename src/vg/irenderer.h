@@ -25,6 +25,7 @@ public:
 	virtual void Rect(float x, float y, float w, float h) = 0;
 	virtual void RoundedRect(float x, float y, float w, float h, float r) = 0;
 	virtual void Circle(float cx, float cy, float radius) = 0;
+	virtual void Polyline(const float* coords, uint32_t numPoints) = 0;
 	virtual void ClosePath() = 0;
 	virtual void FillConvexPath(Color col, bool aa) = 0;
 	virtual void FillConvexPath(GradientHandle gradient, bool aa) = 0;

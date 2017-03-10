@@ -122,6 +122,16 @@ void NanoVGRenderer::Circle(float cx, float cy, float radius)
 	nvgCircle(m_Context, cx, cy, radius);
 }
 
+void NanoVGRenderer::Polyline(const float* coords, uint32_t numPoints)
+{
+	assert(m_Context != nullptr);
+
+	for (uint32_t i = 0; i < numPoints; ++i) {
+		nvgLineTo(m_Context, coords[0], coords[1]);
+		coords += 2;
+	}
+}
+
 void NanoVGRenderer::ClosePath()
 {
 	assert(m_Context != nullptr);
