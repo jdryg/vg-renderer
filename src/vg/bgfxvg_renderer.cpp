@@ -45,6 +45,7 @@ namespace vg
 #define MAX_VB_VERTICES          65536
 #define MAX_TEXTURES             64
 #define MAX_FONT_IMAGES          4
+#define MIN_FONT_ATLAS_SIZE      512
 
 #define BATCH_TRANSFORM          1
 #define BATCH_PATH_DIRECTIONS    0
@@ -58,6 +59,10 @@ namespace vg
 #if !defined(FONS_QUAD_SIMD) || !FONS_QUAD_SIMD
 #error "FONS_QUAD_SIMD should be set to 1 to use BATCH_TRANSFORM"
 #endif
+#endif
+
+#if !FONS_CUSTOM_WHITE_RECT
+#pragma message("FONS_CUSTOM_WHITE_RECT should be set to 1 to avoid UV problems with cached shapes")
 #endif
 
 #if BEZIER_CIRCLE
@@ -306,7 +311,7 @@ struct Context
 	{
 		int w, h;
 		getImageSize(m_FontImages[0], &w, &h);
-		return Vec2(1.0f / (float)w, 1.0f / (float)h);
+		return Vec2(0.5f / (float)w, 0.5f / (float)h);
 	}
 
 	bool init();
@@ -1003,11 +1008,20 @@ bool Context::init()
 	m_OuterColorUniform = bgfx::createUniform("u_outerCol", bgfx::UniformType::Vec4, 1);
 
 	// Init font stash
+	const bgfx::Caps* caps = bgfx::getCaps();
 	FONSparams fontParams;
 	memset(&fontParams, 0, sizeof(fontParams));
-	fontParams.width = 512;
-	fontParams.height = 512;
+	fontParams.width = MIN_FONT_ATLAS_SIZE;
+	fontParams.height = MIN_FONT_ATLAS_SIZE;
 	fontParams.flags = FONS_ZERO_TOPLEFT;
+#if FONS_CUSTOM_WHITE_RECT
+	// NOTE: White rect might get too large but since the atlas limit is the texture size limit
+	// it should be that large. Otherwise shapes cached when the atlas was 512x512 will get wrong
+	// white pixel UVs when the atlas gets to the texture size limit (should not happen but better
+	// be safe).
+	fontParams.whiteRectWidth = caps->limits.maxTextureSize / MIN_FONT_ATLAS_SIZE;
+	fontParams.whiteRectHeight = caps->limits.maxTextureSize / MIN_FONT_ATLAS_SIZE;
+#endif
 	fontParams.renderCreate = nullptr;
 	fontParams.renderUpdate = nullptr;
 	fontParams.renderDraw = nullptr;

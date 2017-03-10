@@ -49,6 +49,10 @@
 #	define FONS_RENDERING 0
 #endif
 
+#ifndef FONS_CUSTOM_WHITE_RECT
+#	define FONS_CUSTOM_WHITE_RECT 1
+#endif
+
 enum FONSflags {
 	FONS_ZERO_TOPLEFT = 1,
 	FONS_ZERO_BOTTOMLEFT = 2,
@@ -81,6 +85,9 @@ struct FONSparams {
 	int width, height;
 	unsigned char flags;
 	void* userPtr;
+#if FONS_CUSTOM_WHITE_RECT
+	int whiteRectWidth, whiteRectHeight;
+#endif
 	int (*renderCreate)(void* uptr, int width, int height);
 	int (*renderResize)(void* uptr, int width, int height);
 	void (*renderUpdate)(void* uptr, int* rect, const unsigned char* data);
@@ -819,7 +826,13 @@ FONScontext* fonsCreateInternal(FONSparams* params)
 	stash->dirtyRect[3] = 0;
 
 	// Add white rect at 0,0 for debug drawing.
+#if FONS_CUSTOM_WHITE_RECT
+	const int wrw = params->whiteRectWidth <= 0 ? 2 : params->whiteRectWidth;
+	const int wrh = params->whiteRectHeight <= 0 ? 2 : params->whiteRectHeight;
+	fons__addWhiteRect(stash, wrw, wrh);
+#else
 	fons__addWhiteRect(stash, 2,2);
+#endif
 
 	fonsPushState(stash);
 	fonsClearState(stash);
@@ -1846,7 +1859,13 @@ int fonsResetAtlas(FONScontext* stash, int width, int height)
 	stash->ith = 1.0f/stash->params.height;
 
 	// Add white rect at 0,0 for debug drawing.
+#if FONS_CUSTOM_WHITE_RECT
+	const int wrw = stash->params.whiteRectWidth <= 0 ? 2 : stash->params.whiteRectWidth;
+	const int wrh = stash->params.whiteRectHeight <= 0 ? 2 : stash->params.whiteRectHeight;
+	fons__addWhiteRect(stash, wrw, wrh);
+#else
 	fons__addWhiteRect(stash, 2,2);
+#endif
 
 	return 1;
 }
