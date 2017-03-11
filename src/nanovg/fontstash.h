@@ -53,6 +53,10 @@
 #	define FONS_CUSTOM_WHITE_RECT 1
 #endif
 
+#if !FONS_SEPARATE_CODEPOINT
+#include <stdint.h> // uint64_t
+#endif
+
 enum FONSflags {
 	FONS_ZERO_TOPLEFT = 1,
 	FONS_ZERO_BOTTOMLEFT = 2,
@@ -184,7 +188,7 @@ void fonsDrawDebug(FONScontext* s, float x, float y);
 #define FONS_NOTUSED(v) BX_UNUSED(v)
 
 #if !FONS_SEPARATE_CODEPOINT
-#define MAKE_GLYPH_CODE(cp, size, blur) (((unsigned __int64)(cp)) | ((unsigned __int64)(size) << 32) | ((unsigned __int64)(blur) << 48))
+#define MAKE_GLYPH_CODE(cp, size, blur) (((uint64_t)(cp)) | ((uint64_t)(size) << 32) | ((uint64_t)(blur) << 48))
 #endif
 
 #ifdef FONS_USE_FREETYPE
@@ -401,7 +405,7 @@ static unsigned int fons__hashint(unsigned int a)
 	return a;
 }
 #else
-static unsigned int fons__hashGlyphCode(unsigned __int64 glyphCode)
+static unsigned int fons__hashGlyphCode(uint64_t glyphCode)
 {
 	// BKDR
 	const char* c = (const char*)&glyphCode;
@@ -436,7 +440,7 @@ struct FONSglyph
 	unsigned int codepoint;
 	short size, blur;
 #else
-	unsigned __int64 glyphCode;
+	uint64_t glyphCode;
 #endif
 	int next;
 	int index;
@@ -784,6 +788,14 @@ FONScontext* fonsCreateInternal(FONSparams* params)
 {
 	FONScontext* stash = NULL;
 
+#if FONS_CUSTOM_WHITE_RECT
+	const int wrw = params->whiteRectWidth <= 0 ? 2 : params->whiteRectWidth;
+	const int wrh = params->whiteRectHeight <= 0 ? 2 : params->whiteRectHeight;
+#else
+	const int wrw = 2;
+	const int wrh = 2;
+#endif
+
 	// Allocate memory for the font stash.
 	stash = (FONScontext*)FONSmalloc(sizeof(FONScontext));
 	if (stash == NULL) goto error;
@@ -826,13 +838,7 @@ FONScontext* fonsCreateInternal(FONSparams* params)
 	stash->dirtyRect[3] = 0;
 
 	// Add white rect at 0,0 for debug drawing.
-#if FONS_CUSTOM_WHITE_RECT
-	const int wrw = params->whiteRectWidth <= 0 ? 2 : params->whiteRectWidth;
-	const int wrh = params->whiteRectHeight <= 0 ? 2 : params->whiteRectHeight;
 	fons__addWhiteRect(stash, wrw, wrh);
-#else
-	fons__addWhiteRect(stash, 2,2);
-#endif
 
 	fonsPushState(stash);
 	fonsClearState(stash);
@@ -1170,7 +1176,7 @@ static FONSglyph* fons__getGlyph(FONScontext* stash, FONSfont* font, unsigned in
 #if FONS_SEPARATE_CODEPOINT
 	h = fons__hashint(codepoint, isize, iblur) & (FONS_HASH_LUT_SIZE-1);
 #else
-	const unsigned __int64 glyphCode = MAKE_GLYPH_CODE(codepoint, isize, iblur);
+	const uint64_t glyphCode = MAKE_GLYPH_CODE(codepoint, isize, iblur);
 	h = fons__hashGlyphCode(glyphCode) & (FONS_HASH_LUT_SIZE - 1);
 #endif
 

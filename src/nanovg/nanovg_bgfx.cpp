@@ -35,6 +35,7 @@
 #include "../memory/fixed_size_pool.h"
 #include <bx/mutex.h>
 #include <assert.h>
+#include <memory.h> // memset, memcpy
 
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4244); // warning C4244: '=' : conversion from '' to '', possible loss of data
 

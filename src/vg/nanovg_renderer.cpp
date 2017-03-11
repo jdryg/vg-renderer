@@ -3,6 +3,7 @@
 #include "../nanovg/nanovg.h"
 #include <bx/allocator.h>
 #include <assert.h>
+#include <memory.h> // memset
 
 namespace vg
 {

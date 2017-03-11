@@ -2601,7 +2601,8 @@ Shape* Context::createShape(uint32_t flags)
 void Context::destroyShape(Shape* shape)
 {
 	if (shape->m_RendererData) {
-		BX_DELETE(m_Allocator, shape->m_RendererData);
+		CachedShape* cachedShape = (CachedShape*)shape->m_RendererData;
+		BX_DELETE(m_Allocator, cachedShape);
 		shape->m_RendererData = nullptr;
 	}
 

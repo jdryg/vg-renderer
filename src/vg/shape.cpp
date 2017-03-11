@@ -1,4 +1,5 @@
 #include "shape.h"
+#include <string.h> // strlen
 
 namespace vg
 {
