@@ -38,8 +38,9 @@ public:
 	virtual GradientHandle RadialGradient(float cx, float cy, float inr, float outr, Color icol, Color ocol) = 0;
 	virtual ImagePatternHandle ImagePattern(float cx, float cy, float w, float h, float angle, ImageHandle image, float alpha) = 0;
 
-	virtual ImageHandle CreateImageRGBA(int w, int h, uint32_t imageFlags, const uint8_t* data) = 0;
+	virtual ImageHandle CreateImageRGBA(uint16_t w, uint16_t h, uint32_t imageFlags, const uint8_t* data) = 0;
 	virtual void UpdateImage(ImageHandle image, const uint8_t* data) = 0;
+	virtual void UpdateSubImage(ImageHandle image, uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint8_t* data) = 0;
 	virtual void GetImageSize(ImageHandle image, int* w, int* h) = 0;
 	virtual void DeleteImage(ImageHandle image) = 0;
 	virtual bool IsImageHandleValid(ImageHandle image) = 0;
