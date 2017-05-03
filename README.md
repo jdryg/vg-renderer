@@ -33,5 +33,5 @@ Based on NanoVG and FontStash versions included in bgfx repo.
 
 The code is currently used in [DLS](http://makingartstudios.itch.io/dls) for rendering both the schematic and the UI. Below are two screenshots comparing NanoVG's output with vg-renderer's output.
 
-[![NanoVG](https://cdn.rawgit.com/jdryg/vg-renderer/master/img/i8080_nanovg.png)](https://cdn.rawgit.com/jdryg/vg-renderer/master/img/i8080_nanovg.png)
-[![vg-renderer](https://cdn.rawgit.com/jdryg/vg-renderer/master/img/i8080_vg_renderer.png)](https://cdn.rawgit.com/jdryg/vg-renderer/master/img/i8080_vg_renderer.png)
+[![NanoVG](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/i8080_nanovg.png)](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/i8080_nanovg.png)
+[![vg-renderer](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/i8080_vg_renderer.png)](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/i8080_vg_renderer.png)
