@@ -8,9 +8,9 @@ Also includes some small changes to FontStash.
 
 Based on NanoVG and FontStash versions included in bgfx repo.
 
-Compared to NanoVG/FontStash:
+### Compared to NanoVG/FontStash
 
-1. Generates fewer draw calls, by batching multiple paths together, and indexed triangle lists (like ImDrawList)
+1. Generates fewer draw calls, by batching multiple paths together, and using indexed triangle lists (like ImDrawList)
 2. Separate shader program for gradients to reduce uniform usage (NanoVG's bgfx backend uses a single program for all cases)
 3. Circle() and RoundedRect() are implemented without Beziers (there's a switch to use the original NanoVG code)
 4. All textures are RGBA (even the font altas)
@@ -20,7 +20,7 @@ Compared to NanoVG/FontStash:
 8. Shapes (aka prebaked command lists, aka display lists) with dynamic text support (i.e. the actual text string is retrieved at the time the shape is submitted for rendering, via a callback) (can be disabled with a compile-time flag (VG_SHAPE_DYNAMIC_TEXT)).
 9. Caching of tessellated shapes.
 
-What's not supported compared to NanoVG
+### What's not supported compared to NanoVG
 
 1. Round caps and joins
 2. Bevel joins
@@ -28,3 +28,10 @@ What's not supported compared to NanoVG
 4. Polygon holes
 5. Variable text line height
 6. Skew transformation matrix
+
+### Comparison screenshots
+
+The code is currently used in [DLS](http://makingartstudios.itch.io/dls) for rendering both the schematic and the UI. Below are two screenshots comparing NanoVG's output with vg-renderer's output.
+
+[![NanoVG](https://cdn.rawgit.com/jdryg/vg-renderer/master/img/i8080_nanovg.png)](https://cdn.rawgit.com/jdryg/vg-renderer/master/img/i8080_nanovg.png)
+[![vg-renderer](https://cdn.rawgit.com/jdryg/vg-renderer/master/img/i8080_vg_renderer.png)](https://cdn.rawgit.com/jdryg/vg-renderer/master/img/i8080_vg_renderer.png)
