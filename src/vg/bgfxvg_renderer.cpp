@@ -1236,6 +1236,12 @@ void Context::endFrame()
 	bx::mtxOrtho(projMtx, 0.0f, m_WinWidth, m_WinHeight, 0.0f, 0.0f, 1.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
 	bgfx::setViewTransform(m_ViewID, viewMtx, projMtx);
 
+	uint16_t prevScissorRect[4];
+	prevScissorRect[0] = 0;
+	prevScissorRect[1] = 0;
+	prevScissorRect[2] = m_WinWidth;
+	prevScissorRect[3] = m_WinHeight;
+
 	const uint32_t numCommands = m_NumDrawCommands;
 	for (uint32_t iCmd = 0; iCmd < numCommands; ++iCmd) {
 		DrawCommand* cmd = &m_DrawCommands[iCmd];
@@ -1248,7 +1254,22 @@ void Context::endFrame()
 		bgfx::setVertexBuffer(0, m_VertexBuffers[cmd->m_VertexBufferID].m_bgfxHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
 #endif
 		bgfx::setIndexBuffer(&tib, cmd->m_FirstIndexID, cmd->m_NumIndices);
-		bgfx::setScissor((uint16_t)cmd->m_ScissorRect[0], (uint16_t)cmd->m_ScissorRect[1], (uint16_t)cmd->m_ScissorRect[2], (uint16_t)cmd->m_ScissorRect[3]);
+
+		// Set scissor.
+		{
+			const uint16_t s0 = (uint16_t)cmd->m_ScissorRect[0];
+			const uint16_t s1 = (uint16_t)cmd->m_ScissorRect[1];
+			const uint16_t s2 = (uint16_t)cmd->m_ScissorRect[2];
+			const uint16_t s3 = (uint16_t)cmd->m_ScissorRect[3];
+
+			if (s0 != prevScissorRect[0] || s1 != prevScissorRect[1] || s2 != prevScissorRect[2] || s3 != prevScissorRect[3]) {
+				bgfx::setScissor(s0, s1, s2, s3);
+				prevScissorRect[0] = s0;
+				prevScissorRect[1] = s1;
+				prevScissorRect[2] = s2;
+				prevScissorRect[3] = s3;
+			}
+		}
 
 		if (cmd->m_Type == DrawCommand::Type_TexturedVertexColor) {
 			BX_CHECK(isValid(cmd->m_ImageHandle), "Invalid image handle");
@@ -1832,8 +1853,7 @@ void Context::fillConcavePath(Color col, bool aa)
 	const Vec2* pathVertices = m_PathVertices;
 #endif
 
-	const uint32_t numPaths = m_NumSubPaths;
-	BX_CHECK(numPaths == 1, "Cannot decompose multiple concave paths"); // Only a single concave polygon can be decomposed at a time.
+	BX_CHECK(m_NumSubPaths == 1, "Cannot decompose multiple concave paths"); // Only a single concave polygon can be decomposed at a time.
 
 	const SubPath* path = &m_SubPaths[0];
 	if (path->m_NumVertices < 3) {
