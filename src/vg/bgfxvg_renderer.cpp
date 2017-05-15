@@ -48,10 +48,10 @@ namespace vg
 
 #define BATCH_TRANSFORM          1
 #define BATCH_PATH_DIRECTIONS    0
-#define APPROXIMATE_MATH         1
+#define APPROXIMATE_MATH         0
 #define BEZIER_CIRCLE            0
 #define ENABLE_SHAPE_CACHING     1
-#define SEPARATE_VERTEX_STREAMS  0
+#define SEPARATE_VERTEX_STREAMS  1
 #define USE_SIMD                 1
 
 #if BATCH_TRANSFORM
@@ -119,11 +119,14 @@ struct VertexBuffer
 	Vec2* m_Pos;
 	Vec2* m_UV;
 	uint32_t* m_Color;
+	bgfx::DynamicVertexBufferHandle m_PosBufferHandle;
+	bgfx::DynamicVertexBufferHandle m_UVBufferHandle;
+	bgfx::DynamicVertexBufferHandle m_ColorBufferHandle;
 #else
 	DrawVertex* m_Vertices;
+	bgfx::DynamicVertexBufferHandle m_bgfxHandle;
 #endif
 	uint32_t m_Count;
-	bgfx::DynamicVertexBufferHandle m_bgfxHandle;
 };
 
 struct IndexBuffer
@@ -232,9 +235,17 @@ struct Context
 	uint32_t m_NumVertexBuffers;
 	uint32_t m_VertexBufferCapacity;
 
+#if SEPARATE_VERTEX_STREAMS
+	Vec2** m_Vec2DataPool;
+	uint32_t** m_Uint32DataPool;
+	uint32_t m_Vec2DataPoolCapacity;
+	uint32_t m_Uint32DataPoolCapacity;
+	bx::Mutex m_DataPoolMutex;
+#else
 	DrawVertex** m_VBDataPool;
 	uint32_t m_VBDataPoolCapacity;
 	bx::Mutex m_VBDataPoolMutex;
+#endif
 
 	DrawCommand* m_DrawCommands;
 	uint32_t m_NumDrawCommands;
@@ -282,7 +293,13 @@ struct Context
 	ImagePattern m_ImagePatterns[VG_MAX_IMAGE_PATTERNS];
 	uint32_t m_NextImagePatternID;
 
+#if SEPARATE_VERTEX_STREAMS
+	bgfx::VertexDecl m_PosVertexDecl;
+	bgfx::VertexDecl m_UVVertexDecl;
+	bgfx::VertexDecl m_ColorVertexDecl;
+#else
 	bgfx::VertexDecl m_DrawVertexDecl;
+#endif
 	bgfx::ProgramHandle m_ProgramHandle[DrawCommand::NumTypes];
 	bgfx::UniformHandle m_TexUniform;
 	bgfx::UniformHandle m_PaintMatUniform;
@@ -366,8 +383,15 @@ struct Context
 
 	// Vertex buffers
 	VertexBuffer* allocVertexBuffer();
+#if SEPARATE_VERTEX_STREAMS
+	Vec2* allocVertexBufferData_Vec2();
+	uint32_t* allocVertexBufferData_Uint32();
+	void releaseVertexBufferData_Vec2(Vec2* data);
+	void releaseVertexBufferData_Uint32(uint32_t* data);
+#else
 	DrawVertex* allocVertexBufferData();
 	void releaseVertexBufferData(DrawVertex* data);
+#endif
 
 	// Draw commands
 	DrawCommand* allocDrawCommand_TexturedVertexColor(uint32_t numVertices, uint32_t numIndices, ImageHandle img);
@@ -423,11 +447,25 @@ struct Context
 #endif
 };
 
+#if SEPARATE_VERTEX_STREAMS
+static void releaseVertexBufferDataCallback_Vec2(void* ptr, void* userData)
+{
+	Context* ctx = (Context*)userData;
+	ctx->releaseVertexBufferData_Vec2((Vec2*)ptr);
+}
+
+static void releaseVertexBufferDataCallback_Uint32(void* ptr, void* userData)
+{
+	Context* ctx = (Context*)userData;
+	ctx->releaseVertexBufferData_Uint32((uint32_t*)ptr);
+}
+#else
 static void releaseVertexBufferDataCallback(void* ptr, void* userData)
 {
 	Context* ctx = (Context*)userData;
 	ctx->releaseVertexBufferData((DrawVertex*)ptr);
 }
+#endif
 
 inline Vec2 transformPos2D(float x, float y, const float* mtx)
 {
@@ -556,7 +594,6 @@ void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint1
 void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, Vec2* __restrict transformedVertices);
 
 #if SEPARATE_VERTEX_STREAMS
-void swizzleVertexBufferData(const Vec2* __restrict pos, const Vec2* __restrict uv, const uint32_t* __restrict color, uint32_t n, DrawVertex* __restrict dv);
 void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx);
 void memset32(void* __restrict dst, uint32_t n32, const void* __restrict src);
 void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src);
@@ -862,8 +899,15 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID) :
 	m_VertexBuffers(nullptr),
 	m_NumVertexBuffers(0),
 	m_VertexBufferCapacity(0),
+#if SEPARATE_VERTEX_STREAMS
+	m_Vec2DataPool(nullptr),
+	m_Uint32DataPool(nullptr),
+	m_Vec2DataPoolCapacity(0),
+	m_Uint32DataPoolCapacity(0),
+#else
 	m_VBDataPool(nullptr),
 	m_VBDataPoolCapacity(0),
+#endif
 	m_DrawCommands(nullptr),
 	m_NumDrawCommands(0),
 	m_DrawCommandCapacity(0),
@@ -931,12 +975,53 @@ Context::~Context()
 	bgfx::destroyUniform(m_OuterColorUniform);
 
 	for (uint32_t i = 0; i < m_VertexBufferCapacity; ++i) {
+#if SEPARATE_VERTEX_STREAMS
+		if (bgfx::isValid(m_VertexBuffers[i].m_PosBufferHandle)) {
+			bgfx::destroyDynamicVertexBuffer(m_VertexBuffers[i].m_PosBufferHandle);
+		}
+		if (bgfx::isValid(m_VertexBuffers[i].m_UVBufferHandle)) {
+			bgfx::destroyDynamicVertexBuffer(m_VertexBuffers[i].m_UVBufferHandle);
+		}
+		if (bgfx::isValid(m_VertexBuffers[i].m_ColorBufferHandle)) {
+			bgfx::destroyDynamicVertexBuffer(m_VertexBuffers[i].m_ColorBufferHandle);
+	}
+#else
 		if (bgfx::isValid(m_VertexBuffers[i].m_bgfxHandle)) {
 			bgfx::destroyDynamicVertexBuffer(m_VertexBuffers[i].m_bgfxHandle);
 		}
+#endif
 	}
 	BX_FREE(m_Allocator, m_VertexBuffers);
 
+#if SEPARATE_VERTEX_STREAMS
+	for (uint32_t i = 0; i < m_Vec2DataPoolCapacity; ++i) {
+		Vec2* buffer = m_Vec2DataPool[i];
+		if (!buffer) {
+			continue;
+		}
+
+		if ((uintptr_t)buffer & 1) {
+			buffer = (Vec2*)((uintptr_t)buffer & ~1);
+			BX_ALIGNED_FREE(m_Allocator, buffer, 16);
+		}
+	}
+	BX_FREE(m_Allocator, m_Vec2DataPool);
+	m_Vec2DataPoolCapacity = 0;
+
+	for (uint32_t i = 0; i < m_Uint32DataPoolCapacity; ++i) {
+		uint32_t* buffer = m_Uint32DataPool[i];
+		if (!buffer) {
+			continue;
+		}
+
+		if ((uintptr_t)buffer & 1) {
+			buffer = (uint32_t*)((uintptr_t)buffer & ~1);
+			BX_ALIGNED_FREE(m_Allocator, buffer, 16);
+		}
+	}
+	BX_FREE(m_Allocator, m_Uint32DataPool);
+	m_Uint32DataPoolCapacity = 0;
+#else
 	for (uint32_t i = 0; i < m_VBDataPoolCapacity; ++i) {
 		DrawVertex* buffer = m_VBDataPool[i];
 		if (!buffer) {
@@ -949,6 +1034,8 @@ Context::~Context()
 		}
 	}
 	BX_FREE(m_Allocator, m_VBDataPool);
+	m_VBDataPoolCapacity = 0;
+#endif
 
 	BX_FREE(m_Allocator, m_DrawCommands);
 
@@ -996,11 +1083,17 @@ bool Context::init()
 
 	m_IndexBuffer = BX_NEW(m_Allocator, IndexBuffer)();
 
+#if SEPARATE_VERTEX_STREAMS
+	m_PosVertexDecl.begin().add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float).end();
+	m_UVVertexDecl.begin().add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float).end();
+	m_ColorVertexDecl.begin().add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true).end();
+#else
 	m_DrawVertexDecl.begin()
 		.add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
 		.add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
 		.add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
 		.end();
+#endif
 
 	bgfx::RendererType::Enum bgfxRendererType = bgfx::getRendererType();
 	m_ProgramHandle[DrawCommand::Type_TexturedVertexColor] =
@@ -1093,17 +1186,33 @@ void Context::endFrame()
 	for (uint32_t iVB = 0; iVB < m_NumVertexBuffers; ++iVB) {
 		VertexBuffer* vb = &m_VertexBuffers[iVB];
 
+#if SEPARATE_VERTEX_STREAMS
+		if (!bgfx::isValid(vb->m_PosBufferHandle)) {
+			vb->m_PosBufferHandle = bgfx::createDynamicVertexBuffer(MAX_VB_VERTICES, m_PosVertexDecl, 0);
+		}
+		if (!bgfx::isValid(vb->m_UVBufferHandle)) {
+			vb->m_UVBufferHandle = bgfx::createDynamicVertexBuffer(MAX_VB_VERTICES, m_UVVertexDecl, 0);
+		}
+		if (!bgfx::isValid(vb->m_ColorBufferHandle)) {
+			vb->m_ColorBufferHandle = bgfx::createDynamicVertexBuffer(MAX_VB_VERTICES, m_ColorVertexDecl, 0);
+		}
+
+		const bgfx::Memory* posMem = bgfx::makeRef(vb->m_Pos, sizeof(Vec2) * vb->m_Count, releaseVertexBufferDataCallback_Vec2, this);
+		const bgfx::Memory* uvMem = bgfx::makeRef(vb->m_UV, sizeof(Vec2) * vb->m_Count, releaseVertexBufferDataCallback_Vec2, this);
+		const bgfx::Memory* colorMem = bgfx::makeRef(vb->m_Color, sizeof(uint32_t) * vb->m_Count, releaseVertexBufferDataCallback_Uint32, this);
+
+		bgfx::updateDynamicVertexBuffer(vb->m_PosBufferHandle, 0, posMem);
+		bgfx::updateDynamicVertexBuffer(vb->m_UVBufferHandle, 0, uvMem);
+		bgfx::updateDynamicVertexBuffer(vb->m_ColorBufferHandle, 0, colorMem);
+
+		vb->m_Pos = nullptr;
+		vb->m_UV = nullptr;
+		vb->m_Color = nullptr;
+#else
 		if (!bgfx::isValid(vb->m_bgfxHandle)) {
 			vb->m_bgfxHandle = bgfx::createDynamicVertexBuffer(MAX_VB_VERTICES, m_DrawVertexDecl, 0);
 		}
 
-#if SEPARATE_VERTEX_STREAMS
-		DrawVertex* vbData = allocVertexBufferData();
-		swizzleVertexBufferData(vb->m_Pos, vb->m_UV, vb->m_Color, vb->m_Count, vbData);
-
-		const bgfx::Memory* mem = bgfx::makeRef(vbData, sizeof(DrawVertex) * vb->m_Count, releaseVertexBufferDataCallback, this);
-		bgfx::updateDynamicVertexBuffer(vb->m_bgfxHandle, 0, mem);
-#else
 		const bgfx::Memory* mem = bgfx::makeRef(vb->m_Vertices, sizeof(DrawVertex) * vb->m_Count, releaseVertexBufferDataCallback, this);
 		bgfx::updateDynamicVertexBuffer(vb->m_bgfxHandle, 0, mem);
 
@@ -1129,7 +1238,13 @@ void Context::endFrame()
 	for (uint32_t iCmd = 0; iCmd < numCommands; ++iCmd) {
 		DrawCommand* cmd = &m_DrawCommands[iCmd];
 
-		bgfx::setVertexBuffer(m_VertexBuffers[cmd->m_VertexBufferID].m_bgfxHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
+#if SEPARATE_VERTEX_STREAMS
+		bgfx::setVertexBuffer(0, m_VertexBuffers[cmd->m_VertexBufferID].m_PosBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
+		bgfx::setVertexBuffer(1, m_VertexBuffers[cmd->m_VertexBufferID].m_UVBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
+		bgfx::setVertexBuffer(2, m_VertexBuffers[cmd->m_VertexBufferID].m_ColorBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
+#else
+		bgfx::setVertexBuffer(0, m_VertexBuffers[cmd->m_VertexBufferID].m_bgfxHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
+#endif
 		bgfx::setIndexBuffer(&tib, cmd->m_FirstIndexID, cmd->m_NumIndices);
 		bgfx::setScissor((uint16_t)cmd->m_ScissorRect[0], (uint16_t)cmd->m_ScissorRect[1], (uint16_t)cmd->m_ScissorRect[2], (uint16_t)cmd->m_ScissorRect[3]);
 
@@ -4413,17 +4528,22 @@ VertexBuffer* Context::allocVertexBuffer()
 		m_VertexBuffers = (VertexBuffer*)BX_REALLOC(m_Allocator, m_VertexBuffers, sizeof(VertexBuffer) * m_VertexBufferCapacity);
 		
 		VertexBuffer* vb = &m_VertexBuffers[m_VertexBufferCapacity - 1];
-		vb->m_bgfxHandle = BGFX_INVALID_HANDLE;
 
 #if SEPARATE_VERTEX_STREAMS
-		vb->m_Pos = (Vec2*)BX_ALIGNED_ALLOC(m_Allocator, sizeof(Vec2) * MAX_VB_VERTICES, 16);
-		vb->m_UV = (Vec2*)BX_ALIGNED_ALLOC(m_Allocator, sizeof(Vec2) * MAX_VB_VERTICES, 16);
-		vb->m_Color = (uint32_t*)BX_ALIGNED_ALLOC(m_Allocator, sizeof(uint32_t) * MAX_VB_VERTICES, 16);
+		vb->m_PosBufferHandle = BGFX_INVALID_HANDLE;
+		vb->m_UVBufferHandle = BGFX_INVALID_HANDLE;
+		vb->m_ColorBufferHandle = BGFX_INVALID_HANDLE;
+#else 
+		vb->m_bgfxHandle = BGFX_INVALID_HANDLE;
 #endif
 	}
 
 	VertexBuffer* vb = &m_VertexBuffers[m_NumVertexBuffers++];
-#if !SEPARATE_VERTEX_STREAMS
+#if SEPARATE_VERTEX_STREAMS
+	vb->m_Pos = allocVertexBufferData_Vec2();
+	vb->m_UV = allocVertexBufferData_Vec2();
+	vb->m_Color = allocVertexBufferData_Uint32();
+#else
 	vb->m_Vertices = (DrawVertex*)allocVertexBufferData();
 #endif
 	vb->m_Count = 0;
@@ -4593,8 +4713,89 @@ bool Context::deleteImage(ImageHandle img)
 	return true;
 }
 
+#if SEPARATE_VERTEX_STREAMS
+Vec2* Context::allocVertexBufferData_Vec2()
+{
+	bx::MutexScope ms(m_DataPoolMutex);
+
+	for (uint32_t i = 0; i < m_Vec2DataPoolCapacity; ++i) {
+		// If LSB of pointer is set it means that the ptr is valid and the buffer is free for reuse.
+		if (((uintptr_t)m_Vec2DataPool[i]) & 1) {
+			// Remove the free flag
+			m_Vec2DataPool[i] = (Vec2*)((uintptr_t)m_Vec2DataPool[i] & ~1);
+			return m_Vec2DataPool[i];
+		} else if (m_Vec2DataPool[i] == nullptr) {
+			m_Vec2DataPool[i] = (Vec2*)BX_ALIGNED_ALLOC(m_Allocator, sizeof(Vec2) * MAX_VB_VERTICES, 16);
+			return m_Vec2DataPool[i];
+		}
+	}
+
+	uint32_t oldCapacity = m_Vec2DataPoolCapacity;
+	m_Vec2DataPoolCapacity += 8;
+	m_Vec2DataPool = (Vec2**)BX_REALLOC(m_Allocator, m_Vec2DataPool, sizeof(Vec2*) * m_Vec2DataPoolCapacity);
+	bx::memSet(&m_Vec2DataPool[oldCapacity], 0, sizeof(Vec2*) * (m_Vec2DataPoolCapacity - oldCapacity));
+
+	m_Vec2DataPool[oldCapacity] = (Vec2*)BX_ALIGNED_ALLOC(m_Allocator, sizeof(Vec2) * MAX_VB_VERTICES, 16);
+	return m_Vec2DataPool[oldCapacity];
+}
+
+uint32_t* Context::allocVertexBufferData_Uint32()
+{
+	bx::MutexScope ms(m_DataPoolMutex);
+
+	for (uint32_t i = 0; i < m_Uint32DataPoolCapacity; ++i) {
+		// If LSB of pointer is set it means that the ptr is valid and the buffer is free for reuse.
+		if (((uintptr_t)m_Uint32DataPool[i]) & 1) {
+			// Remove the free flag
+			m_Uint32DataPool[i] = (uint32_t*)((uintptr_t)m_Uint32DataPool[i] & ~1);
+			return m_Uint32DataPool[i];
+		} else if (m_Uint32DataPool[i] == nullptr) {
+			m_Uint32DataPool[i] = (uint32_t*)BX_ALIGNED_ALLOC(m_Allocator, sizeof(uint32_t) * MAX_VB_VERTICES, 16);
+			return m_Uint32DataPool[i];
+		}
+	}
+
+	uint32_t oldCapacity = m_Uint32DataPoolCapacity;
+	m_Uint32DataPoolCapacity += 8;
+	m_Uint32DataPool = (uint32_t**)BX_REALLOC(m_Allocator, m_Uint32DataPool, sizeof(uint32_t*) * m_Uint32DataPoolCapacity);
+	bx::memSet(&m_Uint32DataPool[oldCapacity], 0, sizeof(uint32_t*) * (m_Uint32DataPoolCapacity - oldCapacity));
+
+	m_Uint32DataPool[oldCapacity] = (uint32_t*)BX_ALIGNED_ALLOC(m_Allocator, sizeof(uint32_t) * MAX_VB_VERTICES, 16);
+	return m_Uint32DataPool[oldCapacity];
+}
+
+void Context::releaseVertexBufferData_Vec2(Vec2* data)
+{
+	bx::MutexScope ms(m_DataPoolMutex);
+
+	BX_CHECK(data != nullptr, "Tried to release a null vertex buffer");
+	for (uint32_t i = 0; i < m_Vec2DataPoolCapacity; ++i) {
+		if (m_Vec2DataPool[i] == data) {
+			// Mark buffer as free by setting the LSB of the ptr to 1.
+			m_Vec2DataPool[i] = (Vec2*)((uintptr_t)m_Vec2DataPool[i] | 1);
+			return;
+		}
+	}
+}
+
+void Context::releaseVertexBufferData_Uint32(uint32_t* data)
+{
+	bx::MutexScope ms(m_DataPoolMutex);
+
+	BX_CHECK(data != nullptr, "Tried to release a null vertex buffer");
+	for (uint32_t i = 0; i < m_Uint32DataPoolCapacity; ++i) {
+		if (m_Uint32DataPool[i] == data) {
+			// Mark buffer as free by setting the LSB of the ptr to 1.
+			m_Uint32DataPool[i] = (uint32_t*)((uintptr_t)m_Uint32DataPool[i] | 1);
+			return;
+		}
+	}
+}
+#else
 DrawVertex* Context::allocVertexBufferData()
 {
+	bx::MutexScope ms(m_VBDataPoolMutex);
+
 	for (uint32_t i = 0; i < m_VBDataPoolCapacity; ++i) {
 		// If LSB of pointer is set it means that the ptr is valid and the buffer is free for reuse.
 		if (((uintptr_t)m_VBDataPool[i]) & 1) {
@@ -4618,6 +4819,8 @@ DrawVertex* Context::allocVertexBufferData()
 
 void Context::releaseVertexBufferData(DrawVertex* data)
 {
+	bx::MutexScope ms(m_VBDataPoolMutex);
+
 	BX_CHECK(data != nullptr, "Tried to release a null vertex buffer");
 	for (uint32_t i = 0; i < m_VBDataPoolCapacity; ++i) {
 		if (m_VBDataPool[i] == data) {
@@ -4627,6 +4830,7 @@ void Context::releaseVertexBufferData(DrawVertex* data)
 		}
 	}
 }
+#endif
 
 // Concave polygon decomposition
 // https://mpen.ca/406/bayazit (seems to be down atm)
@@ -5043,55 +5247,6 @@ void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src)
 	}
 #endif
 }
-
-void swizzleVertexBufferData(const Vec2* __restrict pos, const Vec2* __restrict uv, const uint32_t* __restrict color, uint32_t n, DrawVertex* __restrict dv)
-{
-#if !USE_SIMD
-	while (n-- > 0) {
-		SET_DRAW_VERTEX(dv, pos->x, pos->y, uv->x, uv->y, *color);
-		pos++;
-		uv++;
-		color++;
-		dv++;
-	}
-#else
-	const uint32_t iter = n >> 2;
-	for (uint32_t i = 0; i < iter; ++i) {
-		bx::simd128_t p01 = bx::simd_ld(pos);     // {p0.x, p0.y, p1.x, p1.y}
-		bx::simd128_t p23 = bx::simd_ld(pos + 2); // {p2.x, p2.y, p3.x, p3.y}
-		bx::simd128_t uv01 = bx::simd_ld(uv);     // {u0, v0, u1, v1}
-		bx::simd128_t uv23 = bx::simd_ld(uv + 2); // {u2, v2, u3, v3}
-
-		bx::simd128_t vertex0 = bx::simd_shuf_xyAB(p01, uv01);
-		bx::simd128_t vertex1 = bx::simd_shuf_zwCD(p01, uv01);
-		bx::simd128_t vertex2 = bx::simd_shuf_xyAB(p23, uv23);
-		bx::simd128_t vertex3 = bx::simd_shuf_zwCD(p23, uv23);
-
-		_mm_storeu_ps(&dv[0].x, vertex0);
-		_mm_storeu_ps(&dv[1].x, vertex1);
-		_mm_storeu_ps(&dv[2].x, vertex2);
-		_mm_storeu_ps(&dv[3].x, vertex3);
-		dv[0].color = color[0];
-		dv[1].color = color[1];
-		dv[2].color = color[2];
-		dv[3].color = color[3];
-
-		pos += 4;
-		uv += 4;
-		color += 4;
-		dv += 4;
-	}
-
-	uint32_t rem = n & 3;
-	while (rem-- > 0) {
-		SET_DRAW_VERTEX(dv, pos->x, pos->y, uv->x, uv->y, *color);
-		pos++;
-		uv++;
-		color++;
-		dv++;
-	}
-#endif
-}
 #endif // SEPARATE_VERTEX_STREAMS
 
 void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, Vec2* __restrict transformedVertices)
@@ -5466,11 +5621,7 @@ void batchTransformDrawVertices(const DrawVertex* __restrict src, uint32_t n, Dr
 
 	const uint32_t iter = n >> 2;
 	for (uint32_t i = 0; i < iter; ++i) {
-		// Unaligned loads because DrawVertex is 20 bytes (until bgfx supports multiple vertex streams)
-		// TODO: If bgfx supports multiple vertex streams at some point in the future, positions, uv and 
-		// color data can be separated into different streams. This way, I can transform vertices and 
-		// memcpy uv/color data directly to the target buffers. It shouldn't make a noticable difference
-		// but the code below will be simplified a bit.
+		// Unaligned loads because DrawVertex is 20 bytes
 		bx::simd128_t p0 = _mm_loadu_ps(&src[0].x); // {x0, y0, u0, v0}
 		bx::simd128_t p1 = _mm_loadu_ps(&src[1].x); // {x1, y1, u1, v1}
 		bx::simd128_t p2 = _mm_loadu_ps(&src[2].x); // {x2, y2, u2, v2}
