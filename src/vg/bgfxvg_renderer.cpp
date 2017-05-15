@@ -98,6 +98,7 @@ struct SubPath
 	bool m_IsClosed;
 };
 
+#if !SEPARATE_VERTEX_STREAMS
 // 20 bytes / vertex * 65536 vertices / buffer = 1.25MB / VB
 struct DrawVertex
 {
@@ -112,6 +113,7 @@ struct DrawVertex
 	dvPtr->u = (s); \
 	dvPtr->v = (t); \
 	dvPtr->color = (c);
+#endif // SEPARATE_VERTEX_STREAMS
 
 struct VertexBuffer
 {
@@ -3364,49 +3366,61 @@ void Context::renderTextQuads(uint32_t numQuads, Color color)
 #if SEPARATE_VERTEX_STREAMS
 	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
-	Vec2* dstPos = &vb->m_Pos[vbOffset];
-	Vec2* dstUV = &vb->m_UV[vbOffset];
-	uint32_t* dstColor = &vb->m_Color[vbOffset];
 
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
 	bx::memCopy(dstPos, m_TextVertices, sizeof(Vec2) * numDrawVertices);
+
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
 	memset32(dstColor, numDrawVertices, &color);
+
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	const FONSquad* q = m_TextQuads;
+	uint32_t nq = numQuads;
+	while (nq-- > 0) {
+		const float s0 = q->s0;
+		const float s1 = q->s1;
+		const float t0 = q->t0;
+		const float t1 = q->t1;
+
+		dstUV[0].x = s0; dstUV[0].y = t0;
+		dstUV[1].x = s1; dstUV[1].y = t0;
+		dstUV[2].x = s1; dstUV[2].y = t1;
+		dstUV[3].x = s0; dstUV[3].y = t1;
+
+		dstUV += 4;
+		++q;
+	}
 #else
 	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
-#endif
-
-	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
-
-	uint32_t startVertexID = cmd->m_NumVertices;
-
-	cmd->m_NumVertices += numDrawVertices;
-	cmd->m_NumIndices += numDrawIndices;
-
 	const FONSquad* q = m_TextQuads;
-#if !SEPARATE_VERTEX_STREAMS
 	const Vec2* v = m_TextVertices;
-#endif
 
-	while (numQuads-- > 0) {
-#if SEPARATE_VERTEX_STREAMS
-		dstUV[0].x = q->s0; dstUV[0].y = q->t0;
-		dstUV[1].x = q->s1; dstUV[1].y = q->t0;
-		dstUV[2].x = q->s1; dstUV[2].y = q->t1;
-		dstUV[3].x = q->s0; dstUV[3].y = q->t1;
-		dstUV += 4;
-#else
+	uint32_t nq = numQuads;
+	while (nq-- > 0) {
 		SET_DRAW_VERTEX(dstVertex, v[0].x, v[0].y, q->s0, q->t0, color); ++dstVertex;
 		SET_DRAW_VERTEX(dstVertex, v[1].x, v[1].y, q->s1, q->t0, color); ++dstVertex;
 		SET_DRAW_VERTEX(dstVertex, v[2].x, v[2].y, q->s1, q->t1, color); ++dstVertex;
 		SET_DRAW_VERTEX(dstVertex, v[3].x, v[3].y, q->s0, q->t1, color); ++dstVertex;
 		v += 4;
-#endif
-
-		*dstIndex++ = (uint16_t)startVertexID; *dstIndex++ = (uint16_t)(startVertexID + 1); *dstIndex++ = (uint16_t)(startVertexID + 2);
-		*dstIndex++ = (uint16_t)startVertexID; *dstIndex++ = (uint16_t)(startVertexID + 2); *dstIndex++ = (uint16_t)(startVertexID + 3);
-
-		startVertexID += 4;
 		++q;
 	}
+#endif
+
+	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	uint32_t startVertexID = cmd->m_NumVertices;
+	while (numQuads-- > 0) {
+		*dstIndex++ = (uint16_t)startVertexID;
+		*dstIndex++ = (uint16_t)(startVertexID + 1);
+		*dstIndex++ = (uint16_t)(startVertexID + 2);
+		*dstIndex++ = (uint16_t)startVertexID;
+		*dstIndex++ = (uint16_t)(startVertexID + 2);
+		*dstIndex++ = (uint16_t)(startVertexID + 3);
+
+		startVertexID += 4;
+	}
+
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
 }
 
 void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices, Color color)
@@ -3429,31 +3443,26 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 #if SEPARATE_VERTEX_STREAMS
 	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
-	Vec2* dstPos = &vb->m_Pos[vbOffset];
-	Vec2* dstUV = &vb->m_UV[vbOffset];
-	uint32_t* dstColor = &vb->m_Color[vbOffset];
 
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
 	bx::memCopy(dstPos, vtx, sizeof(Vec2) * numDrawVertices);
+
+	Vec2* dstUV = &vb->m_UV[vbOffset];
 	memset64(dstUV, numDrawVertices, &uv.x);
+
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
 	memset32(dstColor, numDrawVertices, &c);
 #else
 	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
-#endif
-	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
-
-	const uint32_t startVertexID = cmd->m_NumVertices;
-
-	cmd->m_NumVertices += numDrawVertices;
-	cmd->m_NumIndices += numDrawIndices;
-
-#if !SEPARATE_VERTEX_STREAMS
 	while (numPathVertices-- > 0) {
 		SET_DRAW_VERTEX(dstVertex, vtx->x, vtx->y, uv.x, uv.y, c);
 		++dstVertex;
 		++vtx;
 	}
-#endif
+#endif // SEPARATE_VERTEX_STREAMS
 
+	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	const uint32_t startVertexID = cmd->m_NumVertices;
 	uint32_t secondTriVertex = startVertexID + 1;
 	while (numTris-- > 0) {
 		*dstIndex++ = (uint16_t)startVertexID;
@@ -3461,6 +3470,9 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 		*dstIndex++ = (uint16_t)(secondTriVertex + 1);
 		++secondTriVertex;
 	}
+
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
 }
 
 void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, Color color)
@@ -3487,23 +3499,37 @@ void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, C
 #if SEPARATE_VERTEX_STREAMS
 	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
-	Vec2* dstPos = &vb->m_Pos[vbOffset];
+
 	Vec2* dstUV = &vb->m_UV[vbOffset];
-	uint32_t* dstColor = &vb->m_Color[vbOffset];
+	memset64(dstUV, numDrawVertices, &uv.x);
 
 	const uint32_t colors[2] = { c, c0 };
-
-	memset64(dstUV, numDrawVertices, &uv.x);
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
 	memset64(dstColor, numDrawVertices >> 1, &colors[0]);
+
+	// TODO: Assumes CCW order (otherwise fringes are generated on the wrong side of the polygon)
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	Vec2 d01 = vtx[0] - vtx[numPathVertices - 1];
+	vec2Normalize(&d01);
+
+	for (uint32_t iSegment = 0; iSegment < numPathVertices; ++iSegment) {
+		const Vec2& p1 = vtx[iSegment];
+		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
+
+		Vec2 d12 = p2 - p1;
+		vec2Normalize(&d12);
+
+		const Vec2 v = calcExtrusionVector(d01, d12);
+		const Vec2 v_aa = v * aa;
+
+		dstPos[0] = p1 - v_aa;
+		dstPos[1] = p1 + v_aa;
+		dstPos += 2;
+
+		d01 = d12;
+	}
 #else
 	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
-#endif
-	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
-
-	const uint32_t startVertexID = cmd->m_NumVertices;
-
-	cmd->m_NumVertices += numDrawVertices;
-	cmd->m_NumIndices += numDrawIndices;
 
 	// TODO: Assumes CCW order (otherwise fringes are generated on the wrong side of the polygon)
 #if BATCH_PATH_DIRECTIONS
@@ -3538,18 +3564,16 @@ void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, C
 		const Vec2 v = calcExtrusionVector(d01, d12);
 		const Vec2 v_aa = v * aa;
 
-#if SEPARATE_VERTEX_STREAMS
-		dstPos[0] = p1 - v_aa;
-		dstPos[1] = p1 + v_aa;
-		dstPos += 2;
-#else
 		SET_DRAW_VERTEX(dstVertex, p1.x - v_aa.x, p1.y - v_aa.y, uv.x, uv.y, c); ++dstVertex;
 		SET_DRAW_VERTEX(dstVertex, p1.x + v_aa.x, p1.y + v_aa.y, uv.x, uv.y, c0); ++dstVertex;
-#endif
 
 		d01 = d12;
 	}
-#endif
+#endif // BATCH_PATH_DIRECTIONS
+#endif // SEPARATE_VERTEX_STREAMS
+
+	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	const uint32_t startVertexID = cmd->m_NumVertices;
 
 	// Generate the triangle fan (original polygon)
 	const uint32_t numFanTris = numPathVertices - 2;
@@ -3580,6 +3604,9 @@ void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, C
 	*dstIndex++ = (uint16_t)(firstVertexID);
 	*dstIndex++ = (uint16_t)(startVertexID + 1);
 	*dstIndex++ = (uint16_t)startVertexID;
+
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
 }
 
 void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices, ImagePatternHandle handle)
@@ -3603,24 +3630,18 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 #if SEPARATE_VERTEX_STREAMS
 	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
-	Vec2* dstPos = &vb->m_Pos[vbOffset];
-	Vec2* dstUV = &vb->m_UV[vbOffset];
-	uint32_t* dstColor = &vb->m_Color[vbOffset];
 
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
 	bx::memCopy(dstPos, vtx, sizeof(Vec2) * numDrawVertices);
-	memset32(dstColor, numDrawVertices, &c);
+
+	Vec2* dstUV = &vb->m_UV[vbOffset];
 	batchTransformPositions_Unaligned(vtx, numDrawVertices, dstUV, mtx);
+
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+	memset32(dstColor, numDrawVertices, &c);
 #else
 	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
-#endif
-	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
-	const uint32_t startVertexID = cmd->m_NumVertices;
-
-	cmd->m_NumVertices += numDrawVertices;
-	cmd->m_NumIndices += numDrawIndices;
-
-#if !SEPARATE_VERTEX_STREAMS
 	for (uint32_t i = 0; i < numPathVertices; ++i) {
 		const Vec2& p = vtx[i];
 		Vec2 uv = transformPos2D(p.x, p.y, mtx);
@@ -3628,8 +3649,10 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 		SET_DRAW_VERTEX(dstVertex, p.x, p.y, uv.x, uv.y, c);
 		++dstVertex;
 	}
-#endif
+#endif // SEPARATE_VERTEX_STREAMS
 
+	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	const uint32_t startVertexID = cmd->m_NumVertices;
 	uint32_t secondTriVertex = startVertexID + 1;
 	while (numTris-- > 0) {
 		*dstIndex++ = (uint16_t)startVertexID;
@@ -3637,6 +3660,9 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 		*dstIndex++ = (uint16_t)(secondTriVertex + 1);
 		++secondTriVertex;
 	}
+
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
 }
 
 void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices, GradientHandle handle)
@@ -3652,26 +3678,20 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 #if SEPARATE_VERTEX_STREAMS
 	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
-	Vec2* dstPos = &vb->m_Pos[vbOffset];
-	Vec2* dstUV = &vb->m_UV[vbOffset];
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
 
-	const uint32_t color = ColorRGBA::White;
-	const float uv[2] = { 0.0f, 0.0f };
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
 	bx::memCopy(dstPos, vtx, sizeof(Vec2) * numDrawVertices);
+
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	const float uv[2] = { 0.0f, 0.0f };
 	memset64(dstUV, numDrawVertices, &uv[0]);
+
+	const uint32_t color = ColorRGBA::White;
 	memset32(dstColor, numDrawVertices, &color);
 #else
 	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
-#endif
-	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
-	const uint32_t startVertexID = cmd->m_NumVertices;
-	
-	cmd->m_NumVertices += numDrawVertices;
-	cmd->m_NumIndices += numDrawIndices;
-
-#if !SEPARATE_VERTEX_STREAMS
 	while (numPathVertices-- > 0) {
 		SET_DRAW_VERTEX(dstVertex, vtx->x, vtx->y, 0.0f, 0.0f, ColorRGBA::White);
 		++dstVertex;
@@ -3679,6 +3699,8 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 	}
 #endif
 
+	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	const uint32_t startVertexID = cmd->m_NumVertices;
 	uint32_t secondTriVertex = startVertexID + 1;
 	while (numTris-- > 0) {
 		*dstIndex++ = (uint16_t)startVertexID;
@@ -3686,6 +3708,9 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 		*dstIndex++ = (uint16_t)(secondTriVertex + 1);
 		++secondTriVertex;
 	}
+
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
 }
 
 void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool isClosed, float thickness, Color color, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
