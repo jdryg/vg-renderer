@@ -46,17 +46,14 @@ namespace vg
 #define MAX_FONT_IMAGES          4
 #define MIN_FONT_ATLAS_SIZE      512
 
-#define BATCH_TRANSFORM          1
 #define APPROXIMATE_MATH         0
 #define BEZIER_CIRCLE            0
 #define ENABLE_SHAPE_CACHING     1
 #define SEPARATE_VERTEX_STREAMS  1
 #define USE_SIMD                 1
 
-#if BATCH_TRANSFORM
 #if !defined(FONS_QUAD_SIMD) || !FONS_QUAD_SIMD
-#error "FONS_QUAD_SIMD should be set to 1 to use BATCH_TRANSFORM"
-#endif
+#error "FONS_QUAD_SIMD should be set to 1"
 #endif
 
 #if !FONS_CUSTOM_WHITE_RECT
@@ -257,10 +254,8 @@ struct Context
 	bx::HandleAllocT<MAX_TEXTURES> m_ImageAlloc;
 
 	Vec2* m_PathVertices;
-#if BATCH_TRANSFORM
 	Vec2* m_TransformedPathVertices;
 	bool m_PathVerticesTransformed;
-#endif
 	uint32_t m_NumPathVertices;
 	uint32_t m_PathVertexCapacity;
 
@@ -568,9 +563,7 @@ inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
 	return v;
 }
 
-#if BATCH_TRANSFORM
 void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx);
-#endif
 #if !SEPARATE_VERTEX_STREAMS
 void batchTransformDrawVertices(const DrawVertex* __restrict src, uint32_t n, DrawVertex* __restrict dst, const float* __restrict mtx);
 #endif
@@ -900,10 +893,8 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID) :
 	m_PathVertices(nullptr),
 	m_NumPathVertices(0),
 	m_PathVertexCapacity(0),
-#if BATCH_TRANSFORM
 	m_TransformedPathVertices(nullptr),
 	m_PathVerticesTransformed(false),
-#endif
 	m_SubPaths(nullptr),
 	m_NumSubPaths(0),
 	m_SubPathCapacity(0),
@@ -1040,9 +1031,7 @@ Context::~Context()
 	BX_ALIGNED_FREE(m_Allocator, m_TextQuads, 16);
 	BX_ALIGNED_FREE(m_Allocator, m_TextVertices, 16);
 	BX_ALIGNED_FREE(m_Allocator, m_PathVertices, 16);
-#if BATCH_TRANSFORM
 	BX_ALIGNED_FREE(m_Allocator, m_TransformedPathVertices, 16);
-#endif
 }
 
 bool Context::init()
@@ -1328,9 +1317,7 @@ void Context::beginPath()
 	m_SubPaths[0].m_IsClosed = false;
 	m_SubPaths[0].m_NumVertices = 0;
 	m_SubPaths[0].m_FirstVertexID = 0;
-#if BATCH_TRANSFORM
 	m_PathVerticesTransformed = false;
-#endif
 }
 
 void Context::moveTo(float x, float y)
@@ -1352,22 +1339,14 @@ void Context::moveTo(float x, float y)
 		path->m_FirstVertexID = m_NumPathVertices;
 	}
 
-#if BATCH_TRANSFORM
 	addPathVertex(Vec2(x, y));
-#else
-	addPathVertex(transformPos2D(x, y, getState()->m_TransformMtx));
-#endif
 }
 
 void Context::lineTo(float x, float y)
 {
 	BX_CHECK(getSubPath()->m_NumVertices > 0, "MoveTo() should be called once before calling LineTo()");
 
-#if BATCH_TRANSFORM
 	addPathVertex(Vec2(x, y));
-#else
-	addPathVertex(transformPos2D(x, y, getState()->m_TransformMtx));
-#endif
 }
 
 void Context::bezierTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
@@ -1376,7 +1355,6 @@ void Context::bezierTo(float c1x, float c1y, float c2x, float c2y, float x, floa
 	const SubPath* path = getSubPath();
 	BX_CHECK(path->m_NumVertices > 0, "MoveTo() should be called once before calling BezierTo()");
 
-#if BATCH_TRANSFORM
 	const Vec2* lastVertex = &m_PathVertices[path->m_FirstVertexID + path->m_NumVertices - 1];
 	float x1 = lastVertex->x;
 	float y1 = lastVertex->y;
@@ -1389,24 +1367,6 @@ void Context::bezierTo(float c1x, float c1y, float c2x, float c2y, float x, floa
 
 	const float avgScale = state->m_AvgScale;
 	const float tessTol = m_TesselationTolerance / (avgScale * avgScale);
-#else
-	const float* mtx = state->m_TransformMtx;
-	Vec2 p2 = transformPos2D(c1x, c1y, mtx);
-	Vec2 p3 = transformPos2D(c2x, c2y, mtx);
-	Vec2 p4 = transformPos2D(x, y, mtx);
-
-	const Vec2* lastVertex = &m_PathVertices[path->m_FirstVertexID + path->m_NumVertices - 1];
-	float x1 = lastVertex->x;
-	float y1 = lastVertex->y;
-	float x2 = p2.x;
-	float y2 = p2.y;
-	float x3 = p3.x;
-	float y3 = p3.y;
-	float x4 = p4.x;
-	float y4 = p4.y;
-
-	const float tessTol = m_TesselationTolerance;
-#endif
 
 	const int MAX_LEVELS = 10;
 	float* stack = (float*)alloca(sizeof(float) * 8 * MAX_LEVELS);
@@ -1534,9 +1494,6 @@ void Context::roundedRect(float x, float y, float w, float h, float r)
 #else
 		const float da = acos((scale * r) / ((scale * r) + m_TesselationTolerance)) * 2.0f;
 #endif
-#if !BATCH_TRANSFORM
-		const float* mtx = state->m_TransformMtx;
-#endif
 		const uint32_t numPointsHalfCircle = max2(2, (int)ceilf(PI / da));
 		const uint32_t numPointsQuarterCircle = (numPointsHalfCircle >> 1) + 1;
 
@@ -1556,11 +1513,7 @@ void Context::roundedRect(float x, float y, float w, float h, float r)
 				float ca, sa;
 				sincos(a, ca, sa);
 
-#if BATCH_TRANSFORM
 				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
-#else
-				*circleVertices++ = transformPos2D(cx + r * ca, cy + r * sa, mtx);
-#endif
 			}
 			path->m_NumVertices += (numPointsQuarterCircle - 1);
 		}
@@ -1578,11 +1531,7 @@ void Context::roundedRect(float x, float y, float w, float h, float r)
 				float ca, sa;
 				sincos(a, ca, sa);
 
-#if BATCH_TRANSFORM
 				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
-#else
-				*circleVertices++ = transformPos2D(cx + r * ca, cy + r * sa, mtx);
-#endif
 			}
 			path->m_NumVertices += (numPointsQuarterCircle - 1);
 		}
@@ -1600,11 +1549,7 @@ void Context::roundedRect(float x, float y, float w, float h, float r)
 				float ca, sa;
 				sincos(a, ca, sa);
 
-#if BATCH_TRANSFORM
 				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
-#else
-				*circleVertices++ = transformPos2D(cx + r * ca, cy + r * sa, mtx);
-#endif
 			}
 			path->m_NumVertices += (numPointsQuarterCircle - 1);
 		}
@@ -1622,11 +1567,7 @@ void Context::roundedRect(float x, float y, float w, float h, float r)
 				float ca, sa;
 				sincos(a, ca, sa);
 
-#if BATCH_TRANSFORM
 				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
-#else
-				*circleVertices++ = transformPos2D(cx + r * ca, cy + r * sa, mtx);
-#endif
 			}
 			path->m_NumVertices += (numPointsQuarterCircle - 1);
 		}
@@ -1651,10 +1592,6 @@ void Context::circle(float cx, float cy, float r)
 	const State* state = getState();
 	const float scale = state->m_AvgScale;
 
-#if !BATCH_TRANSFORM
-	const float* mtx = state->m_TransformMtx;
-#endif
-
 #if APPROXIMATE_MATH
 	const float da = approxAcos((scale * r) / ((scale * r) + m_TesselationTolerance)) * 2.0f;
 #else
@@ -1675,11 +1612,7 @@ void Context::circle(float cx, float cy, float r)
 		float ca, sa;
 		sincos(a, ca, sa);
 
-#if BATCH_TRANSFORM
 		*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
-#else
-		*circleVertices++ = transformPos2D(cx + r * ca, cy + r * sa, mtx);
-#endif
 	}
 	path->m_NumVertices += (numPoints - 1);
 	closePath();
@@ -1689,9 +1622,7 @@ void Context::circle(float cx, float cy, float r)
 void Context::polyline(const Vec2* coords, uint32_t numPoints)
 {
 	BX_CHECK(numPoints > 1, "Polyline() should have more than 1 vertices");
-#if BATCH_TRANSFORM
 	BX_CHECK(!m_PathVerticesTransformed, "Cannot add new vertices to the path after submitting a draw command");
-#endif
 
 	SubPath* path = getSubPath();
 	BX_CHECK(!path->m_IsClosed, "Cannot add new vertices to a closed path");
@@ -1703,20 +1634,9 @@ void Context::polyline(const Vec2* coords, uint32_t numPoints)
 			numPoints--;
 		}
 	}
-
-#if !BATCH_TRANSFORM
-	const State* state = getState();
-	const float* mtx = state->m_TransformMtx;
-#endif
 	
 	Vec2* vertices = allocPathVertices(numPoints);
-	for (uint32_t i = 0; i < numPoints; ++i) {
-#if BATCH_TRANSFORM
-		vertices[i] = coords[i];
-#else
-		vertices[i] = transformPos2D(coords[i].x, coords[i].y, mtx);
-#endif
-	}
+	bx::memCopy(vertices, coords, sizeof(Vec2) * numPoints);
 	path->m_NumVertices += numPoints;
 }
 
@@ -1738,7 +1658,6 @@ void Context::closePath()
 
 void Context::fillConvexPath(Color col, bool aa)
 {
-#if BATCH_TRANSFORM
 	if (!m_PathVerticesTransformed) {
 		const State* state = getState();
 		batchTransformPositions(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
@@ -1746,9 +1665,6 @@ void Context::fillConvexPath(Color col, bool aa)
 	}
 
 	const Vec2* pathVertices = m_TransformedPathVertices;
-#else
-	const Vec2* pathVertices = m_PathVertices;
-#endif
 
 	const uint32_t numPaths = m_NumSubPaths;
 	for (uint32_t iPath = 0; iPath < numPaths; ++iPath) {
@@ -1767,7 +1683,6 @@ void Context::fillConvexPath(Color col, bool aa)
 
 void Context::fillConvexPath(GradientHandle gradient, bool aa)
 {
-#if BATCH_TRANSFORM
 	if (!m_PathVerticesTransformed) {
 		const State* state = getState();
 		batchTransformPositions(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
@@ -1775,9 +1690,6 @@ void Context::fillConvexPath(GradientHandle gradient, bool aa)
 	}
 
 	const Vec2* pathVertices = m_TransformedPathVertices;
-#else
-	const Vec2* pathVertices = m_PathVertices;
-#endif
 
 	// TODO: Anti-aliasing of gradient-filled paths
 	BX_UNUSED(aa);
@@ -1795,7 +1707,6 @@ void Context::fillConvexPath(GradientHandle gradient, bool aa)
 
 void Context::fillConvexPath(ImagePatternHandle img, bool aa)
 {
-#if BATCH_TRANSFORM
 	if (!m_PathVerticesTransformed) {
 		const State* state = getState();
 		batchTransformPositions(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
@@ -1803,9 +1714,6 @@ void Context::fillConvexPath(ImagePatternHandle img, bool aa)
 	}
 
 	const Vec2* pathVertices = m_TransformedPathVertices;
-#else
-	const Vec2* pathVertices = m_PathVertices;
-#endif
 
 	// TODO: Anti-aliasing of textured paths
 	BX_UNUSED(aa);
@@ -1822,7 +1730,6 @@ void Context::fillConvexPath(ImagePatternHandle img, bool aa)
 
 void Context::fillConcavePath(Color col, bool aa)
 {
-#if BATCH_TRANSFORM
 	if (!m_PathVerticesTransformed) {
 		const State* state = getState();
 		batchTransformPositions(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
@@ -1830,9 +1737,6 @@ void Context::fillConcavePath(Color col, bool aa)
 	}
 
 	const Vec2* pathVertices = m_TransformedPathVertices;
-#else
-	const Vec2* pathVertices = m_PathVertices;
-#endif
 
 	BX_CHECK(m_NumSubPaths == 1, "Cannot decompose multiple concave paths"); // Only a single concave polygon can be decomposed at a time.
 
@@ -1846,7 +1750,6 @@ void Context::fillConcavePath(Color col, bool aa)
 
 void Context::strokePath(Color col, float width, bool aa, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
 {
-#if BATCH_TRANSFORM
 	if (!m_PathVerticesTransformed) {
 		const State* state = getState();
 		batchTransformPositions(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
@@ -1854,9 +1757,6 @@ void Context::strokePath(Color col, float width, bool aa, LineCap::Enum lineCap,
 	}
 
 	const Vec2* pathVertices = m_TransformedPathVertices;
-#else
-	const Vec2* pathVertices = m_PathVertices;
-#endif
 	
 	const uint32_t numPaths = m_NumSubPaths;
 	for (uint32_t iSubPath = 0; iSubPath < numPaths; ++iSubPath) {
@@ -3308,9 +3208,7 @@ inline Vec2* Context::allocPathVertices(uint32_t n)
 	if (m_NumPathVertices + n > m_PathVertexCapacity) {
 		m_PathVertexCapacity = max2(m_PathVertexCapacity + n, m_PathVertexCapacity != 0 ? (m_PathVertexCapacity * 3) >> 1 : 16);
 		m_PathVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_PathVertices, sizeof(Vec2) * m_PathVertexCapacity, 16);
-#if BATCH_TRANSFORM
 		m_TransformedPathVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_TransformedPathVertices, sizeof(Vec2) * m_PathVertexCapacity, 16);
-#endif
 	}
 
 	Vec2* p = &m_PathVertices[m_NumPathVertices];
@@ -3320,9 +3218,7 @@ inline Vec2* Context::allocPathVertices(uint32_t n)
 
 inline void Context::addPathVertex(const Vec2& p)
 {
-#if BATCH_TRANSFORM
 	BX_CHECK(!m_PathVerticesTransformed, "Cannot add new vertices to the path after submitting a draw command");
-#endif
 
 	SubPath* path = getSubPath();
 
@@ -5212,7 +5108,6 @@ void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const
 #endif
 }
 
-#if BATCH_TRANSFORM
 void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx)
 {
 #if !USE_SIMD
@@ -5268,7 +5163,6 @@ void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restr
 	}
 #endif
 }
-#endif // BATCH_TRANSFORM
 
 #if SEPARATE_VERTEX_STREAMS
 void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx)
