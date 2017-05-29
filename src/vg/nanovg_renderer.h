@@ -81,7 +81,7 @@ public:
 	virtual Shape* CreateShape(uint32_t flags);
 	virtual void DestroyShape(Shape* shape);
 	virtual void SubmitShape(Shape* shape);
-#if VG_SHAPE_DYNAMIC_TEXT
+#if VG_CONFIG_SHAPE_DYNAMIC_TEXT
 	virtual void SubmitShape(Shape* shape, GetStringByIDFunc stringCallback, void* userData);
 #endif
 

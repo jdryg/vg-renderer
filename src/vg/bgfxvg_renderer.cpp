@@ -46,9 +46,6 @@ namespace vg
 #define MAX_FONT_IMAGES          4
 #define MIN_FONT_ATLAS_SIZE      512
 
-#define ENABLE_SHAPE_CACHING     1
-#define USE_SIMD                 1
-
 #if !defined(FONS_QUAD_SIMD) || !FONS_QUAD_SIMD
 #error "FONS_QUAD_SIMD should be set to 1"
 #endif
@@ -234,13 +231,13 @@ struct Context
 	FONScontext* m_FontStashContext;
 	ImageHandle m_FontImages[MAX_FONT_IMAGES];
 	int m_FontImageID;
-	void* m_FontData[VG_MAX_FONTS];
+	void* m_FontData[VG_CONFIG_MAX_FONTS];
 	uint32_t m_NextFontID;
 
-	Gradient m_Gradients[VG_MAX_GRADIENTS];
+	Gradient m_Gradients[VG_CONFIG_MAX_GRADIENTS];
 	uint32_t m_NextGradientID;
 
-	ImagePattern m_ImagePatterns[VG_MAX_IMAGE_PATTERNS];
+	ImagePattern m_ImagePatterns[VG_CONFIG_MAX_IMAGE_PATTERNS];
 	uint32_t m_NextImagePatternID;
 
 	bgfx::VertexDecl m_PosVertexDecl;
@@ -788,12 +785,12 @@ void BGFXVGRenderer::SubmitShape(Shape* shape)
 	m_Context->submitShape(shape, nullptr, nullptr);
 }
 
-#if VG_SHAPE_DYNAMIC_TEXT
+#if VG_CONFIG_SHAPE_DYNAMIC_TEXT
 void BGFXVGRenderer::SubmitShape(Shape* shape, GetStringByIDFunc stringCallback, void* userData)
 {
 	m_Context->submitShape(shape, &stringCallback, userData);
 }
-#endif // VG_SHAPE_DYNAMIC_TEXT
+#endif // VG_CONFIG_SHAPE_DYNAMIC_TEXT
 
 //////////////////////////////////////////////////////////////////////////
 // Context
@@ -850,7 +847,7 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID) :
 	m_InnerColorUniform = BGFX_INVALID_HANDLE;
 	m_OuterColorUniform = BGFX_INVALID_HANDLE;
 
-	bx::memSet(m_FontData, 0, sizeof(void*) * VG_MAX_FONTS);
+	bx::memSet(m_FontData, 0, sizeof(void*) * VG_CONFIG_MAX_FONTS);
 }
 
 Context::~Context()
@@ -911,7 +908,7 @@ Context::~Context()
 	BX_FREE(m_Allocator, m_DrawCommands);
 
 	// Manually delete font data
-	for (int i = 0; i < VG_MAX_FONTS; ++i) {
+	for (int i = 0; i < VG_CONFIG_MAX_FONTS; ++i) {
 		if (m_FontData[i]) {
 			BX_FREE(m_Allocator, m_FontData[i]);
 		}
@@ -1620,7 +1617,7 @@ void Context::strokePath(Color col, float width, bool aa, LineCap::Enum lineCap,
 // NOTE: In contrast to NanoVG these Gradients are State dependent (the current transformation matrix is baked in the Gradient matrix).
 GradientHandle Context::createLinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol)
 {
-	if (m_NextGradientID >= VG_MAX_GRADIENTS) {
+	if (m_NextGradientID >= VG_CONFIG_MAX_GRADIENTS) {
 		return BGFX_INVALID_HANDLE;
 	}
 
@@ -1682,7 +1679,7 @@ GradientHandle Context::createLinearGradient(float sx, float sy, float ex, float
 
 GradientHandle Context::createBoxGradient(float x, float y, float w, float h, float r, float f, Color icol, Color ocol)
 {
-	if (m_NextGradientID >= VG_MAX_GRADIENTS) {
+	if (m_NextGradientID >= VG_CONFIG_MAX_GRADIENTS) {
 		return BGFX_INVALID_HANDLE;
 	}
 
@@ -1732,7 +1729,7 @@ GradientHandle Context::createBoxGradient(float x, float y, float w, float h, fl
 
 GradientHandle Context::createRadialGradient(float cx, float cy, float inr, float outr, Color icol, Color ocol)
 {
-	if (m_NextGradientID >= VG_MAX_GRADIENTS) {
+	if (m_NextGradientID >= VG_CONFIG_MAX_GRADIENTS) {
 		return BGFX_INVALID_HANDLE;
 	}
 
@@ -1785,7 +1782,7 @@ GradientHandle Context::createRadialGradient(float cx, float cy, float inr, floa
 
 ImagePatternHandle Context::createImagePattern(float cx, float cy, float w, float h, float angle, ImageHandle image, float alpha)
 {
-	if (m_NextImagePatternID >= VG_MAX_IMAGE_PATTERNS) {
+	if (m_NextImagePatternID >= VG_CONFIG_MAX_IMAGE_PATTERNS) {
 		return BGFX_INVALID_HANDLE;
 	}
 
@@ -2485,7 +2482,7 @@ void Context::destroyShape(Shape* shape)
 
 void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void* userData)
 {
-#if ENABLE_SHAPE_CACHING
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
 	const State* state = getState();
 
 	// TODO: Currently only the shapes with solid color draw commands can be cached (no gradients and no images).
@@ -2530,7 +2527,7 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 	}
 
 	// Now execute the command stream and keep every new DrawCommand in the cachedShape.
-#endif // ENABLE_SHAPE_CACHING
+#endif // VG_CONFIG_ENABLE_SHAPE_CACHING
 
 	const uint8_t* cmdList = (uint8_t*)shape->m_CmdList->more(0);
 	const uint32_t cmdListSize = shape->m_CmdList->getSize();
@@ -2539,8 +2536,8 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 
 	const uint16_t firstGradientID = (uint16_t)m_NextGradientID;
 	const uint16_t firstImagePatternID = (uint16_t)m_NextImagePatternID;
-	BX_CHECK(firstGradientID + shape->m_NumGradients <= VG_MAX_GRADIENTS, "Not enough free gradients to render shape. Increase VG_MAX_GRADIENTS");
-	BX_CHECK(firstImagePatternID + shape->m_NumImagePatterns <= VG_MAX_IMAGE_PATTERNS, "Not enough free image patterns to render shape. Increase VG_MAX_IMAGE_PATTERS");
+	BX_CHECK(firstGradientID + shape->m_NumGradients <= VG_CONFIG_MAX_GRADIENTS, "Not enough free gradients to render shape. Increase VG_MAX_GRADIENTS");
+	BX_CHECK(firstImagePatternID + shape->m_NumImagePatterns <= VG_CONFIG_MAX_IMAGE_PATTERNS, "Not enough free image patterns to render shape. Increase VG_MAX_IMAGE_PATTERS");
 
 	while (cmdList < cmdListEnd) {
 		ShapeCommand::Enum cmdType = *(ShapeCommand::Enum*)cmdList;
@@ -2608,7 +2605,7 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 		}
 		case ShapeCommand::FillConvexColor:
 		{
-#if ENABLE_SHAPE_CACHING
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
 			if (canCache) {
 				// Force a new draw command to easily determine which triangles 
 				// have been generated for this call.
@@ -2624,7 +2621,7 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			bool aa = CMD_READ(bool, cmdList);
 			fillConvexPath(col, aa);
 
-#if ENABLE_SHAPE_CACHING
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
 			if (canCache) {
 				if (prevDrawCommandID != m_NumDrawCommands - 1) {
 					cachedShapeAddDrawCommand(cachedShape, &m_DrawCommands[m_NumDrawCommands - 1]);
@@ -2655,7 +2652,7 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 		}
 		case ShapeCommand::FillConcaveColor:
 		{
-#if ENABLE_SHAPE_CACHING
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
 			if (canCache) {
 				m_ForceNewDrawCommand = true;
 			}
@@ -2667,7 +2664,7 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			bool aa = CMD_READ(bool, cmdList);
 			fillConcavePath(col, aa);
 
-#if ENABLE_SHAPE_CACHING
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
 			if (canCache) {
 				if (prevDrawCommandID != m_NumDrawCommands - 1) {
 					// TODO: Assume only 1 (batched) draw command will generated for this path.
@@ -2683,7 +2680,7 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 		}
 		case ShapeCommand::Stroke:
 		{
-#if ENABLE_SHAPE_CACHING
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
 			if (canCache) {
 				m_ForceNewDrawCommand = true;
 			}
@@ -2698,7 +2695,7 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			LineJoin::Enum lineJoin = CMD_READ(LineJoin::Enum, cmdList);
 			strokePath(col, width, aa, lineCap, lineJoin);
 
-#if ENABLE_SHAPE_CACHING
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
 			if (canCache) {
 				if (prevDrawCommandID != m_NumDrawCommands - 1) {
 					cachedShapeAddDrawCommand(cachedShape, &m_DrawCommands[m_NumDrawCommands - 1]);
@@ -2756,7 +2753,7 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 		}
 		case ShapeCommand::TextStatic:
 		{
-#if ENABLE_SHAPE_CACHING
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
 			if (canCache) {
 				cachedShapeAddTextCommand(cachedShape, cmdList - sizeof(ShapeCommand::Enum));
 			}
@@ -2773,10 +2770,10 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			text(font, alignment, col, x, y, str, str + len);
 			break;
 		}
-#if VG_SHAPE_DYNAMIC_TEXT
+#if VG_CONFIG_SHAPE_DYNAMIC_TEXT
 		case ShapeCommand::TextDynamic:
 		{
-#if ENABLE_SHAPE_CACHING
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
 			if (canCache) {
 				cachedShapeAddTextCommand(cachedShape, cmdList - sizeof(ShapeCommand::Enum));
 			}
@@ -2862,7 +2859,7 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 			text(font, alignment, col, x, y, str, str + len);
 			break;
 		}
-#if VG_SHAPE_DYNAMIC_TEXT
+#if VG_CONFIG_SHAPE_DYNAMIC_TEXT
 		case ShapeCommand::TextDynamic:
 		{
 			Font font = CMD_READ(Font, cmdData);
@@ -4035,7 +4032,7 @@ ImageHandle Context::allocImage()
 
 FontHandle Context::loadFontFromMemory(const char* name, const uint8_t* data, uint32_t size)
 {
-	if (m_NextFontID == VG_MAX_FONTS) {
+	if (m_NextFontID == VG_CONFIG_MAX_FONTS) {
 		return BGFX_INVALID_HANDLE;
 	}
 
@@ -4491,7 +4488,7 @@ void Context::decomposeAndFillConcavePolygon(const Vec2* points, uint32_t numPoi
 //
 void memset32(void* __restrict dst, uint32_t n, const void* __restrict src)
 {
-#if !USE_SIMD
+#if !VG_CONFIG_ENABLE_SIMD
 	const uint32_t s = *(const uint32_t*)src;
 	uint32_t* d = (uint32_t*)dst;
 	while (n-- > 0) {
@@ -4537,7 +4534,7 @@ void memset32(void* __restrict dst, uint32_t n, const void* __restrict src)
 
 void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src)
 {
-#if !USE_SIMD
+#if !VG_CONFIG_ENABLE_SIMD
 	const uint32_t s0 = *((const uint32_t*)src + 0);
 	const uint32_t s1 = *((const uint32_t*)src + 1);
 	uint32_t* d = (uint32_t*)dst;
@@ -4586,7 +4583,7 @@ void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src)
 
 void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src)
 {
-#if !USE_SIMD
+#if !VG_CONFIG_ENABLE_SIMD
 	const uint32_t s0 = *((const uint32_t*)src + 0);
 	const uint32_t s1 = *((const uint32_t*)src + 1);
 	const uint32_t s2 = *((const uint32_t*)src + 2);
@@ -4628,7 +4625,7 @@ void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src)
 
 void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, Vec2* __restrict transformedVertices)
 {
-#if USE_SIMD
+#if VG_CONFIG_ENABLE_SIMD
 	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
 	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);
 	const bx::simd128_t mtx2 = bx::simd_splat(mtx[2]);
@@ -4743,7 +4740,7 @@ void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const
 
 void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx)
 {
-#if !USE_SIMD
+#if !VG_CONFIG_ENABLE_SIMD
 	for (uint32_t i = 0; i < n; ++i) {
 		p[i] = transformPos2D(v[i].x, v[i].y, mtx);
 	}
@@ -4850,7 +4847,7 @@ void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec
 // NOTE: Assumes src is 16-byte aligned. Don't care about dst (unaligned stores)
 void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint16_t* __restrict dst, uint16_t delta)
 {
-#if !USE_SIMD
+#if !VG_CONFIG_ENABLE_SIMD
 	for (uint32_t i = 0; i < n; ++i) {
 		*dst++ = *src + delta;
 		src++;

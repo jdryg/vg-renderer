@@ -33,7 +33,7 @@ struct ShapeCommand
 		ImagePattern,
 
 		TextStatic, 
-#if VG_SHAPE_DYNAMIC_TEXT
+#if VG_CONFIG_SHAPE_DYNAMIC_TEXT
 		TextDynamic,
 #endif
 	};
@@ -94,7 +94,7 @@ struct Shape
 
 	void Text(const Font& font, uint32_t alignment, Color color, float x, float y, const char* text, const char* end);
 
-#if VG_SHAPE_DYNAMIC_TEXT
+#if VG_CONFIG_SHAPE_DYNAMIC_TEXT
 	void TextDynamic(const Font& font, uint32_t alignment, Color color, float x, float y, uint32_t stringID);
 #endif
 };

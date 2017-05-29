@@ -3,20 +3,28 @@
 
 #include <bgfx/bgfx.h> // BGFX_HANDLE
 
-#ifndef VG_SHAPE_DYNAMIC_TEXT
-#	define VG_SHAPE_DYNAMIC_TEXT 1
+#ifndef VG_CONFIG_SHAPE_DYNAMIC_TEXT
+#	define VG_CONFIG_SHAPE_DYNAMIC_TEXT 1
 #endif
 
-#ifndef VG_MAX_GRADIENTS
-#	define VG_MAX_GRADIENTS 64
+#ifndef VG_CONFIG_MAX_GRADIENTS
+#	define VG_CONFIG_MAX_GRADIENTS 64
 #endif
 
-#ifndef VG_MAX_IMAGE_PATTERNS
-#	define VG_MAX_IMAGE_PATTERNS 64
+#ifndef VG_CONFIG_MAX_IMAGE_PATTERNS
+#	define VG_CONFIG_MAX_IMAGE_PATTERNS 64
 #endif
 
-#ifndef VG_MAX_FONTS
-#	define VG_MAX_FONTS 8
+#ifndef VG_CONFIG_MAX_FONTS
+#	define VG_CONFIG_MAX_FONTS 8
+#endif
+
+#ifndef VG_CONFIG_ENABLE_SHAPE_CACHING
+#	define VG_CONFIG_ENABLE_SHAPE_CACHING 1
+#endif
+
+#ifndef VG_CONFIG_ENABLE_SIMD
+#	define VG_CONFIG_ENABLE_SIMD 1
 #endif
 
 #define VG_COLOR_RED_SHIFT   0
@@ -27,7 +35,7 @@
 
 #define VG_COLOR32(r, g, b, a) (uint32_t)(((uint32_t)(r) << VG_COLOR_RED_SHIFT) | ((uint32_t)(g) << VG_COLOR_GREEN_SHIFT) | ((uint32_t)(b) << VG_COLOR_BLUE_SHIFT) | ((uint32_t)(a) << VG_COLOR_ALPHA_SHIFT))
 
-#if VG_SHAPE_DYNAMIC_TEXT
+#if VG_CONFIG_SHAPE_DYNAMIC_TEXT
 #include <functional>
 namespace vg
 {

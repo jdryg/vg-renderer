@@ -23,7 +23,7 @@ NanoVGRenderer::~NanoVGRenderer()
 		m_Context = nullptr;
 	}
 	
-	for (uint32_t i = 0; i < VG_MAX_FONTS; ++i) {
+	for (uint32_t i = 0; i < VG_CONFIG_MAX_FONTS; ++i) {
 		if (m_FontData[i]) {
 			BX_FREE(m_Allocator, m_FontData[i]);
 		}
@@ -43,10 +43,10 @@ bool NanoVGRenderer::init(bool edgeAA, uint8_t viewID, bx::AllocatorI* allocator
 		return false;
 	}
 
-	m_Gradients = (NVGpaint*)BX_ALLOC(allocator, sizeof(NVGpaint) * VG_MAX_GRADIENTS);
-	m_ImagePatterns = (NVGpaint*)BX_ALLOC(allocator, sizeof(NVGpaint) * VG_MAX_IMAGE_PATTERNS);
-	m_FontData = (void**)BX_ALLOC(allocator, sizeof(void*) * VG_MAX_FONTS);
-	bx::memSet(m_FontData, 0, sizeof(void*) * VG_MAX_FONTS);
+	m_Gradients = (NVGpaint*)BX_ALLOC(allocator, sizeof(NVGpaint) * VG_CONFIG_MAX_GRADIENTS);
+	m_ImagePatterns = (NVGpaint*)BX_ALLOC(allocator, sizeof(NVGpaint) * VG_CONFIG_MAX_IMAGE_PATTERNS);
+	m_FontData = (void**)BX_ALLOC(allocator, sizeof(void*) * VG_CONFIG_MAX_FONTS);
+	bx::memSet(m_FontData, 0, sizeof(void*) * VG_CONFIG_MAX_FONTS);
 	
 	return true;
 }
@@ -142,7 +142,7 @@ void NanoVGRenderer::FillConvexPath(GradientHandle handle, bool aa)
 {
 	BX_UNUSED(aa);
 	BX_CHECK(m_Context != nullptr, "NanoVG context is null!");
-	BX_CHECK(handle.idx < VG_MAX_GRADIENTS, "Invalid gradient handle");
+	BX_CHECK(handle.idx < VG_CONFIG_MAX_GRADIENTS, "Invalid gradient handle");
 
 	NVGpaint* paint = &m_Gradients[handle.idx];
 	nvgFillPaint(m_Context, *paint);
@@ -153,7 +153,7 @@ void NanoVGRenderer::FillConvexPath(ImagePatternHandle handle, bool aa)
 {
 	BX_UNUSED(aa);
 	BX_CHECK(m_Context != nullptr, "NanoVG context is null!");
-	BX_CHECK(handle.idx < VG_MAX_IMAGE_PATTERNS, "Invalid image pattern handle");
+	BX_CHECK(handle.idx < VG_CONFIG_MAX_IMAGE_PATTERNS, "Invalid image pattern handle");
 
 	NVGpaint* paint = &m_ImagePatterns[handle.idx];
 	nvgFillPaint(m_Context, *paint);
@@ -342,7 +342,7 @@ ImagePatternHandle NanoVGRenderer::ImagePattern(float cx, float cy, float w, flo
 	NVGpaint* paint = &m_ImagePatterns[paintID];
 	*paint = nvgImagePattern(m_Context, cx, cy, w, h, angle, (int)image.idx, alpha);
 
-	m_NextImagePatternID = (m_NextImagePatternID + 1) % VG_MAX_IMAGE_PATTERNS;
+	m_NextImagePatternID = (m_NextImagePatternID + 1) % VG_CONFIG_MAX_IMAGE_PATTERNS;
 
 	return { (uint16_t)paintID };
 }
@@ -356,7 +356,7 @@ GradientHandle NanoVGRenderer::LinearGradient(float sx, float sy, float ex, floa
 
 	*paint = nvgLinearGradient(m_Context, sx, sy, ex, ey, nvgRGBA32(icol), nvgRGBA32(ocol));
 
-	m_NextGradientID = (m_NextGradientID + 1) % VG_MAX_GRADIENTS;
+	m_NextGradientID = (m_NextGradientID + 1) % VG_CONFIG_MAX_GRADIENTS;
 
 	return { (uint16_t)paintID };
 }
@@ -370,7 +370,7 @@ GradientHandle NanoVGRenderer::BoxGradient(float x, float y, float w, float h, f
 
 	*paint = nvgBoxGradient(m_Context, x, y, w, h, r, f, nvgRGBA32(icol), nvgRGBA32(ocol));
 
-	m_NextGradientID = (m_NextGradientID + 1) % VG_MAX_GRADIENTS;
+	m_NextGradientID = (m_NextGradientID + 1) % VG_CONFIG_MAX_GRADIENTS;
 
 	return { (uint16_t)paintID };
 }
@@ -384,7 +384,7 @@ GradientHandle NanoVGRenderer::RadialGradient(float cx, float cy, float inr, flo
 
 	*paint = nvgRadialGradient(m_Context, cx, cy, inr, outr, nvgRGBA32(icol), nvgRGBA32(ocol));
 
-	m_NextGradientID = (m_NextGradientID + 1) % VG_MAX_GRADIENTS;
+	m_NextGradientID = (m_NextGradientID + 1) % VG_CONFIG_MAX_GRADIENTS;
 
 	return { (uint16_t)paintID };
 }
@@ -432,7 +432,7 @@ FontHandle NanoVGRenderer::LoadFontFromMemory(const char* name, const uint8_t* d
 {
 	BX_CHECK(m_Context != nullptr, "NanoVG context is null!");
 
-	if (m_NextFontID == VG_MAX_FONTS) {
+	if (m_NextFontID == VG_CONFIG_MAX_FONTS) {
 		return BGFX_INVALID_HANDLE;
 	}
 
@@ -491,8 +491,8 @@ void NanoVGRenderer::SubmitShape(Shape* shape)
 
 	const uint16_t firstGradientID = (uint16_t)m_NextGradientID;
 	const uint16_t firstImagePatternID = (uint16_t)m_NextImagePatternID;
-	BX_CHECK(firstGradientID + shape->m_NumGradients <= VG_MAX_GRADIENTS, "Not enough free gradients to render shape. Increase VG_MAX_GRADIENTS");
-	BX_CHECK(firstImagePatternID + shape->m_NumImagePatterns <= VG_MAX_IMAGE_PATTERNS, "Not enough free image patterns to render shape. Increase VG_MAX_IMAGE_PATTERNS");
+	BX_CHECK(firstGradientID + shape->m_NumGradients <= VG_CONFIG_MAX_GRADIENTS, "Not enough free gradients to render shape. Increase VG_MAX_GRADIENTS");
+	BX_CHECK(firstImagePatternID + shape->m_NumImagePatterns <= VG_CONFIG_MAX_IMAGE_PATTERNS, "Not enough free image patterns to render shape. Increase VG_MAX_IMAGE_PATTERNS");
 
 	while (cmdList < cmdListEnd) {
 		ShapeCommand::Enum cmdType = *(ShapeCommand::Enum*)cmdList;
@@ -660,7 +660,7 @@ void NanoVGRenderer::SubmitShape(Shape* shape)
 			Text(font, alignment, col, x, y, text, text + len);
 			break;
 		}
-#if VG_SHAPE_DYNAMIC_TEXT
+#if VG_CONFIG_SHAPE_DYNAMIC_TEXT
 		case ShapeCommand::TextDynamic:
 		{
 			BX_CHECK(false, "Do not call this version of SubmitShape if you are using Text templates.");
@@ -680,7 +680,7 @@ void NanoVGRenderer::SubmitShape(Shape* shape)
 #undef READ
 }
 
-#if VG_SHAPE_DYNAMIC_TEXT
+#if VG_CONFIG_SHAPE_DYNAMIC_TEXT
 // TODO: Find a way to merge those 2 functions. They are exactly the same except from the way TextDynamic commands are processed.
 // Ideally both of them should call a generic version which does all the work (pointer to std::function?)
 void NanoVGRenderer::SubmitShape(Shape* shape, GetStringByIDFunc stringCallback, void* userData)
@@ -694,8 +694,8 @@ void NanoVGRenderer::SubmitShape(Shape* shape, GetStringByIDFunc stringCallback,
 
 	const uint16_t firstGradientID = (uint16_t)m_NextGradientID;
 	const uint16_t firstImagePatternID = (uint16_t)m_NextImagePatternID;
-	BX_CHECK(firstGradientID + shape->m_NumGradients <= VG_MAX_GRADIENTS, "Not enough free gradients to render shape. Increase VG_MAX_GRADIENTS");
-	BX_CHECK(firstImagePatternID + shape->m_NumImagePatterns <= VG_MAX_IMAGE_PATTERNS, "Not enough free image patterns to render shape. Increase VG_MAX_IMAGE_PATTERNS");
+	BX_CHECK(firstGradientID + shape->m_NumGradients <= VG_CONFIG_MAX_GRADIENTS, "Not enough free gradients to render shape. Increase VG_MAX_GRADIENTS");
+	BX_CHECK(firstImagePatternID + shape->m_NumImagePatterns <= VG_CONFIG_MAX_IMAGE_PATTERNS, "Not enough free image patterns to render shape. Increase VG_MAX_IMAGE_PATTERNS");
 
 	while (cmdList < cmdListEnd) {
 		ShapeCommand::Enum cmdType = *(ShapeCommand::Enum*)cmdList;
