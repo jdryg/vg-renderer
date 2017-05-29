@@ -46,7 +46,6 @@ namespace vg
 #define MAX_FONT_IMAGES          4
 #define MIN_FONT_ATLAS_SIZE      512
 
-#define BEZIER_CIRCLE            0
 #define ENABLE_SHAPE_CACHING     1
 #define SEPARATE_VERTEX_STREAMS  1
 #define USE_SIMD                 1
@@ -57,12 +56,6 @@ namespace vg
 
 #if !FONS_CUSTOM_WHITE_RECT
 #pragma message("FONS_CUSTOM_WHITE_RECT should be set to 1 to avoid UV problems with cached shapes")
-#endif
-
-#if BEZIER_CIRCLE
-// See: http://spencermortensen.com/articles/bezier-circle/
-// TODO: Check if the better approximation gives better results (better == same or better quality with less vertices).
-#define NVG_KAPPA90              0.5522847493f // Length proportional to radius of a cubic bezier handle for 90deg arcs.
 #endif
 
 static const bgfx::EmbeddedShader s_EmbeddedShaders[] =
@@ -1461,18 +1454,6 @@ void Context::roundedRect(float x, float y, float w, float h, float r)
 		float rx = min2(r, fabsf(w) * 0.5f) * sign(w);
 		float ry = min2(r, fabsf(h) * 0.5f) * sign(h);
 
-#if BEZIER_CIRCLE
-		moveTo(x, y + ry);
-		lineTo(x, y + h - ry);
-		bezierTo(x, y + h - ry*(1 - NVG_KAPPA90), x + rx*(1 - NVG_KAPPA90), y + h, x + rx, y + h);
-		lineTo(x + w - rx, y + h);
-		bezierTo(x + w - rx*(1 - NVG_KAPPA90), y + h, x + w, y + h - ry*(1 - NVG_KAPPA90), x + w, y + h - ry);
-		lineTo(x + w, y + ry);
-		bezierTo(x + w, y + ry*(1 - NVG_KAPPA90), x + w - rx*(1 - NVG_KAPPA90), y, x + w - rx, y);
-		lineTo(x + rx, y);
-		bezierTo(x + rx*(1 - NVG_KAPPA90), y, x, y + ry*(1 - NVG_KAPPA90), x, y + ry);
-		closePath();
-#else
 		r = min2(rx, ry);
 
 		const State* state = getState();
@@ -1558,22 +1539,11 @@ void Context::roundedRect(float x, float y, float w, float h, float r)
 		}
 
 		closePath();
-#endif
 	}
 }
 
 void Context::circle(float cx, float cy, float r)
 {
-#if BEZIER_CIRCLE
-	// nvgEllipse with both radii equal to r
-	// See: http://spencermortensen.com/articles/bezier-circle/
-	moveTo(cx - r, cy);
-	bezierTo(cx - r, cy + r * NVG_KAPPA90, cx - r * NVG_KAPPA90, cy + r, cx, cy + r);
-	bezierTo(cx + r * NVG_KAPPA90, cy + r, cx + r, cy + r * NVG_KAPPA90, cx + r, cy);
-	bezierTo(cx + r, cy - r * NVG_KAPPA90, cx + r * NVG_KAPPA90, cy - r, cx, cy - r);
-	bezierTo(cx - r * NVG_KAPPA90, cy - r, cx - r, cy - r * NVG_KAPPA90, cx - r, cy);
-	closePath();
-#else
 	const State* state = getState();
 	const float scale = state->m_AvgScale;
 
@@ -1597,7 +1567,6 @@ void Context::circle(float cx, float cy, float r)
 	}
 	path->m_NumVertices += (numPoints - 1);
 	closePath();
-#endif
 }
 
 void Context::polyline(const Vec2* coords, uint32_t numPoints)
