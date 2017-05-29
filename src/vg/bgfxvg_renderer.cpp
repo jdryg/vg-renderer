@@ -47,7 +47,6 @@ namespace vg
 #define MIN_FONT_ATLAS_SIZE      512
 
 #define BATCH_TRANSFORM          1
-#define BATCH_PATH_DIRECTIONS    0
 #define APPROXIMATE_MATH         0
 #define BEZIER_CIRCLE            0
 #define ENABLE_SHAPE_CACHING     1
@@ -265,11 +264,6 @@ struct Context
 	uint32_t m_NumPathVertices;
 	uint32_t m_PathVertexCapacity;
 
-#if BATCH_PATH_DIRECTIONS
-	Vec2* m_PathDirections;
-	uint32_t m_PathDirectionsCapacity;
-#endif
-
 	SubPath* m_SubPaths;
 	uint32_t m_NumSubPaths;
 	uint32_t m_SubPathCapacity;
@@ -435,18 +429,6 @@ struct Context
 	void cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* cmd);
 	void cachedShapeAddTextCommand(CachedShape* shape, const uint8_t* cmdData);
 	void cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* stringCallback, void* userData);
-
-#if BATCH_PATH_DIRECTIONS
-	Vec2* allocPathDirections(uint32_t n)
-	{
-		if (n > m_PathDirectionsCapacity) {
-			m_PathDirectionsCapacity = n;
-			m_PathDirections = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_PathDirections, sizeof(Vec2) * m_PathDirectionsCapacity, 16);
-		}
-
-		return m_PathDirections;
-	}
-#endif
 };
 
 #if SEPARATE_VERTEX_STREAMS
@@ -922,10 +904,6 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID) :
 	m_TransformedPathVertices(nullptr),
 	m_PathVerticesTransformed(false),
 #endif
-#if BATCH_PATH_DIRECTIONS
-	m_PathDirections(nullptr),
-	m_PathDirectionsCapacity(0),
-#endif
 	m_SubPaths(nullptr),
 	m_NumSubPaths(0),
 	m_SubPathCapacity(0),
@@ -1064,9 +1042,6 @@ Context::~Context()
 	BX_ALIGNED_FREE(m_Allocator, m_PathVertices, 16);
 #if BATCH_TRANSFORM
 	BX_ALIGNED_FREE(m_Allocator, m_TransformedPathVertices, 16);
-#endif
-#if BATCH_PATH_DIRECTIONS
-	BX_ALIGNED_FREE(m_Allocator, m_PathDirections, 16);
 #endif
 }
 
@@ -3558,25 +3533,6 @@ void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, C
 	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
 
 	// TODO: Assumes CCW order (otherwise fringes are generated on the wrong side of the polygon)
-#if BATCH_PATH_DIRECTIONS
-	Vec2* dir = allocPathDirections(numPathVertices);
-	calcPathDirectionsSSE(vtx, numPathVertices, dir, true);
-
-	Vec2 d01 = dir[numPathVertices - 1];
-
-	for (uint32_t iSegment = 0; iSegment < numPathVertices; ++iSegment) {
-		const Vec2& p1 = vtx[iSegment];
-		const Vec2 d12 = dir[iSegment];
-
-		const Vec2 v = calcExtrusionVector(d01, d12);
-		const Vec2 v_aa = v * aa;
-
-		SET_DRAW_VERTEX(dstVertex, p1.x - v_aa.x, p1.y - v_aa.y, uv.x, uv.y, c); ++dstVertex;
-		SET_DRAW_VERTEX(dstVertex, p1.x + v_aa.x, p1.y + v_aa.y, uv.x, uv.y, c0); ++dstVertex;
-
-		d01 = d12;
-	}
-#else
 	Vec2 d01 = vtx[0] - vtx[numPathVertices - 1];
 	vec2Normalize(&d01);
 
@@ -3595,7 +3551,6 @@ void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, C
 
 		d01 = d12;
 	}
-#endif // BATCH_PATH_DIRECTIONS
 #endif // SEPARATE_VERTEX_STREAMS
 
 	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
@@ -3796,65 +3751,6 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 		cmd->m_NumVertices += numDrawVertices;
 		cmd->m_NumIndices += numDrawIndices;
 
-#if BATCH_PATH_DIRECTIONS
-		Vec2* dir = allocPathDirections(numPathVertices);
-		calcPathDirectionsSSE(vtx, numPathVertices, dir, isClosed);
-
-		Vec2 d01;
-		if (!isClosed) {
-			// First segment of an open path
-			const Vec2& p0 = vtx[0];
-
-			d01 = dir[0];
-
-			const Vec2 l01Scaled = d01.perpCCW() * halfStrokeWidth;
-
-			Vec2 leftPoint = p0 + l01Scaled;
-			Vec2 rightPoint = p0 - l01Scaled;
-			if (lineCap == LineCap::Square) {
-				leftPoint -= d01 * halfStrokeWidth;
-				rightPoint -= d01 * halfStrokeWidth;
-			} else if (lineCap == LineCap::Round) {
-				// TODO: Even if lineCap == Round assume Butt.
-			}
-
-			const Vec2 pScaled = p0 * middlePointFactor;
-			const Vec2 leftPointAA = leftPoint * sidePointFactor - pScaled;
-			const Vec2 rightPointAA = rightPoint * sidePointFactor - pScaled;
-
-			SET_DRAW_VERTEX(dstVertex, leftPointAA.x, leftPointAA.y, uv.x, uv.y, c0); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, rightPointAA.x, rightPointAA.y, uv.x, uv.y, c0); ++dstVertex;
-		} else {
-			d01 = dir[numPathVertices - 1];
-		}
-
-		// Generate draw vertices...
-		const uint32_t firstSegmentID = isClosed ? 0 : 1;
-		for (uint32_t iSegment = firstSegmentID; iSegment < numSegments; ++iSegment) {
-			const Vec2& p1 = vtx[iSegment];
-
-			const Vec2 d12 = dir[iSegment];
-
-			const Vec2 v = calcExtrusionVector(d01, d12);
-
-			const Vec2 v_hsw = v * halfStrokeWidth;
-			const Vec2 v_hsw_aa = v * (halfStrokeWidth + m_FringeWidth);
-
-			const Vec2 leftPointAA = p1 + v_hsw_aa;
-			const Vec2 leftPoint = p1 + v_hsw;
-			const Vec2 rightPoint = p1 - v_hsw;
-			const Vec2 rightPointAA = p1 - v_hsw_aa;
-
-			SET_DRAW_VERTEX(dstVertex, leftPointAA.x, leftPointAA.y, uv.x, uv.y, c0); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, rightPointAA.x, rightPointAA.y, uv.x, uv.y, c0); ++dstVertex;
-
-			d01 = d12;
-		}
-#else 
 		Vec2 d01;
 		if (!isClosed) {
 			// First segment of an open path
@@ -3930,7 +3826,6 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 
 			d01 = d12;
 		}
-#endif
 
 		if (!isClosed) {
 			const Vec2& p1 = vtx[numPathVertices - 1];
@@ -4037,56 +3932,6 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 		cmd->m_NumVertices += numDrawVertices;
 		cmd->m_NumIndices += numDrawIndices;
 
-#if BATCH_PATH_DIRECTIONS
-		Vec2* dir = allocPathDirections(numPathVertices);
-		calcPathDirectionsSSE(vtx, numPathVertices, dir, isClosed);
-
-		Vec2 d01;
-		if (!isClosed) {
-			// First segment of an open path
-			const Vec2& p0 = vtx[0];
-
-			d01 = dir[0];
-
-			Vec2 l01Scaled = d01.perpCCW() * halfStrokeWidth;
-
-			Vec2 leftPoint = p0 + l01Scaled;
-			Vec2 rightPoint = p0 - l01Scaled;
-			if (lineCap == LineCap::Square) {
-				leftPoint -= d01 * halfStrokeWidth;
-				rightPoint -= d01 * halfStrokeWidth;
-			} else if (lineCap == LineCap::Round) {
-				// TODO: Even if lineCap == Round assume Butt.
-			}
-
-			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c0); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, p0.x, p0.y, uv.x, uv.y, c); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c0); ++dstVertex;
-		} else {
-			d01 = dir[numPathVertices - 1];
-		}
-
-		// Generate draw vertices...
-		const uint32_t firstSegmentID = isClosed ? 0 : 1;
-		for (uint32_t iSegment = firstSegmentID; iSegment < numSegments; ++iSegment) {
-			const Vec2& p1 = vtx[iSegment];
-
-			const Vec2 d12 = dir[iSegment];
-
-			const Vec2 v = calcExtrusionVector(d01, d12);
-
-			const Vec2 v_hsw = v * halfStrokeWidth;
-
-			const Vec2 leftPoint = p1 + v_hsw;
-			const Vec2 rightPoint = p1 - v_hsw;
-
-			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c0); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, p1.x, p1.y, uv.x, uv.y, c); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c0); ++dstVertex;
-
-			d01 = d12;
-		}
-#else
 		Vec2 d01;
 		if (!isClosed) {
 			// First segment of an open path
@@ -4161,7 +4006,6 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 
 			d01 = d12;
 		}
-#endif
 
 		if (!isClosed) {
 			const Vec2& p1 = vtx[numPathVertices - 1];
@@ -4283,52 +4127,6 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 	cmd->m_NumVertices += numDrawVertices;
 	cmd->m_NumIndices += numDrawIndices;
 
-#if BATCH_PATH_DIRECTIONS
-	Vec2* dir = allocPathDirections(numPathVertices);
-	calcPathDirectionsSSE(vtx, numPathVertices, dir, isClosed);
-
-	Vec2 d01;
-	if (!isClosed) {
-		// First segment of an open path
-		const Vec2& p0 = vtx[0];
-		d01 = dir[0];
-
-		Vec2 l01Scaled = d01.perpCCW() * halfStrokeWidth;
-
-		Vec2 leftPoint = p0 + l01Scaled;
-		Vec2 rightPoint = p0 - l01Scaled;
-		if (lineCap == LineCap::Square) {
-			leftPoint -= d01 * halfStrokeWidth;
-			rightPoint -= d01 * halfStrokeWidth;
-		} else if (lineCap == LineCap::Round) {
-			// TODO: Even if lineCap == Round assume Butt.
-		}
-
-		SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
-		SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
-	} else {
-		d01 = dir[numPathVertices - 1];
-	}
-
-	const uint32_t firstSegmentID = isClosed ? 0 : 1;
-	for (uint32_t iSegment = firstSegmentID; iSegment < numSegments; ++iSegment) {
-		const Vec2& p1 = vtx[iSegment];
-
-		const Vec2 d12 = dir[iSegment];
-
-		const Vec2 v = calcExtrusionVector(d01, d12);
-
-		const Vec2 v_hsw = v * halfStrokeWidth;
-
-		const Vec2 leftPoint = p1 + v_hsw;
-		const Vec2 rightPoint = p1 - v_hsw;
-
-		SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
-		SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
-
-		d01 = d12;
-	}
-#else
 	Vec2 d01;
 	if (!isClosed) {
 		// First segment of an open path
@@ -4388,7 +4186,6 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 
 		d01 = d12;
 	}
-#endif
 
 	if (!isClosed) {
 		const Vec2& p1 = vtx[numPathVertices - 1];
@@ -5414,109 +5211,6 @@ void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const
 	}
 #endif
 }
-
-#if BATCH_PATH_DIRECTIONS
-void calcPathDirectionsSSE(const Vec2* __restrict v, uint32_t n, Vec2* __restrict d, bool isClosed)
-{
-	const bx::simd128_t eps = bx::simd_splat(1e-5f);
-
-	const float* src = &v->x;
-	float* dst = &d->x;
-
-	if (n == 2) {
-		assert(!isClosed);
-
-		bx::simd128_t src0123 = bx::simd_ld(src);
-		bx::simd128_t src0101 = bx::simd_swiz_xyxy(src0123);
-		bx::simd128_t src2323 = bx::simd_swiz_zwzw(src0123);
-
-		bx::simd128_t d20_31_20_31 = bx::simd_sub(src2323, src0101);
-		bx::simd128_t d20_31_20_31_sqr = bx::simd_mul(d20_31_20_31, d20_31_20_31);
-		bx::simd128_t d31_20_31_20_sqr = bx::simd_swiz_yxzw(d20_31_20_31_sqr);
-		bx::simd128_t l2 = bx::simd_add(d20_31_20_31_sqr, d31_20_31_20_sqr);
-		bx::simd128_t mask = bx::simd_cmpgt(l2, eps);
-#if 0 && APPROXIMATE_MATH
-		bx::simd128_t inv_l = bx::simd_rsqrt_carmack(l2);
-#else
-		bx::simd128_t inv_l = bx::simd_rsqrt(l2);
-#endif
-		bx::simd128_t inv_l_masked = bx::simd_and(inv_l, mask);
-
-		bx::simd128_t inv_l_0011 = bx::simd_swiz_xxyy(inv_l_masked);
-
-		bx::simd128_t dn_01 = bx::simd_mul(d20_31_20_31, inv_l_0011);
-
-		bx::simd_st(dst, dn_01);
-
-		assert((d[0] - d[1]).length() == 0.0f);
-	} else {
-		const uint32_t iter = (n >> 2) - ((n & 3) > 1 ? 0 : 1);
-		for (uint32_t i = 0; i < iter; ++i) {
-			bx::simd128_t src0123 = bx::simd_ld(src);
-			bx::simd128_t src4567 = bx::simd_ld(src + 4);
-			bx::simd128_t src89xx = bx::simd_ld(src + 8);
-
-			bx::simd128_t src2323 = bx::simd_swiz_zwzw(src0123);
-			bx::simd128_t src6767 = bx::simd_swiz_zwzw(src4567);
-
-			bx::simd128_t src2345 = bx::simd_shuf_xyAB(src2323, src4567);
-			bx::simd128_t src6789 = bx::simd_shuf_xyAB(src6767, src89xx);
-
-			bx::simd128_t d20_31_42_53 = bx::simd_sub(src2345, src0123);
-			bx::simd128_t d64_75_86_97 = bx::simd_sub(src6789, src4567);
-
-			bx::simd128_t d20_31_42_53_sqr = bx::simd_mul(d20_31_42_53, d20_31_42_53);
-			bx::simd128_t d64_75_86_97_sqr = bx::simd_mul(d64_75_86_97, d64_75_86_97);
-
-			bx::simd128_t d20_42_20_42_sqr = bx::simd_swiz_xzxz(d20_31_42_53_sqr);
-			bx::simd128_t d31_53_31_53_sqr = bx::simd_swiz_ywyw(d20_31_42_53_sqr);
-			bx::simd128_t d64_86_64_86_sqr = bx::simd_swiz_xzxz(d64_75_86_97_sqr);
-			bx::simd128_t d75_97_75_97_sqr = bx::simd_swiz_ywyw(d64_75_86_97_sqr);
-
-			bx::simd128_t d20_42_64_86_sqr = bx::simd_shuf_xyAB(d20_42_20_42_sqr, d64_86_64_86_sqr);
-			bx::simd128_t d31_53_75_97_sqr = bx::simd_shuf_xyAB(d31_53_31_53_sqr, d75_97_75_97_sqr);
-
-			bx::simd128_t l2 = bx::simd_add(d20_42_64_86_sqr, d31_53_75_97_sqr);
-
-			bx::simd128_t mask = bx::simd_cmpgt(l2, eps);
-#if 0 && APPROXIMATE_MATH
-			bx::simd128_t inv_l = bx::simd_rsqrt_carmack(l2);
-#else
-			bx::simd128_t inv_l = bx::simd_rsqrt(l2);
-#endif
-			bx::simd128_t inv_l_masked = bx::simd_and(inv_l, mask);
-
-			bx::simd128_t inv_l_0011 = bx::simd_swiz_xxyy(inv_l_masked);
-			bx::simd128_t inv_l_2233 = bx::simd_swiz_zzww(inv_l_masked);
-			bx::simd128_t dn_01 = bx::simd_mul(d20_31_42_53, inv_l_0011);
-			bx::simd128_t dn_23 = bx::simd_mul(d64_75_86_97, inv_l_2233);
-
-			bx::simd_st(dst, dn_01);
-			bx::simd_st(dst + 4, dn_23);
-
-			src += 8;
-			dst += 8;
-		}
-
-		Vec2* dstVec = (Vec2*)dst;
-		const Vec2* srcVec = (const Vec2*)src;
-		uint32_t rem = n - (iter << 2) - 1;
-		while (rem-- > 0) {
-			*dstVec = srcVec[1] - srcVec[0];
-			vec2Normalize(dstVec);
-			dstVec++;
-			srcVec++;
-		}
-
-		if (isClosed) {
-			*dstVec = v[0] - srcVec[0];
-			vec2Normalize(dstVec);
-		} else {
-			*dstVec = *(dstVec - 1);
-		}
-	}
-}
-#endif // BATCH_PATH_DIRECTIONS
 
 #if BATCH_TRANSFORM
 void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx)
