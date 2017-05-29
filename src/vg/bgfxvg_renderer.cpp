@@ -47,7 +47,6 @@ namespace vg
 #define MIN_FONT_ATLAS_SIZE      512
 
 #define ENABLE_SHAPE_CACHING     1
-#define SEPARATE_VERTEX_STREAMS  1
 #define USE_SIMD                 1
 
 #if !defined(FONS_QUAD_SIMD) || !FONS_QUAD_SIMD
@@ -86,36 +85,14 @@ struct SubPath
 	bool m_IsClosed;
 };
 
-#if !SEPARATE_VERTEX_STREAMS
-// 20 bytes / vertex * 65536 vertices / buffer = 1.25MB / VB
-struct DrawVertex
-{
-	float x, y;
-	float u, v;
-	uint32_t color;
-};
-
-#define SET_DRAW_VERTEX(dvPtr, px, py, s, t, c) \
-	dvPtr->x = (px); \
-	dvPtr->y = (py); \
-	dvPtr->u = (s); \
-	dvPtr->v = (t); \
-	dvPtr->color = (c);
-#endif // SEPARATE_VERTEX_STREAMS
-
 struct VertexBuffer
 {
-#if SEPARATE_VERTEX_STREAMS
 	Vec2* m_Pos;
 	Vec2* m_UV;
 	uint32_t* m_Color;
 	bgfx::DynamicVertexBufferHandle m_PosBufferHandle;
 	bgfx::DynamicVertexBufferHandle m_UVBufferHandle;
 	bgfx::DynamicVertexBufferHandle m_ColorBufferHandle;
-#else
-	DrawVertex* m_Vertices;
-	bgfx::DynamicVertexBufferHandle m_bgfxHandle;
-#endif
 	uint32_t m_Count;
 };
 
@@ -189,13 +166,9 @@ struct DrawCommand
 
 struct CachedDrawCommand
 {
-#if SEPARATE_VERTEX_STREAMS
 	Vec2* m_Pos;
 	Vec2* m_UV;
 	uint32_t* m_Color;
-#else
-	DrawVertex* m_Vertices;
-#endif
 	uint16_t* m_Indices;
 	uint16_t m_NumVertices;
 	uint16_t m_NumIndices;
@@ -225,17 +198,11 @@ struct Context
 	uint32_t m_NumVertexBuffers;
 	uint32_t m_VertexBufferCapacity;
 
-#if SEPARATE_VERTEX_STREAMS
 	Vec2** m_Vec2DataPool;
 	uint32_t** m_Uint32DataPool;
 	uint32_t m_Vec2DataPoolCapacity;
 	uint32_t m_Uint32DataPoolCapacity;
 	bx::Mutex m_DataPoolMutex;
-#else
-	DrawVertex** m_VBDataPool;
-	uint32_t m_VBDataPoolCapacity;
-	bx::Mutex m_VBDataPoolMutex;
-#endif
 
 	DrawCommand* m_DrawCommands;
 	uint32_t m_NumDrawCommands;
@@ -276,13 +243,9 @@ struct Context
 	ImagePattern m_ImagePatterns[VG_MAX_IMAGE_PATTERNS];
 	uint32_t m_NextImagePatternID;
 
-#if SEPARATE_VERTEX_STREAMS
 	bgfx::VertexDecl m_PosVertexDecl;
 	bgfx::VertexDecl m_UVVertexDecl;
 	bgfx::VertexDecl m_ColorVertexDecl;
-#else
-	bgfx::VertexDecl m_DrawVertexDecl;
-#endif
 	bgfx::ProgramHandle m_ProgramHandle[DrawCommand::NumTypes];
 	bgfx::UniformHandle m_TexUniform;
 	bgfx::UniformHandle m_PaintMatUniform;
@@ -366,15 +329,10 @@ struct Context
 
 	// Vertex buffers
 	VertexBuffer* allocVertexBuffer();
-#if SEPARATE_VERTEX_STREAMS
 	Vec2* allocVertexBufferData_Vec2();
 	uint32_t* allocVertexBufferData_Uint32();
 	void releaseVertexBufferData_Vec2(Vec2* data);
 	void releaseVertexBufferData_Uint32(uint32_t* data);
-#else
-	DrawVertex* allocVertexBufferData();
-	void releaseVertexBufferData(DrawVertex* data);
-#endif
 
 	// Draw commands
 	DrawCommand* allocDrawCommand_TexturedVertexColor(uint32_t numVertices, uint32_t numIndices, ImageHandle img);
@@ -418,7 +376,6 @@ struct Context
 	void cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* stringCallback, void* userData);
 };
 
-#if SEPARATE_VERTEX_STREAMS
 static void releaseVertexBufferDataCallback_Vec2(void* ptr, void* userData)
 {
 	Context* ctx = (Context*)userData;
@@ -430,13 +387,6 @@ static void releaseVertexBufferDataCallback_Uint32(void* ptr, void* userData)
 	Context* ctx = (Context*)userData;
 	ctx->releaseVertexBufferData_Uint32((uint32_t*)ptr);
 }
-#else
-static void releaseVertexBufferDataCallback(void* ptr, void* userData)
-{
-	Context* ctx = (Context*)userData;
-	ctx->releaseVertexBufferData((DrawVertex*)ptr);
-}
-#endif
 
 inline Vec2 transformPos2D(float x, float y, const float* mtx)
 {
@@ -546,18 +496,13 @@ inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
 }
 
 void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx);
-#if !SEPARATE_VERTEX_STREAMS
-void batchTransformDrawVertices(const DrawVertex* __restrict src, uint32_t n, DrawVertex* __restrict dst, const float* __restrict mtx);
-#endif
 void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint16_t* __restrict dst, uint16_t delta);
 void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, Vec2* __restrict transformedVertices);
 
-#if SEPARATE_VERTEX_STREAMS
 void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx);
 void memset32(void* __restrict dst, uint32_t n32, const void* __restrict src);
 void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src);
 void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src);
-#endif
 
 //////////////////////////////////////////////////////////////////////////
 // BGFXVGRenderer
@@ -858,15 +803,10 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID) :
 	m_VertexBuffers(nullptr),
 	m_NumVertexBuffers(0),
 	m_VertexBufferCapacity(0),
-#if SEPARATE_VERTEX_STREAMS
 	m_Vec2DataPool(nullptr),
 	m_Uint32DataPool(nullptr),
 	m_Vec2DataPoolCapacity(0),
 	m_Uint32DataPoolCapacity(0),
-#else
-	m_VBDataPool(nullptr),
-	m_VBDataPoolCapacity(0),
-#endif
 	m_DrawCommands(nullptr),
 	m_NumDrawCommands(0),
 	m_DrawCommandCapacity(0),
@@ -928,7 +868,6 @@ Context::~Context()
 	bgfx::destroyUniform(m_OuterColorUniform);
 
 	for (uint32_t i = 0; i < m_VertexBufferCapacity; ++i) {
-#if SEPARATE_VERTEX_STREAMS
 		if (bgfx::isValid(m_VertexBuffers[i].m_PosBufferHandle)) {
 			bgfx::destroyDynamicVertexBuffer(m_VertexBuffers[i].m_PosBufferHandle);
 		}
@@ -938,15 +877,9 @@ Context::~Context()
 		if (bgfx::isValid(m_VertexBuffers[i].m_ColorBufferHandle)) {
 			bgfx::destroyDynamicVertexBuffer(m_VertexBuffers[i].m_ColorBufferHandle);
 	}
-#else
-		if (bgfx::isValid(m_VertexBuffers[i].m_bgfxHandle)) {
-			bgfx::destroyDynamicVertexBuffer(m_VertexBuffers[i].m_bgfxHandle);
-		}
-#endif
 	}
 	BX_FREE(m_Allocator, m_VertexBuffers);
 
-#if SEPARATE_VERTEX_STREAMS
 	for (uint32_t i = 0; i < m_Vec2DataPoolCapacity; ++i) {
 		Vec2* buffer = m_Vec2DataPool[i];
 		if (!buffer) {
@@ -974,21 +907,6 @@ Context::~Context()
 	}
 	BX_FREE(m_Allocator, m_Uint32DataPool);
 	m_Uint32DataPoolCapacity = 0;
-#else
-	for (uint32_t i = 0; i < m_VBDataPoolCapacity; ++i) {
-		DrawVertex* buffer = m_VBDataPool[i];
-		if (!buffer) {
-			continue;
-		}
-
-		if ((uintptr_t)buffer & 1) {
-			buffer = (DrawVertex*)((uintptr_t)buffer & ~1);
-			BX_FREE(m_Allocator, buffer);
-		}
-	}
-	BX_FREE(m_Allocator, m_VBDataPool);
-	m_VBDataPoolCapacity = 0;
-#endif
 
 	BX_FREE(m_Allocator, m_DrawCommands);
 
@@ -1031,17 +949,9 @@ bool Context::init()
 
 	m_IndexBuffer = BX_NEW(m_Allocator, IndexBuffer)();
 
-#if SEPARATE_VERTEX_STREAMS
 	m_PosVertexDecl.begin().add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float).end();
 	m_UVVertexDecl.begin().add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float).end();
 	m_ColorVertexDecl.begin().add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true).end();
-#else
-	m_DrawVertexDecl.begin()
-		.add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
-		.add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
-		.add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
-		.end();
-#endif
 
 	bgfx::RendererType::Enum bgfxRendererType = bgfx::getRendererType();
 	m_ProgramHandle[DrawCommand::Type_TexturedVertexColor] =
@@ -1134,7 +1044,6 @@ void Context::endFrame()
 	for (uint32_t iVB = 0; iVB < m_NumVertexBuffers; ++iVB) {
 		VertexBuffer* vb = &m_VertexBuffers[iVB];
 
-#if SEPARATE_VERTEX_STREAMS
 		if (!bgfx::isValid(vb->m_PosBufferHandle)) {
 			vb->m_PosBufferHandle = bgfx::createDynamicVertexBuffer(MAX_VB_VERTICES, m_PosVertexDecl, 0);
 		}
@@ -1156,17 +1065,6 @@ void Context::endFrame()
 		vb->m_Pos = nullptr;
 		vb->m_UV = nullptr;
 		vb->m_Color = nullptr;
-#else
-		if (!bgfx::isValid(vb->m_bgfxHandle)) {
-			vb->m_bgfxHandle = bgfx::createDynamicVertexBuffer(MAX_VB_VERTICES, m_DrawVertexDecl, 0);
-		}
-
-		const bgfx::Memory* mem = bgfx::makeRef(vb->m_Vertices, sizeof(DrawVertex) * vb->m_Count, releaseVertexBufferDataCallback, this);
-		bgfx::updateDynamicVertexBuffer(vb->m_bgfxHandle, 0, mem);
-
-		// Null out the buffer. Will be allocated again from the pool on the next frame.
-		vb->m_Vertices = nullptr;
-#endif
 	}
 
 	// Update bgfx index buffer...
@@ -1193,14 +1091,10 @@ void Context::endFrame()
 	for (uint32_t iCmd = 0; iCmd < numCommands; ++iCmd) {
 		DrawCommand* cmd = &m_DrawCommands[iCmd];
 
-#if SEPARATE_VERTEX_STREAMS
 		VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 		bgfx::setVertexBuffer(0, vb->m_PosBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
 		bgfx::setVertexBuffer(1, vb->m_UVBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
 		bgfx::setVertexBuffer(2, vb->m_ColorBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
-#else
-		bgfx::setVertexBuffer(0, m_VertexBuffers[cmd->m_VertexBufferID].m_bgfxHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
-#endif
 		bgfx::setIndexBuffer(&tib, cmd->m_FirstIndexID, cmd->m_NumIndices);
 
 		// Set scissor.
@@ -2928,7 +2822,6 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 
 		DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(cachedCmd->m_NumVertices, cachedCmd->m_NumIndices, m_FontImages[0]);
 
-#if SEPARATE_VERTEX_STREAMS
 		VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 		const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 		Vec2* dstPos = &vb->m_Pos[vbOffset];
@@ -2942,15 +2835,6 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 		bx::memCopy(dstUV, cachedCmd->m_UV, sizeof(Vec2) * cachedCmd->m_NumVertices);
 		bx::memCopy(dstColor, cachedCmd->m_Color, sizeof(uint32_t) * cachedCmd->m_NumVertices);
 		batchTransformDrawIndices(cachedCmd->m_Indices, cachedCmd->m_NumIndices, dstIndex, startVertexID);
-#else
-		DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
-		uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
-
-		const uint16_t startVertexID = (uint16_t)cmd->m_NumVertices;
-
-		batchTransformDrawVertices(cachedCmd->m_Vertices, cachedCmd->m_NumVertices, dstVertex, mtx);
-		batchTransformDrawIndices(cachedCmd->m_Indices, cachedCmd->m_NumIndices, dstIndex, startVertexID);
-#endif
 
 		cmd->m_NumVertices += cachedCmd->m_NumVertices;
 		cmd->m_NumIndices += cachedCmd->m_NumIndices;
@@ -3008,13 +2892,9 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 void Context::cachedShapeReset(CachedShape* shape)
 {
 	for (uint32_t i = 0; i < shape->m_NumDrawCommands; ++i) {
-#if SEPARATE_VERTEX_STREAMS
 		BX_ALIGNED_FREE(m_Allocator, shape->m_DrawCommands[i].m_Pos, 16);
 		BX_ALIGNED_FREE(m_Allocator, shape->m_DrawCommands[i].m_UV, 16);
 		BX_ALIGNED_FREE(m_Allocator, shape->m_DrawCommands[i].m_Color, 16);
-#else
-		BX_ALIGNED_FREE(m_Allocator, shape->m_DrawCommands[i].m_Vertices, 16);
-#endif
 		BX_ALIGNED_FREE(m_Allocator, shape->m_DrawCommands[i].m_Indices, 16);
 	}
 	BX_FREE(m_Allocator, shape->m_DrawCommands);
@@ -3039,13 +2919,9 @@ void Context::cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* c
 
 		cachedCmd = &shape->m_DrawCommands[0];
 		cachedCmd->m_Indices = nullptr;
-#if SEPARATE_VERTEX_STREAMS
 		cachedCmd->m_Pos = nullptr;
 		cachedCmd->m_UV = nullptr;
 		cachedCmd->m_Color = nullptr;
-#else
-		cachedCmd->m_Vertices = nullptr;
-#endif
 		cachedCmd->m_NumVertices = 0;
 		cachedCmd->m_NumIndices = 0;
 	} else {
@@ -3058,7 +2934,6 @@ void Context::cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* c
 	BX_CHECK(cachedCmd->m_NumVertices + cmd->m_NumVertices < 65536, "Not enough space in current cached command");
 	BX_CHECK(cachedCmd->m_NumIndices + cmd->m_NumIndices < 65536, "Not enough space in current cached command");
 	cachedCmd->m_NumVertices += (uint16_t)cmd->m_NumVertices;
-#if SEPARATE_VERTEX_STREAMS
 	cachedCmd->m_Pos = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Pos, sizeof(Vec2) * cachedCmd->m_NumVertices, 16);
 	cachedCmd->m_UV = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_UV, sizeof(Vec2) * cachedCmd->m_NumVertices, 16);
 	cachedCmd->m_Color = (uint32_t*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Color, sizeof(uint32_t) * cachedCmd->m_NumVertices, 16);
@@ -3069,13 +2944,6 @@ void Context::cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* c
 	bx::memCopy(&cachedCmd->m_Pos[firstVertexID], srcPos, sizeof(Vec2) * cmd->m_NumVertices);
 	bx::memCopy(&cachedCmd->m_UV[firstVertexID], srcUV, sizeof(Vec2) * cmd->m_NumVertices);
 	bx::memCopy(&cachedCmd->m_Color[firstVertexID], srcColor, sizeof(uint32_t) * cmd->m_NumVertices);
-#else
-	cachedCmd->m_Vertices = (DrawVertex*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Vertices, sizeof(DrawVertex) * cachedCmd->m_NumVertices, 16);
-
-	const DrawVertex* srcDrawVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID];
-	DrawVertex* dstDrawVertex = &cachedCmd->m_Vertices[firstVertexID];
-	bx::memCopy(dstDrawVertex, srcDrawVertex, sizeof(DrawVertex) * cmd->m_NumVertices);
-#endif
 
 	// Copy the indices...
 	cachedCmd->m_NumIndices += (uint16_t)cmd->m_NumIndices;
@@ -3210,7 +3078,6 @@ void Context::renderTextQuads(uint32_t numQuads, Color color)
 
 	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[m_FontImageID]);
 
-#if SEPARATE_VERTEX_STREAMS
 	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 
@@ -3237,21 +3104,6 @@ void Context::renderTextQuads(uint32_t numQuads, Color color)
 		dstUV += 4;
 		++q;
 	}
-#else
-	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
-	const FONSquad* q = m_TextQuads;
-	const Vec2* v = m_TextVertices;
-
-	uint32_t nq = numQuads;
-	while (nq-- > 0) {
-		SET_DRAW_VERTEX(dstVertex, v[0].x, v[0].y, q->s0, q->t0, color); ++dstVertex;
-		SET_DRAW_VERTEX(dstVertex, v[1].x, v[1].y, q->s1, q->t0, color); ++dstVertex;
-		SET_DRAW_VERTEX(dstVertex, v[2].x, v[2].y, q->s1, q->t1, color); ++dstVertex;
-		SET_DRAW_VERTEX(dstVertex, v[3].x, v[3].y, q->s0, q->t1, color); ++dstVertex;
-		v += 4;
-		++q;
-	}
-#endif
 
 	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	uint32_t startVertexID = cmd->m_NumVertices;
@@ -3287,7 +3139,6 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 
 	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
 
-#if SEPARATE_VERTEX_STREAMS
 	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 
@@ -3299,14 +3150,6 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
 	memset32(dstColor, numDrawVertices, &c);
-#else
-	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
-	while (numPathVertices-- > 0) {
-		SET_DRAW_VERTEX(dstVertex, vtx->x, vtx->y, uv.x, uv.y, c);
-		++dstVertex;
-		++vtx;
-	}
-#endif // SEPARATE_VERTEX_STREAMS
 
 	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	const uint32_t startVertexID = cmd->m_NumVertices;
@@ -3343,7 +3186,6 @@ void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, C
 
 	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
 
-#if SEPARATE_VERTEX_STREAMS
 	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 
@@ -3375,29 +3217,6 @@ void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, C
 
 		d01 = d12;
 	}
-#else
-	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
-
-	// TODO: Assumes CCW order (otherwise fringes are generated on the wrong side of the polygon)
-	Vec2 d01 = vtx[0] - vtx[numPathVertices - 1];
-	vec2Normalize(&d01);
-
-	for (uint32_t iSegment = 0; iSegment < numPathVertices; ++iSegment) {
-		const Vec2& p1 = vtx[iSegment];
-		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
-
-		Vec2 d12 = p2 - p1;
-		vec2Normalize(&d12);
-
-		const Vec2 v = calcExtrusionVector(d01, d12);
-		const Vec2 v_aa = v * aa;
-
-		SET_DRAW_VERTEX(dstVertex, p1.x - v_aa.x, p1.y - v_aa.y, uv.x, uv.y, c); ++dstVertex;
-		SET_DRAW_VERTEX(dstVertex, p1.x + v_aa.x, p1.y + v_aa.y, uv.x, uv.y, c0); ++dstVertex;
-
-		d01 = d12;
-	}
-#endif // SEPARATE_VERTEX_STREAMS
 
 	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	const uint32_t startVertexID = cmd->m_NumVertices;
@@ -3454,7 +3273,6 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 
 	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, img->m_ImageHandle);
 
-#if SEPARATE_VERTEX_STREAMS
 	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 
@@ -3466,17 +3284,6 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
 	memset32(dstColor, numDrawVertices, &c);
-#else
-	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
-
-	for (uint32_t i = 0; i < numPathVertices; ++i) {
-		const Vec2& p = vtx[i];
-		Vec2 uv = transformPos2D(p.x, p.y, mtx);
-
-		SET_DRAW_VERTEX(dstVertex, p.x, p.y, uv.x, uv.y, c);
-		++dstVertex;
-	}
-#endif // SEPARATE_VERTEX_STREAMS
 
 	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	const uint32_t startVertexID = cmd->m_NumVertices;
@@ -3502,7 +3309,6 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 
 	DrawCommand* cmd = allocDrawCommand_ColorGradient(numDrawVertices, numDrawIndices, handle);
 
-#if SEPARATE_VERTEX_STREAMS
 	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
@@ -3516,15 +3322,6 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 
 	const uint32_t color = ColorRGBA::White;
 	memset32(dstColor, numDrawVertices, &color);
-#else
-	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
-
-	while (numPathVertices-- > 0) {
-		SET_DRAW_VERTEX(dstVertex, vtx->x, vtx->y, 0.0f, 0.0f, ColorRGBA::White);
-		++dstVertex;
-		++vtx;
-	}
-#endif
 
 	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	const uint32_t startVertexID = cmd->m_NumVertices;
@@ -3577,7 +3374,6 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 
 		DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
 
-#if SEPARATE_VERTEX_STREAMS
 		VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 		const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 		Vec2* dstPos = &vb->m_Pos[vbOffset];
@@ -3587,9 +3383,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 		const uint32_t colors[4] = { c0, c, c, c0 };
 		memset64(dstUV, numDrawVertices, &uv.x);
 		memset128(dstColor, numDrawVertices >> 2, &colors[0]);
-#else
-		DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
-#endif
+
 		uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 		const uint32_t startVertexID = cmd->m_NumVertices;
@@ -3621,18 +3415,11 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 			const Vec2 leftPointAA = leftPoint * sidePointFactor - pScaled;
 			const Vec2 rightPointAA = rightPoint * sidePointFactor - pScaled;
 
-#if SEPARATE_VERTEX_STREAMS
 			dstPos[0] = leftPointAA;
 			dstPos[1] = leftPoint;
 			dstPos[2] = rightPoint;
 			dstPos[3] = rightPointAA;
 			dstPos += 4;
-#else
-			SET_DRAW_VERTEX(dstVertex, leftPointAA.x, leftPointAA.y, uv.x, uv.y, c0); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, rightPointAA.x, rightPointAA.y, uv.x, uv.y, c0); ++dstVertex;
-#endif
 		} else {
 			d01 = vtx[0] - vtx[numPathVertices - 1];
 			vec2Normalize(&d01);
@@ -3657,18 +3444,11 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 			const Vec2 rightPoint = p1 - v_hsw;
 			const Vec2 rightPointAA = p1 - v_hsw_aa;
 
-#if SEPARATE_VERTEX_STREAMS
 			dstPos[0] = leftPointAA;
 			dstPos[1] = leftPoint;
 			dstPos[2] = rightPoint;
 			dstPos[3] = rightPointAA;
 			dstPos += 4;
-#else
-			SET_DRAW_VERTEX(dstVertex, leftPointAA.x, leftPointAA.y, uv.x, uv.y, c0); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, rightPointAA.x, rightPointAA.y, uv.x, uv.y, c0); ++dstVertex;
-#endif
 
 			d01 = d12;
 		}
@@ -3691,18 +3471,11 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 			Vec2 leftPointAA = leftPoint * sidePointFactor - pScaled;
 			Vec2 rightPointAA = rightPoint * sidePointFactor - pScaled;
 
-#if SEPARATE_VERTEX_STREAMS
 			dstPos[0] = leftPointAA;
 			dstPos[1] = leftPoint;
 			dstPos[2] = rightPoint;
 			dstPos[3] = rightPointAA;
 			dstPos += 4;
-#else
-			SET_DRAW_VERTEX(dstVertex, leftPointAA.x, leftPointAA.y, uv.x, uv.y, c0); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, rightPointAA.x, rightPointAA.y, uv.x, uv.y, c0); ++dstVertex;
-#endif
 		}
 
 		// Generate indices...
@@ -3760,7 +3533,6 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 
 		DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
 
-#if SEPARATE_VERTEX_STREAMS
 		VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 		const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 		Vec2* dstPos = &vb->m_Pos[vbOffset];
@@ -3768,9 +3540,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 		uint32_t* dstColor = &vb->m_Color[vbOffset];
 
 		memset64(dstUV, numDrawVertices, &uv.x);
-#else
-		DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
-#endif
+
 		uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 		const uint32_t startVertexID = cmd->m_NumVertices;
@@ -3798,7 +3568,6 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 				// TODO: Even if lineCap == Round assume Butt.
 			}
 
-#if SEPARATE_VERTEX_STREAMS
 			dstPos[0] = leftPoint;
 			dstPos[1] = p0;
 			dstPos[2] = rightPoint;
@@ -3808,11 +3577,6 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 			dstColor[1] = c;
 			dstColor[2] = c0;
 			dstColor += 3;
-#else
-			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c0); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, p0.x, p0.y, uv.x, uv.y, c); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c0); ++dstVertex;
-#endif
 		} else {
 			d01 = vtx[0] - vtx[numPathVertices - 1];
 			vec2Normalize(&d01);
@@ -3834,7 +3598,6 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 			const Vec2 leftPoint = p1 + v_hsw;
 			const Vec2 rightPoint = p1 - v_hsw;
 
-#if SEPARATE_VERTEX_STREAMS
 			dstPos[0] = leftPoint;
 			dstPos[1] = p1;
 			dstPos[2] = rightPoint;
@@ -3844,11 +3607,6 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 			dstColor[1] = c;
 			dstColor[2] = c0;
 			dstColor += 3;
-#else
-			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c0); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, p1.x, p1.y, uv.x, uv.y, c); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c0); ++dstVertex;
-#endif
 
 			d01 = d12;
 		}
@@ -3867,7 +3625,6 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 				// TODO: Even if lineCap == Round assume Butt.
 			}
 
-#if SEPARATE_VERTEX_STREAMS
 			dstPos[0] = leftPoint;
 			dstPos[1] = p1;
 			dstPos[2] = rightPoint;
@@ -3877,11 +3634,6 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 			dstColor[1] = c;
 			dstColor[2] = c0;
 			dstColor += 3;
-#else
-			SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c0); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, p1.x, p1.y, uv.x, uv.y, c); ++dstVertex;
-			SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c0); ++dstVertex;
-#endif
 		}
 
 		// Generate indices...
@@ -3954,7 +3706,6 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 
 	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
 
-#if SEPARATE_VERTEX_STREAMS
 	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 	Vec2* dstPos = &vb->m_Pos[vbOffset];
@@ -3963,9 +3714,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 
 	memset64(dstUV, numDrawVertices, &uv.x);
 	memset32(dstColor, numDrawVertices, &c);
-#else
-	DrawVertex* dstVertex = &m_VertexBuffers[cmd->m_VertexBufferID].m_Vertices[cmd->m_FirstVertexID + cmd->m_NumVertices];
-#endif
+
 	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 	const uint32_t startVertexID = cmd->m_NumVertices;
@@ -3993,14 +3742,9 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 			// TODO: Even if lineCap == Round assume Butt.
 		}
 
-#if SEPARATE_VERTEX_STREAMS
 		dstPos[0] = leftPoint;
 		dstPos[1] = rightPoint;
 		dstPos += 2;
-#else
-		SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
-		SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
-#endif
 	} else {
 		d01 = vtx[0] - vtx[numPathVertices - 1];
 		vec2Normalize(&d01);
@@ -4021,14 +3765,9 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 		const Vec2 leftPoint = p1 + v_hsw;
 		const Vec2 rightPoint = p1 - v_hsw;
 
-#if SEPARATE_VERTEX_STREAMS
 		dstPos[0] = leftPoint;
 		dstPos[1] = rightPoint;
 		dstPos += 2;
-#else
-		SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
-		SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
-#endif
 
 		d01 = d12;
 	}
@@ -4047,14 +3786,9 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 			// TODO: Even if lineCap == Round assume Butt.
 		}
 
-#if SEPARATE_VERTEX_STREAMS
 		dstPos[0] = leftPoint;
 		dstPos[1] = rightPoint;
 		dstPos += 2;
-#else
-		SET_DRAW_VERTEX(dstVertex, leftPoint.x, leftPoint.y, uv.x, uv.y, c); ++dstVertex;
-		SET_DRAW_VERTEX(dstVertex, rightPoint.x, rightPoint.y, uv.x, uv.y, c); ++dstVertex;
-#endif
 	}
 
 	// Generate indices...
@@ -4223,23 +3957,15 @@ VertexBuffer* Context::allocVertexBuffer()
 		
 		VertexBuffer* vb = &m_VertexBuffers[m_VertexBufferCapacity - 1];
 
-#if SEPARATE_VERTEX_STREAMS
 		vb->m_PosBufferHandle = BGFX_INVALID_HANDLE;
 		vb->m_UVBufferHandle = BGFX_INVALID_HANDLE;
 		vb->m_ColorBufferHandle = BGFX_INVALID_HANDLE;
-#else 
-		vb->m_bgfxHandle = BGFX_INVALID_HANDLE;
-#endif
 	}
 
 	VertexBuffer* vb = &m_VertexBuffers[m_NumVertexBuffers++];
-#if SEPARATE_VERTEX_STREAMS
 	vb->m_Pos = allocVertexBufferData_Vec2();
 	vb->m_UV = allocVertexBufferData_Vec2();
 	vb->m_Color = allocVertexBufferData_Uint32();
-#else
-	vb->m_Vertices = (DrawVertex*)allocVertexBufferData();
-#endif
 	vb->m_Count = 0;
 
 	return vb;
@@ -4407,7 +4133,6 @@ bool Context::deleteImage(ImageHandle img)
 	return true;
 }
 
-#if SEPARATE_VERTEX_STREAMS
 Vec2* Context::allocVertexBufferData_Vec2()
 {
 	bx::MutexScope ms(m_DataPoolMutex);
@@ -4485,46 +4210,6 @@ void Context::releaseVertexBufferData_Uint32(uint32_t* data)
 		}
 	}
 }
-#else
-DrawVertex* Context::allocVertexBufferData()
-{
-	bx::MutexScope ms(m_VBDataPoolMutex);
-
-	for (uint32_t i = 0; i < m_VBDataPoolCapacity; ++i) {
-		// If LSB of pointer is set it means that the ptr is valid and the buffer is free for reuse.
-		if (((uintptr_t)m_VBDataPool[i]) & 1) {
-			// Remove the free flag
-			m_VBDataPool[i] = (DrawVertex*)((uintptr_t)m_VBDataPool[i] & ~1);
-			return m_VBDataPool[i];
-		} else if (m_VBDataPool[i] == nullptr) {
-			m_VBDataPool[i] = (DrawVertex*)BX_ALLOC(m_Allocator, sizeof(DrawVertex) * MAX_VB_VERTICES);
-			return m_VBDataPool[i];
-		}
-	}
-
-	uint32_t oldCapacity = m_VBDataPoolCapacity;
-	m_VBDataPoolCapacity += 8;
-	m_VBDataPool = (DrawVertex**)BX_REALLOC(m_Allocator, m_VBDataPool, sizeof(DrawVertex*) * m_VBDataPoolCapacity);
-	bx::memSet(&m_VBDataPool[oldCapacity], 0, sizeof(DrawVertex*) * (m_VBDataPoolCapacity - oldCapacity));
-
-	m_VBDataPool[oldCapacity] = (DrawVertex*)BX_ALLOC(m_Allocator, sizeof(DrawVertex) * MAX_VB_VERTICES);
-	return m_VBDataPool[oldCapacity];
-}
-
-void Context::releaseVertexBufferData(DrawVertex* data)
-{
-	bx::MutexScope ms(m_VBDataPoolMutex);
-
-	BX_CHECK(data != nullptr, "Tried to release a null vertex buffer");
-	for (uint32_t i = 0; i < m_VBDataPoolCapacity; ++i) {
-		if (m_VBDataPool[i] == data) {
-			// Mark buffer as free by setting the LSB of the ptr to 1.
-			m_VBDataPool[i] = (DrawVertex*)((uintptr_t)m_VBDataPool[i] | 1);
-			return;
-		}
-	}
-}
-#endif
 
 // Concave polygon decomposition
 // https://mpen.ca/406/bayazit (seems to be down atm)
@@ -4804,7 +4489,6 @@ void Context::decomposeAndFillConcavePolygon(const Vec2* points, uint32_t numPoi
 //////////////////////////////////////////////////////////////////////////
 // SIMD functions
 //
-#if SEPARATE_VERTEX_STREAMS
 void memset32(void* __restrict dst, uint32_t n, const void* __restrict src)
 {
 #if !USE_SIMD
@@ -4941,7 +4625,6 @@ void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src)
 	}
 #endif
 }
-#endif // SEPARATE_VERTEX_STREAMS
 
 void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, Vec2* __restrict transformedVertices)
 {
@@ -5114,7 +4797,6 @@ void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restr
 #endif
 }
 
-#if SEPARATE_VERTEX_STREAMS
 void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx)
 {
 	const float* src = &v->x;
@@ -5164,122 +4846,6 @@ void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec
 		src += 2;
 	}
 }
-#endif // SEPARATE_VERTEX_STREAMS
-
-#if !SEPARATE_VERTEX_STREAMS
-void batchTransformDrawVertices(const DrawVertex* __restrict src, uint32_t n, DrawVertex* __restrict dst, const float* __restrict mtx)
-{
-#if !USE_SIMD
-	const uint32_t iter = n >> 2;
-	for (uint32_t i = 0; i < iter; ++i) {
-		Vec2 p0 = transformPos2D(src[0].x, src[0].y, mtx);
-		Vec2 p1 = transformPos2D(src[1].x, src[1].y, mtx);
-		Vec2 p2 = transformPos2D(src[2].x, src[2].y, mtx);
-		Vec2 p3 = transformPos2D(src[3].x, src[3].y, mtx);
-		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
-		SET_DRAW_VERTEX(dst, p1.x, p1.y, src[1].u, src[1].v, src[1].color); ++dst;
-		SET_DRAW_VERTEX(dst, p2.x, p2.y, src[2].u, src[2].v, src[2].color); ++dst;
-		SET_DRAW_VERTEX(dst, p3.x, p3.y, src[3].u, src[3].v, src[3].color); ++dst;
-
-		src += 4;
-	}
-
-	Vec2 p0;
-	const uint32_t rem = n & 3;
-	switch (rem) {
-	case 3:
-		p0 = transformPos2D(src[0].x, src[0].y, mtx);
-		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
-		src++;
-	case 2:
-		p0 = transformPos2D(src[0].x, src[0].y, mtx);
-		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
-		src++;
-	case 1:
-		p0 = transformPos2D(src[0].x, src[0].y, mtx);
-		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
-		src++;
-	}
-#else
-	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
-	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);
-	const bx::simd128_t mtx2 = bx::simd_splat(mtx[2]);
-	const bx::simd128_t mtx3 = bx::simd_splat(mtx[3]);
-	const bx::simd128_t mtx4 = bx::simd_splat(mtx[4]);
-	const bx::simd128_t mtx5 = bx::simd_splat(mtx[5]);
-
-	const uint32_t iter = n >> 2;
-	for (uint32_t i = 0; i < iter; ++i) {
-		// Unaligned loads because DrawVertex is 20 bytes
-		bx::simd128_t p0 = _mm_loadu_ps(&src[0].x); // {x0, y0, u0, v0}
-		bx::simd128_t p1 = _mm_loadu_ps(&src[1].x); // {x1, y1, u1, v1}
-		bx::simd128_t p2 = _mm_loadu_ps(&src[2].x); // {x2, y2, u2, v2}
-		bx::simd128_t p3 = _mm_loadu_ps(&src[3].x); // {x3, y3, u3, v3}
-
-		bx::simd128_t p01 = bx::simd_shuf_xyAB(p0, p1); // {x0, y0, x1, y1}
-		bx::simd128_t p23 = bx::simd_shuf_xyAB(p2, p3); // {x2, y2, x3, y3}
-
-		bx::simd128_t x0123 = bx::simd_shuf_xyAB(bx::simd_swiz_xzxz(p01), bx::simd_swiz_xzxz(p23)); // (x0, x1, x2, x3)
-		bx::simd128_t y0123 = bx::simd_shuf_xyAB(bx::simd_swiz_ywyw(p01), bx::simd_swiz_ywyw(p23)); // (y0, y1, y2, y3)
-		bx::simd128_t x0123_m0 = bx::simd_mul(x0123, mtx0); // (x0, x1, x2, x3) * mtx[0]
-		bx::simd128_t x0123_m1 = bx::simd_mul(x0123, mtx1); // (x0, x1, x2, x3) * mtx[1]
-		bx::simd128_t y0123_m2 = bx::simd_mul(y0123, mtx2); // (y0, y1, y2, y3) * mtx[2]
-		bx::simd128_t y0123_m3 = bx::simd_mul(y0123, mtx3); // (y0, y1, y2, y3) * mtx[3]
-
-		// v0.x = x0_m0 + y0_m2 + m4
-		// v1.x = x1_m0 + y1_m2 + m4
-		// v2.x = x2_m0 + y2_m2 + m4
-		// v3.x = x3_m0 + y3_m2 + m4
-		// v0.y = x0_m1 + y0_m3 + m5
-		// v1.y = x1_m1 + y1_m3 + m5
-		// v2.y = x2_m1 + y2_m3 + m5
-		// v3.y = x3_m1 + y3_m3 + m5
-		bx::simd128_t v0123_x = bx::simd_add(x0123_m0, bx::simd_add(y0123_m2, mtx4));
-		bx::simd128_t v0123_y = bx::simd_add(x0123_m1, bx::simd_add(y0123_m3, mtx5));
-
-		bx::simd128_t v01 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(v0123_x, v0123_y)); // {x0', y0', x1', y1'}
-		bx::simd128_t v23 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(v0123_x, v0123_y)); // {x2', y2', x3', y3'}
-
-		bx::simd128_t d0 = bx::simd_shuf_xyAB(v01, bx::simd_swiz_zwxy(p0));
-		bx::simd128_t d1 = bx::simd_shuf_zwCD(v01, p1);
-		bx::simd128_t d2 = bx::simd_shuf_xyAB(v23, bx::simd_swiz_zwxy(p2));
-		bx::simd128_t d3 = bx::simd_shuf_zwCD(v23, p3);
-
-		// Unaligned stores because the destination buffer isn't guaranteed to be 16-byte aligned, 
-		// (it's part of a larger vertex buffer).
-		_mm_storeu_ps(&dst[0].x, d0);
-		_mm_storeu_ps(&dst[1].x, d1);
-		_mm_storeu_ps(&dst[2].x, d2);
-		_mm_storeu_ps(&dst[3].x, d3);
-
-		dst[0].color = src[0].color;
-		dst[1].color = src[1].color;
-		dst[2].color = src[2].color;
-		dst[3].color = src[3].color;
-
-		dst += 4;
-		src += 4;
-	}
-
-	Vec2 p0;
-	const uint32_t rem = n & 3;
-	switch (rem) {
-	case 3:
-		p0 = transformPos2D(src[0].x, src[0].y, mtx);
-		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
-		src++;
-	case 2:
-		p0 = transformPos2D(src[0].x, src[0].y, mtx);
-		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
-		src++;
-	case 1:
-		p0 = transformPos2D(src[0].x, src[0].y, mtx);
-		SET_DRAW_VERTEX(dst, p0.x, p0.y, src[0].u, src[0].v, src[0].color); ++dst;
-		src++;
-	}
-#endif
-}
-#endif // SEPARATE_VERTEX_STREAMS
 
 // NOTE: Assumes src is 16-byte aligned. Don't care about dst (unaligned stores)
 void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint16_t* __restrict dst, uint16_t delta)
