@@ -446,21 +446,6 @@ inline float getFontScale(const float* xform)
 	return min2(quantize(getAverageScale(xform), 0.01f), 4.0f);
 }
 
-inline float rsqrt_carmack(float x)
-{
-	const float threehalfs = 1.5f;
-
-	float x2 = x * 0.5f;
-	float y = x;
-	long i = *(long *)&y;
-	i = 0x5f3759df - (i >> 1);
-	y = *(float *)&i;
-	y = y * (threehalfs - (x2 * y * y));
-//	y  = y * (threehalfs - (x2 * y * y));
-
-	return y;
-}
-
 inline void vec2Normalize(Vec2* v)
 {
 	float lenSqr = v->x * v->x + v->y * v->y;
@@ -468,12 +453,6 @@ inline void vec2Normalize(Vec2* v)
 
 	v->x *= invLen;
 	v->y *= invLen;
-}
-
-inline void sincos(float a, float& c, float& s)
-{
-	c = cosf(a);
-	s = sinf(a);
 }
 
 inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
@@ -493,10 +472,9 @@ inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
 }
 
 void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx);
+void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx);
 void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint16_t* __restrict dst, uint16_t delta);
 void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, Vec2* __restrict transformedVertices);
-
-void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx);
 void memset32(void* __restrict dst, uint32_t n32, const void* __restrict src);
 void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src);
 void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src);
@@ -1367,8 +1345,8 @@ void Context::roundedRect(float x, float y, float w, float h, float r)
 			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
 				const float a = -PI - (PI * 0.5f) * ((float)i / (float)(numPointsQuarterCircle - 1));
 
-				float ca, sa;
-				sincos(a, ca, sa);
+				float ca = cosf(a);
+				float sa = sinf(a);
 
 				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
 			}
@@ -1385,8 +1363,8 @@ void Context::roundedRect(float x, float y, float w, float h, float r)
 			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
 				const float a = -1.5f * PI - (PI * 0.5f) * ((float)i / (float)(numPointsQuarterCircle - 1));
 
-				float ca, sa;
-				sincos(a, ca, sa);
+				float ca = cosf(a);
+				float sa = sinf(a);
 
 				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
 			}
@@ -1403,8 +1381,8 @@ void Context::roundedRect(float x, float y, float w, float h, float r)
 			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
 				const float a = -(PI * 0.5f) * ((float)i / (float)(numPointsQuarterCircle - 1));
 
-				float ca, sa;
-				sincos(a, ca, sa);
+				float ca = cosf(a);
+				float sa = sinf(a);
 
 				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
 			}
@@ -1421,8 +1399,8 @@ void Context::roundedRect(float x, float y, float w, float h, float r)
 			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
 				const float a = -PI * 0.5f - (PI * 0.5f) * ((float)i / (float)(numPointsQuarterCircle - 1));
 
-				float ca, sa;
-				sincos(a, ca, sa);
+				float ca = cosf(a);
+				float sa = sinf(a);
 
 				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
 			}
@@ -1451,8 +1429,8 @@ void Context::circle(float cx, float cy, float r)
 	for (uint32_t i = 1; i < numPoints; ++i) {
 		const float a = (2.0f * PI) * (1.0f - (float)i / (float)numPoints);
 
-		float ca, sa;
-		sincos(a, ca, sa);
+		float ca = cosf(a);
+		float sa = sinf(a);
 
 		*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
 	}
