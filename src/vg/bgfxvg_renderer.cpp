@@ -46,7 +46,6 @@ namespace vg
 #define MAX_FONT_IMAGES          4
 #define MIN_FONT_ATLAS_SIZE      512
 
-#define APPROXIMATE_MATH         0
 #define BEZIER_CIRCLE            0
 #define ENABLE_SHAPE_CACHING     1
 #define SEPARATE_VERTEX_STREAMS  1
@@ -525,12 +524,7 @@ inline float rsqrt_carmack(float x)
 inline void vec2Normalize(Vec2* v)
 {
 	float lenSqr = v->x * v->x + v->y * v->y;
-
-#if APPROXIMATE_MATH
-	float invLen = rsqrt_carmack(lenSqr);
-#else
 	float invLen = lenSqr < 1e-5f ? 0.0f : (1.0f / sqrtf(lenSqr));
-#endif
 
 	v->x *= invLen;
 	v->y *= invLen;
@@ -538,13 +532,8 @@ inline void vec2Normalize(Vec2* v)
 
 inline void sincos(float a, float& c, float& s)
 {
-#if APPROXIMATE_MATH
-	c = approxCos(a);
-	s = approxSin(a);
-#else
 	c = cosf(a);
 	s = sinf(a);
-#endif
 }
 
 inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
@@ -1489,11 +1478,7 @@ void Context::roundedRect(float x, float y, float w, float h, float r)
 		const State* state = getState();
 
 		const float scale = state->m_AvgScale;
-#if APPROXIMATE_MATH
-		const float da = approxAcos((scale * r) / ((scale * r) + m_TesselationTolerance)) * 2.0f;
-#else
 		const float da = acos((scale * r) / ((scale * r) + m_TesselationTolerance)) * 2.0f;
-#endif
 		const uint32_t numPointsHalfCircle = max2(2, (int)ceilf(PI / da));
 		const uint32_t numPointsQuarterCircle = (numPointsHalfCircle >> 1) + 1;
 
@@ -1592,11 +1577,7 @@ void Context::circle(float cx, float cy, float r)
 	const State* state = getState();
 	const float scale = state->m_AvgScale;
 
-#if APPROXIMATE_MATH
-	const float da = approxAcos((scale * r) / ((scale * r) + m_TesselationTolerance)) * 2.0f;
-#else
 	const float da = acos((scale * r) / ((scale * r) + m_TesselationTolerance)) * 2.0f;
-#endif
 
 	const uint32_t numPointsHalfCircle = max2(2, (int)ceilf(PI / da));
 	const uint32_t numPoints = (numPointsHalfCircle * 2);
