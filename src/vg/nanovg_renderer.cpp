@@ -175,6 +175,7 @@ void NanoVGRenderer::StrokePath(uint32_t col, float width, bool aa, LineCap::Enu
 	BX_CHECK(m_Context != nullptr, "NanoVG context is null!");
 
 #if 1
+	BX_UNUSED(lineJoin);
 	nvgLineJoin(m_Context, NVG_MITER);
 	nvgLineCap(m_Context, lineCap == LineCap::Butt ? NVG_BUTT : NVG_SQUARE);
 #else
@@ -476,7 +477,7 @@ void NanoVGRenderer::DestroyShape(Shape* shape)
 {
 	bx::AllocatorI* allocator = m_Allocator;
 
-	BX_DELETE(allocator, shape->m_CmdList);
+	BX_DELETE(allocator, (bx::MemoryBlock*)shape->m_CmdList);
 	BX_DELETE(allocator, shape);
 }
 

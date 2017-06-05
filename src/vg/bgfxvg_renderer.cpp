@@ -4,9 +4,10 @@
 // 3) LineCap::Round
 // 4) Layers
 // 5) Check polygon winding and force CCW order because otherwise AA fringes are generated inside the polygon!
+#include <bx/bx.h>
 
-#pragma warning(disable: 4127) // conditional expression is constant (e.g. BezierTo)
-#pragma warning(disable: 4706) // assignment withing conditional expression
+BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4127) // conditional expression is constant (e.g. BezierTo)
+BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment withing conditional expression
 
 #include "bgfxvg_renderer.h"
 #include "shape.h"
@@ -199,7 +200,9 @@ struct Context
 	uint32_t** m_Uint32DataPool;
 	uint32_t m_Vec2DataPoolCapacity;
 	uint32_t m_Uint32DataPoolCapacity;
+#if BX_CONFIG_SUPPORTS_THREADING
 	bx::Mutex m_DataPoolMutex;
+#endif
 
 	DrawCommand* m_DrawCommands;
 	uint32_t m_NumDrawCommands;
@@ -2452,7 +2455,7 @@ void Context::destroyShape(Shape* shape)
 		shape->m_RendererData = nullptr;
 	}
 
-	BX_DELETE(m_Allocator, shape->m_CmdList);
+	BX_DELETE(m_Allocator, (bx::MemoryBlock*)shape->m_CmdList);
 	shape->m_CmdList = nullptr;
 
 	BX_DELETE(m_Allocator, shape);
@@ -3037,6 +3040,11 @@ void Context::renderTextQuads(uint32_t numQuads, Color color)
 	float scale = state->m_FontScale * m_DevicePixelRatio;
 	float invscale = 1.0f / scale;
 
+	const uint32_t c = ColorRGBA::setAlpha(color, (uint8_t)(state->m_GlobalAlpha * ColorRGBA::getAlpha(color)));
+	if (ColorRGBA::getAlpha(c) == 0) {
+		return;
+	}
+
 	float mtx[6];
 	mtx[0] = state->m_TransformMtx[0] * invscale;
 	mtx[1] = state->m_TransformMtx[1] * invscale;
@@ -3060,7 +3068,7 @@ void Context::renderTextQuads(uint32_t numQuads, Color color)
 	bx::memCopy(dstPos, m_TextVertices, sizeof(Vec2) * numDrawVertices);
 
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
-	memset32(dstColor, numDrawVertices, &color);
+	memset32(dstColor, numDrawVertices, &c);
 
 	Vec2* dstUV = &vb->m_UV[vbOffset];
 	const FONSquad* q = m_TextQuads;
@@ -3314,6 +3322,8 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 
 void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool isClosed, float thickness, Color color, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
 {
+	BX_UNUSED(lineJoin);
+
 	const State* state = getState();
 
 	const float avgScale = state->m_AvgScale;
@@ -3651,6 +3661,8 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool
 
 void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bool isClosed, float thickness, Color color, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
 {
+	BX_UNUSED(lineJoin);
+
 	const State* state = getState();
 
 	const float avgScale = state->m_AvgScale;
@@ -3958,6 +3970,14 @@ ImageHandle Context::createImageRGBA(uint16_t w, uint16_t h, uint32_t flags, con
 	tex->m_Height = h;
 
 	uint32_t bgfxFlags = BGFX_TEXTURE_NONE;
+
+#if BX_PLATFORM_EMSCRIPTEN
+	if (!isPowerOf2(w) || !isPowerOf2(h)) {
+		flags = ImageFlags::Filter_NearestUV | ImageFlags::Filter_NearestW;
+		bgfxFlags |= BGFX_TEXTURE_U_CLAMP | BGFX_TEXTURE_V_CLAMP | BGFX_TEXTURE_W_CLAMP;
+	}
+#endif
+
 	if (flags & ImageFlags::Filter_NearestUV) {
 		bgfxFlags |= BGFX_TEXTURE_MIN_POINT | BGFX_TEXTURE_MAG_POINT;
 	}
@@ -4110,7 +4130,9 @@ bool Context::deleteImage(ImageHandle img)
 
 Vec2* Context::allocVertexBufferData_Vec2()
 {
+#if BX_CONFIG_SUPPORTS_THREADING
 	bx::MutexScope ms(m_DataPoolMutex);
+#endif
 
 	for (uint32_t i = 0; i < m_Vec2DataPoolCapacity; ++i) {
 		// If LSB of pointer is set it means that the ptr is valid and the buffer is free for reuse.
@@ -4135,7 +4157,9 @@ Vec2* Context::allocVertexBufferData_Vec2()
 
 uint32_t* Context::allocVertexBufferData_Uint32()
 {
+#if BX_CONFIG_SUPPORTS_THREADING
 	bx::MutexScope ms(m_DataPoolMutex);
+#endif
 
 	for (uint32_t i = 0; i < m_Uint32DataPoolCapacity; ++i) {
 		// If LSB of pointer is set it means that the ptr is valid and the buffer is free for reuse.
@@ -4160,7 +4184,9 @@ uint32_t* Context::allocVertexBufferData_Uint32()
 
 void Context::releaseVertexBufferData_Vec2(Vec2* data)
 {
+#if BX_CONFIG_SUPPORTS_THREADING
 	bx::MutexScope ms(m_DataPoolMutex);
+#endif
 
 	BX_CHECK(data != nullptr, "Tried to release a null vertex buffer");
 	for (uint32_t i = 0; i < m_Vec2DataPoolCapacity; ++i) {
@@ -4174,7 +4200,9 @@ void Context::releaseVertexBufferData_Vec2(Vec2* data)
 
 void Context::releaseVertexBufferData_Uint32(uint32_t* data)
 {
+#if BX_CONFIG_SUPPORTS_THREADING
 	bx::MutexScope ms(m_DataPoolMutex);
+#endif
 
 	BX_CHECK(data != nullptr, "Tried to release a null vertex buffer");
 	for (uint32_t i = 0; i < m_Uint32DataPoolCapacity; ++i) {
@@ -4516,7 +4544,7 @@ void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src)
 	const uint32_t s0 = *((const uint32_t*)src + 0);
 	const uint32_t s1 = *((const uint32_t*)src + 1);
 	uint32_t* d = (uint32_t*)dst;
-	while (n-- > 0) {
+	while (n64-- > 0) {
 		d[0] = s0;
 		d[1] = s1;
 		d += 2;
@@ -4567,7 +4595,7 @@ void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src)
 	const uint32_t s2 = *((const uint32_t*)src + 2);
 	const uint32_t s3 = *((const uint32_t*)src + 3);
 	uint32_t* d = (uint32_t*)dst;
-	while (n-- > 0) {
+	while (n128-- > 0) {
 		d[0] = s0;
 		d[1] = s1;
 		d[2] = s2;
@@ -4774,6 +4802,11 @@ void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restr
 
 void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx)
 {
+#if !VG_CONFIG_ENABLE_SIMD
+	for (uint32_t i = 0; i < n; ++i) {
+		p[i] = transformPos2D(v[i].x, v[i].y, mtx);
+	}
+#else
 	const float* src = &v->x;
 	float* dst = &p->x;
 
@@ -4820,6 +4853,7 @@ void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec
 		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
 		src += 2;
 	}
+#endif
 }
 
 // NOTE: Assumes src is 16-byte aligned. Don't care about dst (unaligned stores)
