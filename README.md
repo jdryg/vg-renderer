@@ -12,7 +12,7 @@ Based on NanoVG and FontStash versions included in bgfx repo.
 
 1. Generates fewer draw calls, by batching multiple paths together, and using indexed triangle lists (like ImDrawList)
 2. Separate shader program for gradients to reduce uniform usage (NanoVG's bgfx backend uses a single program for all cases)
-3. Circle() and RoundedRect() are implemented without Beziers (there's a switch to use the original NanoVG code)
+3. Circle() and RoundedRect() are implemented without Beziers
 4. All textures are RGBA (even the font altas)
 5. Concave polygons are decomposed into convex parts and rendered normally instead of using the stencil buffer (not tested extensively; might have issues with AA) (uses algorithm from https://mpen.ca/406/bayazit)
 6. Stack-based Bezier tesselation
@@ -22,12 +22,11 @@ Based on NanoVG and FontStash versions included in bgfx repo.
 
 ### What's not supported compared to NanoVG
 
-1. Round caps and joins
-2. Bevel joins
-3. Arbitrary polygon winding
-4. Polygon holes
-5. Variable text line height
-6. Skew transformation matrix
+1. Miter limit
+2. Arbitrary polygon winding
+3. Polygon holes
+4. Variable text line height
+5. Skew transformation matrix
 
 ### Comparison screenshots
 
