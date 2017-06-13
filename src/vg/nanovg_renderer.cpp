@@ -47,6 +47,10 @@ bool NanoVGRenderer::init(bool edgeAA, uint8_t viewID, bx::AllocatorI* allocator
 	m_ImagePatterns = (NVGpaint*)BX_ALLOC(allocator, sizeof(NVGpaint) * VG_CONFIG_MAX_IMAGE_PATTERNS);
 	m_FontData = (void**)BX_ALLOC(allocator, sizeof(void*) * VG_CONFIG_MAX_FONTS);
 	bx::memSet(m_FontData, 0, sizeof(void*) * VG_CONFIG_MAX_FONTS);
+
+#if 1
+	nvgMiterLimit(m_Context, 1e6f); // Large value to emulate BGFXVGRenderer's inability to convert miters to bevels.
+#endif
 	
 	return true;
 }
@@ -174,14 +178,8 @@ void NanoVGRenderer::StrokePath(uint32_t col, float width, bool aa, LineCap::Enu
 	BX_UNUSED(aa);
 	BX_CHECK(m_Context != nullptr, "NanoVG context is null!");
 
-#if 1
-	BX_UNUSED(lineJoin);
-	nvgLineJoin(m_Context, NVG_MITER);
-	nvgLineCap(m_Context, lineCap == LineCap::Butt ? NVG_BUTT : NVG_SQUARE);
-#else
 	nvgLineJoin(m_Context, lineJoin == LineJoin::Miter ? NVG_MITER : (lineJoin == LineJoin::Round ? NVG_ROUND : NVG_BEVEL));
 	nvgLineCap(m_Context, lineCap == LineCap::Butt ? NVG_BUTT : (lineCap == LineCap::Round ? NVG_ROUND : NVG_SQUARE));
-#endif
 	nvgStrokeColor(m_Context, nvgRGBA32(col));
 	nvgStrokeWidth(m_Context, width);
 	nvgStroke(m_Context);
@@ -434,7 +432,7 @@ FontHandle NanoVGRenderer::LoadFontFromMemory(const char* name, const uint8_t* d
 	BX_CHECK(m_Context != nullptr, "NanoVG context is null!");
 
 	if (m_NextFontID == VG_CONFIG_MAX_FONTS) {
-		return BGFX_INVALID_HANDLE;
+		return VG_INVALID_HANDLE;
 	}
 
 	uint8_t* fontData = (uint8_t*)BX_ALLOC(m_Allocator, size);
@@ -443,7 +441,7 @@ FontHandle NanoVGRenderer::LoadFontFromMemory(const char* name, const uint8_t* d
 	int fontHandle = nvgCreateFontMem(m_Context, name, fontData, size, 0);
 	if (fontHandle == -1) {
 		BX_FREE(m_Allocator, fontData);
-		return BGFX_INVALID_HANDLE;
+		return VG_INVALID_HANDLE;
 	}
 
 	m_FontData[m_NextFontID++] = fontData;

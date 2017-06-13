@@ -1,10 +1,31 @@
 // TODO:
-// 1) LineJoin::Bevel
-// 2) LineJoin::Round
-// 3) LineCap::Round
 // 4) Layers
 // 5) Check polygon winding and force CCW order because otherwise AA fringes are generated inside the polygon!
+
+#if VG_CONFIG_DEBUG
+#define BX_TRACE(_format, ...) \
+	do { \
+		bx::debugPrintf(BX_FILE_LINE_LITERAL "BGFXVGRenderer " _format "\n", ##__VA_ARGS__); \
+	} while(0)
+
+#define BX_WARN(_condition, _format, ...) \
+	do { \
+		if (!(_condition) ) { \
+			BX_TRACE(BX_FILE_LINE_LITERAL _format, ##__VA_ARGS__); \
+		} \
+	} while(0)
+
+#define BX_CHECK(_condition, _format, ...) \
+	do { \
+		if (!(_condition) ) { \
+			BX_TRACE(BX_FILE_LINE_LITERAL _format, ##__VA_ARGS__); \
+			bx::debugBreak(); \
+		} \
+	} while(0)
+#endif
+
 #include <bx/bx.h>
+#include <bx/debug.h>
 
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4127) // conditional expression is constant (e.g. BezierTo)
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment withing conditional expression
@@ -231,6 +252,17 @@ struct Context
 	Vec2* m_TextVertices;
 	uint32_t m_TextQuadCapacity;
 
+	// Temporary geometry used when generating strokes with round joints.
+	// This is needed because the number of vertices for each rounded corner depends
+	// on the angle between the 2 connected line segments
+	Vec2* m_TempGeomPos;
+	uint32_t* m_TempGeomColor;
+	uint16_t* m_TempGeomIndex;
+	uint32_t m_TempGeomNumVertices;
+	uint32_t m_TempGeomVertexCapacity;
+	uint32_t m_TempGeomNumIndices;
+	uint32_t m_TempGeomIndexCapacity;
+
 	FONScontext* m_FontStashContext;
 	ImageHandle m_FontImages[MAX_FONT_IMAGES];
 	int m_FontImageID;
@@ -362,7 +394,19 @@ struct Context
 
 	// Rendering
 	void renderPathStrokeNoAA(const Vec2* vtx, uint32_t numVertices, bool isClosed, float thickness, Color color, LineCap::Enum lineCap, LineJoin::Enum lineJoin);
+	void renderPathStrokeNoAA_Closed_Miter(const Vec2* vtx, uint32_t numVertices, float thickness, Color color);
+	void renderPathStrokeNoAA_Closed_Bevel(const Vec2* vtx, uint32_t numVertices, float thickness, Color color);
+	void renderPathStrokeNoAA_Closed_Round(const Vec2* vtx, uint32_t numVertices, float thickness, Color color);
+	void renderPathStrokeNoAA_Open_Miter(const Vec2* vtx, uint32_t numVertices, float thickness, Color color, LineCap::Enum lineCap);
+	void renderPathStrokeNoAA_Open_Bevel(const Vec2* vtx, uint32_t numVertices, float thickness, Color color, LineCap::Enum lineCap);
+	void renderPathStrokeNoAA_Open_Round(const Vec2* vtx, uint32_t numVertices, float thickness, Color color, LineCap::Enum lineCap);
 	void renderPathStrokeAA(const Vec2* vtx, uint32_t numVertices, bool isClosed, float thickness, Color color, LineCap::Enum lineCap, LineJoin::Enum lineJoin);
+	void renderPathStrokeAA_Closed_Miter(const Vec2* vtx, uint32_t numVertices, float thickness, Color color);
+	void renderPathStrokeAA_Closed_Bevel(const Vec2* vtx, uint32_t numVertices, float thickness, Color color);
+	void renderPathStrokeAA_Closed_Round(const Vec2* vtx, uint32_t numVertices, float thickness, Color color);
+	void renderPathStrokeAA_Open_Miter(const Vec2* vtx, uint32_t numVertices, float thickness, Color color, LineCap::Enum lineCap);
+	void renderPathStrokeAA_Open_Bevel(const Vec2* vtx, uint32_t numVertices, float thickness, Color color, LineCap::Enum lineCap);
+	void renderPathStrokeAA_Open_Round(const Vec2* vtx, uint32_t numVertices, float thickness, Color color, LineCap::Enum lineCap);
 	void renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numVertices, Color color);
 	void renderConvexPolygonAA(const Vec2* vtx, uint32_t numVertices, Color color);
 	void renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numVertices, ImagePatternHandle img);
@@ -374,6 +418,14 @@ struct Context
 	void cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* cmd);
 	void cachedShapeAddTextCommand(CachedShape* shape, const uint8_t* cmdData);
 	void cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* stringCallback, void* userData);
+
+	// Temporary geometry
+	void tempGeomReset();
+	void tempGeomExpandVB(uint32_t numVertices);
+	void tempGeomExpandIB(uint32_t numIndices);
+	void tempGeomAddPos(const Vec2& p);
+	void tempGeomAddPosColor(const Vec2& p, uint32_t c);
+	void tempGeomAddTriangle(uint16_t i0, uint16_t i1, uint16_t i2);
 };
 
 static void releaseVertexBufferDataCallback_Vec2(void* ptr, void* userData)
@@ -812,7 +864,14 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID) :
 	m_FringeWidth(1.0f),
 	m_ViewID(viewID),
 	m_ForceNewDrawCommand(false),
-	m_NextFontID(0)
+	m_NextFontID(0),
+	m_TempGeomPos(nullptr),
+	m_TempGeomColor(nullptr),
+	m_TempGeomIndex(nullptr),
+	m_TempGeomNumVertices(0),
+	m_TempGeomVertexCapacity(0),
+	m_TempGeomNumIndices(0),
+	m_TempGeomIndexCapacity(0)
 {
 	for (uint32_t i = 0; i < MAX_FONT_IMAGES; ++i) {
 		m_FontImages[i] = BGFX_INVALID_HANDLE;
@@ -910,6 +969,9 @@ Context::~Context()
 	BX_ALIGNED_FREE(m_Allocator, m_TextVertices, 16);
 	BX_ALIGNED_FREE(m_Allocator, m_PathVertices, 16);
 	BX_ALIGNED_FREE(m_Allocator, m_TransformedPathVertices, 16);
+	BX_ALIGNED_FREE(m_Allocator, m_TempGeomPos, 16);
+	BX_ALIGNED_FREE(m_Allocator, m_TempGeomColor, 16);
+	BX_ALIGNED_FREE(m_Allocator, m_TempGeomIndex, 16);
 }
 
 bool Context::init()
@@ -1013,6 +1075,11 @@ void Context::endFrame()
 {
 	BX_CHECK(m_CurStateID == 0, "PushState()/PopState() mismatch");
 	if (m_NumDrawCommands == 0) {
+		// Release the vertex buffer allocated in beginFrame()
+		releaseVertexBufferData_Vec2(m_VertexBuffers[0].m_Pos);
+		releaseVertexBufferData_Vec2(m_VertexBuffers[0].m_UV);
+		releaseVertexBufferData_Uint32(m_VertexBuffers[0].m_Color);
+
 		return;
 	}
 
@@ -3320,376 +3387,246 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 	cmd->m_NumIndices += numDrawIndices;
 }
 
-void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool isClosed, float thickness, Color color, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
+void Context::renderPathStrokeAA_Closed_Miter(const Vec2* vtx, uint32_t numPathVertices, float strokeWidth, Color color)
 {
-	BX_UNUSED(lineJoin);
-
-	const State* state = getState();
-
-	const float avgScale = state->m_AvgScale;
-	float strokeWidth = clamp(thickness * avgScale, 0.0f, 200.0f);
-	float alphaScale = state->m_GlobalAlpha;
-	if (strokeWidth < m_FringeWidth) {
-		// nvgStroke()
-		float alpha = clamp(strokeWidth, 0.0f, 1.0f);
-		alphaScale *= alpha * alpha;
-
-		strokeWidth = m_FringeWidth;
-	}
-
-	uint32_t c = ColorRGBA::setAlpha(color, (uint8_t)(alphaScale * ColorRGBA::getAlpha(color)));
-	uint32_t c0 = ColorRGBA::setAlpha(color, 0);
-
-	if (ColorRGBA::getAlpha(c) == 0) {
-		return;
-	}
-
+	const uint32_t c0 = ColorRGBA::setAlpha(color, 0);
 	const Vec2 uv = getWhitePixelUV();
+	const uint32_t numSegments = numPathVertices;
+	const float hsw = (strokeWidth - m_FringeWidth) * 0.5f;
+	const float hsw_aa = hsw + m_FringeWidth;
 
-	const uint32_t numSegments = numPathVertices - (isClosed ? 0 : 1);
-	
-	if (strokeWidth > m_FringeWidth) {
-		const float halfStrokeWidth = (strokeWidth - m_FringeWidth) * 0.5f;
-		const float middlePointFactor = m_FringeWidth / halfStrokeWidth;
-		const float sidePointFactor = 1.0f + middlePointFactor;
+	const uint32_t numDrawVertices = numPathVertices * 4; // 4 vertices per path vertex (left, right, aaLeft, aaRight)
+	const uint32_t numDrawIndices = numSegments * 18; // 6 tris / segment
 
-		// TODO: Assume lineJoin == Miter and lineCap != Round
-		const uint32_t numDrawVertices = numPathVertices * 4; // 4 vertices per path vertex (left, right, aaLeft, aaRight)
-		const uint32_t numDrawIndices = numSegments * 18; // 6 tris / segment
+	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
 
-		DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
 
-		VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
-		const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
-		Vec2* dstPos = &vb->m_Pos[vbOffset];
-		Vec2* dstUV = &vb->m_UV[vbOffset];
-		uint32_t* dstColor = &vb->m_Color[vbOffset];
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	memset64(dstUV, numDrawVertices, &uv.x);
 
-		const uint32_t colors[4] = { c0, c, c, c0 };
-		memset64(dstUV, numDrawVertices, &uv.x);
-		memset128(dstColor, numDrawVertices >> 2, &colors[0]);
+	const uint32_t colors[4] = { c0, color, color, c0 };
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+	memset128(dstColor, numDrawVertices >> 2, &colors[0]);
 
-		uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
-		const uint32_t startVertexID = cmd->m_NumVertices;
+	const uint16_t startVertexID = (uint16_t)cmd->m_NumVertices;
 
-		cmd->m_NumVertices += numDrawVertices;
-		cmd->m_NumIndices += numDrawIndices;
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
 
-		Vec2 d01;
-		if (!isClosed) {
-			// First segment of an open path
-			const Vec2& p0 = vtx[0];
-			const Vec2& p1 = vtx[1];
+	Vec2 d01 = vtx[0] - vtx[numPathVertices - 1];
+	vec2Normalize(&d01);
 
-			d01 = p1 - p0;
-			vec2Normalize(&d01);
+	// Generate draw vertices...
+	for (uint32_t iSegment = 0; iSegment < numSegments; ++iSegment) {
+		const Vec2& p1 = vtx[iSegment];
+		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
 
-			const Vec2 l01Scaled = d01.perpCCW() * halfStrokeWidth;
+		Vec2 d12 = p2 - p1;
+		vec2Normalize(&d12);
 
-			Vec2 leftPoint = p0 + l01Scaled;
-			Vec2 rightPoint = p0 - l01Scaled;
-			if (lineCap == LineCap::Square) {
-				leftPoint -= d01 * halfStrokeWidth;
-				rightPoint -= d01 * halfStrokeWidth;
-			} else if (lineCap == LineCap::Round) {
-				// TODO: Even if lineCap == Round assume Butt.
-			}
+		const Vec2 v = calcExtrusionVector(d01, d12);
+		const Vec2 v_hsw = v * hsw;
+		const Vec2 v_hsw_aa = v * hsw_aa;
 
-			const Vec2 pScaled = p0 * middlePointFactor;
-			const Vec2 leftPointAA = leftPoint * sidePointFactor - pScaled;
-			const Vec2 rightPointAA = rightPoint * sidePointFactor - pScaled;
+		*dstPos++ = p1 + v_hsw_aa;
+		*dstPos++ = p1 + v_hsw;
+		*dstPos++ = p1 - v_hsw;
+		*dstPos++ = p1 - v_hsw_aa;
 
-			dstPos[0] = leftPointAA;
-			dstPos[1] = leftPoint;
-			dstPos[2] = rightPoint;
-			dstPos[3] = rightPointAA;
-			dstPos += 4;
-		} else {
-			d01 = vtx[0] - vtx[numPathVertices - 1];
-			vec2Normalize(&d01);
-		}
-
-		// Generate draw vertices...
-		const uint32_t firstSegmentID = isClosed ? 0 : 1;
-		for (uint32_t iSegment = firstSegmentID; iSegment < numSegments; ++iSegment) {
-			const Vec2& p1 = vtx[iSegment];
-			const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
-
-			Vec2 d12 = p2 - p1;
-			vec2Normalize(&d12);
-
-			const Vec2 v = calcExtrusionVector(d01, d12);
-
-			const Vec2 v_hsw = v * halfStrokeWidth;
-			const Vec2 v_hsw_aa = v * (halfStrokeWidth + m_FringeWidth);
-
-			const Vec2 leftPointAA = p1 + v_hsw_aa;
-			const Vec2 leftPoint = p1 + v_hsw;
-			const Vec2 rightPoint = p1 - v_hsw;
-			const Vec2 rightPointAA = p1 - v_hsw_aa;
-
-			dstPos[0] = leftPointAA;
-			dstPos[1] = leftPoint;
-			dstPos[2] = rightPoint;
-			dstPos[3] = rightPointAA;
-			dstPos += 4;
-
-			d01 = d12;
-		}
-
-		if (!isClosed) {
-			const Vec2& p1 = vtx[numPathVertices - 1];
-			Vec2 pScaled = p1 * middlePointFactor;
-
-			Vec2 l01 = d01.perpCCW() * halfStrokeWidth;
-
-			Vec2 leftPoint = p1 + l01;
-			Vec2 rightPoint = p1 - l01;
-			if (lineCap == LineCap::Square) {
-				leftPoint += d01 * halfStrokeWidth;
-				rightPoint += d01 * halfStrokeWidth;
-			} else if (lineCap == LineCap::Round) {
-				// TODO: Even if lineCap == Round assume Butt.
-			}
-
-			Vec2 leftPointAA = leftPoint * sidePointFactor - pScaled;
-			Vec2 rightPointAA = rightPoint * sidePointFactor - pScaled;
-
-			dstPos[0] = leftPointAA;
-			dstPos[1] = leftPoint;
-			dstPos[2] = rightPoint;
-			dstPos[3] = rightPointAA;
-			dstPos += 4;
-		}
-
-		// Generate indices...
-		uint32_t firstVertexID = startVertexID;
-		uint32_t lastSegmentID = numSegments - (isClosed ? 1 : 0);
-		for (uint32_t iSegment = 0; iSegment < lastSegmentID; ++iSegment) {
-			*dstIndex++ = (uint16_t)firstVertexID;
-			*dstIndex++ = (uint16_t)(firstVertexID + 1);
-			*dstIndex++ = (uint16_t)(firstVertexID + 5);
-			*dstIndex++ = (uint16_t)firstVertexID;
-			*dstIndex++ = (uint16_t)(firstVertexID + 5);
-			*dstIndex++ = (uint16_t)(firstVertexID + 4);
-			*dstIndex++ = (uint16_t)(firstVertexID + 1);
-			*dstIndex++ = (uint16_t)(firstVertexID + 2);
-			*dstIndex++ = (uint16_t)(firstVertexID + 6);
-			*dstIndex++ = (uint16_t)(firstVertexID + 1);
-			*dstIndex++ = (uint16_t)(firstVertexID + 6);
-			*dstIndex++ = (uint16_t)(firstVertexID + 5);
-			*dstIndex++ = (uint16_t)(firstVertexID + 2);
-			*dstIndex++ = (uint16_t)(firstVertexID + 3);
-			*dstIndex++ = (uint16_t)(firstVertexID + 7);
-			*dstIndex++ = (uint16_t)(firstVertexID + 2);
-			*dstIndex++ = (uint16_t)(firstVertexID + 7);
-			*dstIndex++ = (uint16_t)(firstVertexID + 6);
-			firstVertexID += 4;
-		}
-
-		if (isClosed) {
-			// Last segment
-			*dstIndex++ = (uint16_t)firstVertexID;
-			*dstIndex++ = (uint16_t)(firstVertexID + 1);
-			*dstIndex++ = (uint16_t)(startVertexID + 1);
-			*dstIndex++ = (uint16_t)firstVertexID;
-			*dstIndex++ = (uint16_t)(startVertexID + 1);
-			*dstIndex++ = (uint16_t)(startVertexID);
-			*dstIndex++ = (uint16_t)(firstVertexID + 1);
-			*dstIndex++ = (uint16_t)(firstVertexID + 2);
-			*dstIndex++ = (uint16_t)(startVertexID + 2);
-			*dstIndex++ = (uint16_t)(firstVertexID + 1);
-			*dstIndex++ = (uint16_t)(startVertexID + 2);
-			*dstIndex++ = (uint16_t)(startVertexID + 1);
-			*dstIndex++ = (uint16_t)(firstVertexID + 2);
-			*dstIndex++ = (uint16_t)(firstVertexID + 3);
-			*dstIndex++ = (uint16_t)(startVertexID + 3);
-			*dstIndex++ = (uint16_t)(firstVertexID + 2);
-			*dstIndex++ = (uint16_t)(startVertexID + 3);
-			*dstIndex++ = (uint16_t)(startVertexID + 2);
-		}
-	} else {
-		const float halfStrokeWidth = m_FringeWidth;
-
-		// TODO: Assume lineJoin == Miter and lineCap != Round
-		const uint32_t numDrawVertices = numPathVertices * 3; // 3 vertices per path vertex (center, aaLeft, aaRight)
-		const uint32_t numDrawIndices = numSegments * 12; // 4 tris / segment
-
-		DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
-
-		VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
-		const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
-		Vec2* dstPos = &vb->m_Pos[vbOffset];
-		Vec2* dstUV = &vb->m_UV[vbOffset];
-		uint32_t* dstColor = &vb->m_Color[vbOffset];
-
-		memset64(dstUV, numDrawVertices, &uv.x);
-
-		uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
-
-		const uint32_t startVertexID = cmd->m_NumVertices;
-
-		cmd->m_NumVertices += numDrawVertices;
-		cmd->m_NumIndices += numDrawIndices;
-
-		Vec2 d01;
-		if (!isClosed) {
-			// First segment of an open path
-			const Vec2& p0 = vtx[0];
-			const Vec2& p1 = vtx[1];
-
-			d01 = p1 - p0;
-			vec2Normalize(&d01);
-
-			Vec2 l01Scaled = d01.perpCCW() * halfStrokeWidth;
-
-			Vec2 leftPoint = p0 + l01Scaled;
-			Vec2 rightPoint = p0 - l01Scaled;
-			if (lineCap == LineCap::Square) {
-				leftPoint -= d01 * halfStrokeWidth;
-				rightPoint -= d01 * halfStrokeWidth;
-			} else if (lineCap == LineCap::Round) {
-				// TODO: Even if lineCap == Round assume Butt.
-			}
-
-			dstPos[0] = leftPoint;
-			dstPos[1] = p0;
-			dstPos[2] = rightPoint;
-			dstPos += 3;
-
-			dstColor[0] = c0;
-			dstColor[1] = c;
-			dstColor[2] = c0;
-			dstColor += 3;
-		} else {
-			d01 = vtx[0] - vtx[numPathVertices - 1];
-			vec2Normalize(&d01);
-		}
-
-		// Generate draw vertices...
-		const uint32_t firstSegmentID = isClosed ? 0 : 1;
-		for (uint32_t iSegment = firstSegmentID; iSegment < numSegments; ++iSegment) {
-			const Vec2& p1 = vtx[iSegment];
-			const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
-
-			Vec2 d12 = p2 - p1;
-			vec2Normalize(&d12);
-
-			const Vec2 v = calcExtrusionVector(d01, d12);
-
-			const Vec2 v_hsw = v * halfStrokeWidth;
-
-			const Vec2 leftPoint = p1 + v_hsw;
-			const Vec2 rightPoint = p1 - v_hsw;
-
-			dstPos[0] = leftPoint;
-			dstPos[1] = p1;
-			dstPos[2] = rightPoint;
-			dstPos += 3;
-
-			dstColor[0] = c0;
-			dstColor[1] = c;
-			dstColor[2] = c0;
-			dstColor += 3;
-
-			d01 = d12;
-		}
-
-		if (!isClosed) {
-			const Vec2& p1 = vtx[numPathVertices - 1];
-
-			Vec2 l01 = d01.perpCCW() * halfStrokeWidth;
-
-			Vec2 leftPoint = p1 + l01;
-			Vec2 rightPoint = p1 - l01;
-			if (lineCap == LineCap::Square) {
-				leftPoint += d01 * halfStrokeWidth;
-				rightPoint += d01 * halfStrokeWidth;
-			} else if (lineCap == LineCap::Round) {
-				// TODO: Even if lineCap == Round assume Butt.
-			}
-
-			dstPos[0] = leftPoint;
-			dstPos[1] = p1;
-			dstPos[2] = rightPoint;
-			dstPos += 3;
-
-			dstColor[0] = c0;
-			dstColor[1] = c;
-			dstColor[2] = c0;
-			dstColor += 3;
-		}
-
-		// Generate indices...
-		uint32_t firstVertexID = startVertexID;
-		uint32_t lastSegmentID = numSegments - (isClosed ? 1 : 0);
-		for (uint32_t iSegment = 0; iSegment < lastSegmentID; ++iSegment) {
-			*dstIndex++ = (uint16_t)firstVertexID;
-			*dstIndex++ = (uint16_t)(firstVertexID + 1);
-			*dstIndex++ = (uint16_t)(firstVertexID + 4);
-			*dstIndex++ = (uint16_t)firstVertexID;
-			*dstIndex++ = (uint16_t)(firstVertexID + 4);
-			*dstIndex++ = (uint16_t)(firstVertexID + 3);
-			*dstIndex++ = (uint16_t)(firstVertexID + 1);
-			*dstIndex++ = (uint16_t)(firstVertexID + 2);
-			*dstIndex++ = (uint16_t)(firstVertexID + 5);
-			*dstIndex++ = (uint16_t)(firstVertexID + 1);
-			*dstIndex++ = (uint16_t)(firstVertexID + 5);
-			*dstIndex++ = (uint16_t)(firstVertexID + 4);
-			
-			firstVertexID += 3;
-		}
-
-		if (isClosed) {
-			// Last segment
-			*dstIndex++ = (uint16_t)firstVertexID;
-			*dstIndex++ = (uint16_t)(firstVertexID + 1);
-			*dstIndex++ = (uint16_t)(startVertexID + 1);
-			*dstIndex++ = (uint16_t)firstVertexID;
-			*dstIndex++ = (uint16_t)(startVertexID + 1);
-			*dstIndex++ = (uint16_t)startVertexID;
-			*dstIndex++ = (uint16_t)(firstVertexID + 1);
-			*dstIndex++ = (uint16_t)(firstVertexID + 2);
-			*dstIndex++ = (uint16_t)(startVertexID + 2);
-			*dstIndex++ = (uint16_t)(firstVertexID + 1);
-			*dstIndex++ = (uint16_t)(startVertexID + 2);
-			*dstIndex++ = (uint16_t)(startVertexID + 1);
-		}
+		d01 = d12;
 	}
+
+	// Generate indices...
+	uint16_t firstVertexID = startVertexID;
+	uint32_t lastSegmentID = numSegments - 1;
+	for (uint32_t iSegment = 0; iSegment < lastSegmentID; ++iSegment) {
+		*dstIndex++ = firstVertexID + 0; *dstIndex++ = firstVertexID + 1; *dstIndex++ = firstVertexID + 5;
+		*dstIndex++ = firstVertexID + 0; *dstIndex++ = firstVertexID + 5; *dstIndex++ = firstVertexID + 4;
+		*dstIndex++ = firstVertexID + 1; *dstIndex++ = firstVertexID + 2; *dstIndex++ = firstVertexID + 6;
+		*dstIndex++ = firstVertexID + 1; *dstIndex++ = firstVertexID + 6; *dstIndex++ = firstVertexID + 5;
+		*dstIndex++ = firstVertexID + 2; *dstIndex++ = firstVertexID + 3; *dstIndex++ = firstVertexID + 7;
+		*dstIndex++ = firstVertexID + 2; *dstIndex++ = firstVertexID + 7; *dstIndex++ = firstVertexID + 6;
+		firstVertexID += 4;
+	}
+
+	// Last segment
+	*dstIndex++ = firstVertexID + 0; *dstIndex++ = firstVertexID + 1; *dstIndex++ = startVertexID + 1;
+	*dstIndex++ = firstVertexID + 0; *dstIndex++ = startVertexID + 1; *dstIndex++ = startVertexID + 0;
+	*dstIndex++ = firstVertexID + 1; *dstIndex++ = firstVertexID + 2; *dstIndex++ = startVertexID + 2;
+	*dstIndex++ = firstVertexID + 1; *dstIndex++ = startVertexID + 2; *dstIndex++ = startVertexID + 1;
+	*dstIndex++ = firstVertexID + 2; *dstIndex++ = firstVertexID + 3; *dstIndex++ = startVertexID + 3;
+	*dstIndex++ = firstVertexID + 2; *dstIndex++ = startVertexID + 3; *dstIndex++ = startVertexID + 2;
 }
 
-void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bool isClosed, float thickness, Color color, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
+void Context::renderPathStrokeAA_Closed_Bevel(const Vec2* vtx, uint32_t numPathVertices, float strokeWidth, Color color)
 {
-	BX_UNUSED(lineJoin);
-
-	const State* state = getState();
-
-	const float avgScale = state->m_AvgScale;
-	float strokeWidth = clamp(thickness * avgScale, 0.0f, 200.0f);
-	float alphaScale = state->m_GlobalAlpha;
-	if (strokeWidth < 1.0f) {
-		// nvgStroke()
-		float alpha = clamp(strokeWidth, 0.0f, 1.0f);
-		alphaScale *= alpha * alpha;
-		strokeWidth = 1.0f;
-	}
-
-	uint8_t newAlpha = (uint8_t)(alphaScale * ColorRGBA::getAlpha(color));
-	if (newAlpha == 0) {
-		return;
-	}
-
-	const uint32_t c = ColorRGBA::setAlpha(color, newAlpha);
+	const uint32_t c0 = ColorRGBA::setAlpha(color, 0);
 	const Vec2 uv = getWhitePixelUV();
+	const float hsw = (strokeWidth - m_FringeWidth) * 0.5f;
+	const float hsw_aa = hsw + m_FringeWidth;
+	const uint32_t numSegments = numPathVertices;
 
-	const uint32_t numSegments = numPathVertices - (isClosed ? 0 : 1);
+	tempGeomReset();
 
-	const float halfStrokeWidth = strokeWidth * 0.5f;
+	Vec2 d01 = vtx[0] - vtx[numPathVertices - 1];
+	vec2Normalize(&d01);
 
-	// TODO: Assume lineJoin == Miter and lineCap != Round
-	const uint32_t numDrawVertices = numPathVertices * 2; // 2 vertices per path vertex (left, right)
-	const uint32_t numDrawIndices = numSegments * 6; // 2 tris / segment
+	uint16_t prevSegmentLeftID = 0xFFFF;
+	uint16_t prevSegmentLeftAAID = 0xFFFF;
+	uint16_t prevSegmentRightID = 0xFFFF;
+	uint16_t prevSegmentRightAAID = 0xFFFF;
+	uint16_t firstSegmentLeftID = 0xFFFF;
+	uint16_t firstSegmentLeftAAID = 0xFFFF;
+	uint16_t firstSegmentRightID = 0xFFFF;
+	uint16_t firstSegmentRightAAID = 0xFFFF;
+
+	for (uint32_t iSegment = 0; iSegment < numSegments; ++iSegment) {
+		const Vec2& p1 = vtx[iSegment];
+		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
+
+		Vec2 d12 = p2 - p1;
+		vec2Normalize(&d12);
+
+		const Vec2 v = calcExtrusionVector(d01, d12);
+		const Vec2 v_hsw_aa = v * hsw_aa;
+
+		// Check which one of the points is the inner corner.
+		float leftPointAAProjDist = d12.x * v_hsw_aa.x + d12.y * v_hsw_aa.y;
+		if (leftPointAAProjDist >= 0.0f) {
+			// The left point is the inner corner.
+			const Vec2 innerCorner = p1 + v_hsw_aa;
+			const Vec2 r01 = d01.perpCW();
+			const Vec2 r12 = d12.perpCW();
+
+			uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
+			tempGeomExpandVB(7);
+			tempGeomAddPosColor(innerCorner, c0);
+			{
+				const Vec2 p1_r01_aa = p1 + r01 * hsw_aa;
+				Vec2 innerCornerToOuter = p1_r01_aa - innerCorner;
+				float radius = innerCornerToOuter.length();
+				innerCornerToOuter *= 1.0f / radius;
+
+				tempGeomAddPosColor(innerCorner + innerCornerToOuter * m_FringeWidth, color);
+				tempGeomAddPosColor(innerCorner + innerCornerToOuter * (radius - m_FringeWidth), color);
+				tempGeomAddPosColor(p1_r01_aa, c0);
+			}
+			{
+				const Vec2 p1_r12_aa = p1 + r12 * hsw_aa;
+				Vec2 innerCornerToOuter = p1_r12_aa - innerCorner;
+				float radius = innerCornerToOuter.length();
+				innerCornerToOuter *= 1.0f / radius;
+
+				tempGeomAddPosColor(innerCorner + innerCornerToOuter * m_FringeWidth, color);
+				tempGeomAddPosColor(innerCorner + innerCornerToOuter * (radius - m_FringeWidth), color);
+				tempGeomAddPosColor(p1_r12_aa, c0);
+			}
+
+			if (prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF) {
+				tempGeomExpandIB(18);
+				tempGeomAddTriangle(prevSegmentLeftAAID, prevSegmentLeftID, firstFanVertexID + 1);
+				tempGeomAddTriangle(prevSegmentLeftAAID, firstFanVertexID + 1, firstFanVertexID);
+				tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 2);
+				tempGeomAddTriangle(prevSegmentLeftID, firstFanVertexID + 2, firstFanVertexID + 1);
+				tempGeomAddTriangle(prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID + 3);
+				tempGeomAddTriangle(prevSegmentRightID, firstFanVertexID + 3, firstFanVertexID + 2);
+			} else {
+				firstSegmentLeftAAID = firstFanVertexID; // 0
+				firstSegmentLeftID = firstFanVertexID + 1; // 1
+				firstSegmentRightID = firstFanVertexID + 2; // 2
+				firstSegmentRightAAID = firstFanVertexID + 3; // 3
+			}
+
+			tempGeomExpandIB(15);
+			tempGeomAddTriangle(firstFanVertexID, firstFanVertexID + 1, firstFanVertexID + 4);
+			tempGeomAddTriangle(firstFanVertexID + 1, firstFanVertexID + 2, firstFanVertexID + 5);
+			tempGeomAddTriangle(firstFanVertexID + 1, firstFanVertexID + 5, firstFanVertexID + 4);
+			tempGeomAddTriangle(firstFanVertexID + 2, firstFanVertexID + 3, firstFanVertexID + 6);
+			tempGeomAddTriangle(firstFanVertexID + 2, firstFanVertexID + 6, firstFanVertexID + 5);
+
+			prevSegmentLeftAAID = firstFanVertexID;
+			prevSegmentLeftID = firstFanVertexID + 4;
+			prevSegmentRightID = firstFanVertexID + 5;
+			prevSegmentRightAAID = firstFanVertexID + 6;
+		} else {
+			// The right point is the inner corner.
+			const Vec2 innerCorner = p1 - v_hsw_aa;
+			const Vec2 l01 = d01.perpCCW();
+			const Vec2 l12 = d12.perpCCW();
+
+			uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
+			tempGeomExpandVB(7);
+			tempGeomAddPosColor(innerCorner, c0);
+			{
+				const Vec2 p1_l01_aa = p1 + l01 * hsw_aa;
+				Vec2 innerCornerToOuter = p1_l01_aa - innerCorner;
+				float radius = innerCornerToOuter.length();
+				innerCornerToOuter *= 1.0f / radius;
+
+				tempGeomAddPosColor(innerCorner + innerCornerToOuter * m_FringeWidth, color);
+				tempGeomAddPosColor(innerCorner + innerCornerToOuter * (radius - m_FringeWidth), color);
+				tempGeomAddPosColor(p1_l01_aa, c0);
+			}
+			{
+				const Vec2 p1_l12_aa = p1 + l12 * hsw_aa;
+				Vec2 innerCornerToOuter = p1_l12_aa - innerCorner;
+				float radius = innerCornerToOuter.length();
+				innerCornerToOuter *= 1.0f / radius;
+
+				tempGeomAddPosColor(innerCorner + innerCornerToOuter * m_FringeWidth, color);
+				tempGeomAddPosColor(innerCorner + innerCornerToOuter * (radius - m_FringeWidth), color);
+				tempGeomAddPosColor(p1_l12_aa, c0);
+			}
+
+			if (prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF) {
+				tempGeomExpandIB(18);
+				tempGeomAddTriangle(prevSegmentLeftAAID, prevSegmentLeftID, firstFanVertexID + 2);
+				tempGeomAddTriangle(prevSegmentLeftAAID, firstFanVertexID + 2, firstFanVertexID + 3);
+				tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 1);
+				tempGeomAddTriangle(prevSegmentLeftID, firstFanVertexID + 1, firstFanVertexID + 2);
+				tempGeomAddTriangle(prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID + 0);
+				tempGeomAddTriangle(prevSegmentRightID, firstFanVertexID + 0, firstFanVertexID + 1);
+			} else {
+				firstSegmentLeftAAID = firstFanVertexID + 3; // 3
+				firstSegmentLeftID = firstFanVertexID + 2; // 2
+				firstSegmentRightID = firstFanVertexID + 1; // 1
+				firstSegmentRightAAID = firstFanVertexID + 0; // 0
+			}
+
+			// Generate the slice.
+			tempGeomExpandIB(15);
+			tempGeomAddTriangle(firstFanVertexID, firstFanVertexID + 4, firstFanVertexID + 1);
+			tempGeomAddTriangle(firstFanVertexID + 1, firstFanVertexID + 5, firstFanVertexID + 2);
+			tempGeomAddTriangle(firstFanVertexID + 1, firstFanVertexID + 4, firstFanVertexID + 5);
+			tempGeomAddTriangle(firstFanVertexID + 2, firstFanVertexID + 6, firstFanVertexID + 3);
+			tempGeomAddTriangle(firstFanVertexID + 2, firstFanVertexID + 5, firstFanVertexID + 6);
+
+			prevSegmentLeftAAID = firstFanVertexID + 4 + 2;
+			prevSegmentLeftID = firstFanVertexID + 4 + 1;
+			prevSegmentRightID = firstFanVertexID + 4;
+			prevSegmentRightAAID = firstFanVertexID;
+		}
+
+		d01 = d12;
+	}
+
+	// Generate the first segment quad. 
+	tempGeomExpandIB(18);
+	tempGeomAddTriangle(prevSegmentLeftAAID, prevSegmentLeftID, firstSegmentLeftID);
+	tempGeomAddTriangle(prevSegmentLeftAAID, firstSegmentLeftID, firstSegmentLeftAAID);
+	tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstSegmentRightID);
+	tempGeomAddTriangle(prevSegmentLeftID, firstSegmentRightID, firstSegmentLeftID);
+	tempGeomAddTriangle(prevSegmentRightID, prevSegmentRightAAID, firstSegmentRightAAID);
+	tempGeomAddTriangle(prevSegmentRightID, firstSegmentRightAAID, firstSegmentRightID);
+
+	// Create a new draw command and copy the data to it.
+	const uint32_t numDrawVertices = m_TempGeomNumVertices;
+	const uint32_t numDrawIndices = m_TempGeomNumIndices;
 
 	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
 
@@ -3699,18 +3636,309 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 	Vec2* dstUV = &vb->m_UV[vbOffset];
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
 
+	bx::memCopy(dstPos, m_TempGeomPos, sizeof(Vec2) * numDrawVertices);
 	memset64(dstUV, numDrawVertices, &uv.x);
-	memset32(dstColor, numDrawVertices, &c);
+	bx::memCopy(dstColor, m_TempGeomColor, sizeof(uint32_t) * numDrawVertices);
 
 	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 	const uint32_t startVertexID = cmd->m_NumVertices;
+	batchTransformDrawIndices(m_TempGeomIndex, m_TempGeomNumIndices, dstIndex, (uint16_t)startVertexID);
+
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
+}
+
+void Context::renderPathStrokeAA_Closed_Round(const Vec2* vtx, uint32_t numPathVertices, float strokeWidth, Color color)
+{
+	const uint32_t c0 = ColorRGBA::setAlpha(color, 0);
+	const Vec2 uv = getWhitePixelUV();
+	const float hsw = (strokeWidth - m_FringeWidth) * 0.5f;
+	const float hsw_aa = hsw + m_FringeWidth;
+	const uint32_t numSegments = numPathVertices;
+	const float avgScale = getState()->m_AvgScale;
+	const float da = acos((avgScale * hsw) / ((avgScale * hsw) + m_TesselationTolerance)) * 2.0f;
+
+	tempGeomReset();
+
+	Vec2 d01 = vtx[0] - vtx[numPathVertices - 1];
+	vec2Normalize(&d01);
+
+	uint16_t prevSegmentLeftID = 0xFFFF;
+	uint16_t prevSegmentLeftAAID = 0xFFFF;
+	uint16_t prevSegmentRightID = 0xFFFF;
+	uint16_t prevSegmentRightAAID = 0xFFFF;
+	uint16_t firstSegmentLeftID = 0xFFFF;
+	uint16_t firstSegmentLeftAAID = 0xFFFF;
+	uint16_t firstSegmentRightID = 0xFFFF;
+	uint16_t firstSegmentRightAAID = 0xFFFF;
+
+	for (uint32_t iSegment = 0; iSegment < numSegments; ++iSegment) {
+		const Vec2& p1 = vtx[iSegment];
+		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
+
+		Vec2 d12 = p2 - p1;
+		vec2Normalize(&d12);
+
+		const Vec2 v = calcExtrusionVector(d01, d12);
+		const Vec2 v_hsw_aa = v * hsw_aa;
+
+		// Check which one of the points is the inner corner.
+		float leftPointAAProjDist = d12.x * v_hsw_aa.x + d12.y * v_hsw_aa.y;
+		if (leftPointAAProjDist >= 0.0f) {
+			// The left point is the inner corner.
+			const Vec2 leftPointAA = p1 + v_hsw_aa;
+
+			const Vec2 r01 = d01.perpCW();
+			const Vec2 r12 = d12.perpCW();
+
+			const Vec2 p1_r01_aa = p1 + r01 * hsw_aa;
+			Vec2 innerCornerToOuter = p1_r01_aa - leftPointAA;
+			float radius = innerCornerToOuter.length();
+			innerCornerToOuter *= 1.0f / radius;
+
+			float a01 = atan2f(r01.y, r01.x);
+			float a12 = atan2f(r12.y, r12.x);
+			if (a12 < a01) {
+				a12 += PI * 2.0f;
+			}
+
+			const uint32_t numArcPoints = max2(2u, (uint32_t)((a12 - a01) / da));
+			const float arcDa = ((a12 - a01) / (float)numArcPoints);
+
+			uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
+			tempGeomExpandVB(numArcPoints * 3 + 4);
+			tempGeomAddPosColor(leftPointAA, c0); // inner corner
+			tempGeomAddPosColor(leftPointAA + innerCornerToOuter * m_FringeWidth, color);
+			tempGeomAddPosColor(leftPointAA + innerCornerToOuter * (radius - m_FringeWidth), color);
+			tempGeomAddPosColor(leftPointAA + innerCornerToOuter * radius, c0);
+
+			for (uint32_t iArcPoint = 1; iArcPoint <= numArcPoints; ++iArcPoint) {
+				float a = a01 + iArcPoint * arcDa;
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				const Vec2 arcPoint = Vec2(p1.x + hsw_aa * ca, p1.y + hsw_aa * sa);
+				
+				innerCornerToOuter = arcPoint - leftPointAA;
+				radius = innerCornerToOuter.length();
+				innerCornerToOuter *= 1.0f / radius;
+
+				// TODO: Check if adding leftPointAA for every slice affects performance.
+				// 1) Colors will be {c0, c, c, c0} so they can be memset128() instead of touching the color array
+				// 2) Indices below should change to include degenerate triangles (the fan part should be a quad with 1 degenerate triangle).
+
+				tempGeomAddPosColor(leftPointAA + innerCornerToOuter * m_FringeWidth, color);
+				tempGeomAddPosColor(leftPointAA + innerCornerToOuter * (radius - m_FringeWidth), color);
+				tempGeomAddPosColor(leftPointAA + innerCornerToOuter * radius, c0);
+			}
+
+			// Indices
+
+			// Generate the segment quad.
+			if (prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF) {
+				tempGeomExpandIB(18);
+				tempGeomAddTriangle(prevSegmentLeftAAID, prevSegmentLeftID, firstFanVertexID + 1);
+				tempGeomAddTriangle(prevSegmentLeftAAID, firstFanVertexID + 1, firstFanVertexID);
+				tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 2);
+				tempGeomAddTriangle(prevSegmentLeftID, firstFanVertexID + 2, firstFanVertexID + 1);
+				tempGeomAddTriangle(prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID + 3);
+				tempGeomAddTriangle(prevSegmentRightID, firstFanVertexID + 3, firstFanVertexID + 2);
+			} else {
+				firstSegmentLeftAAID = firstFanVertexID; // 0
+				firstSegmentLeftID = firstFanVertexID + 1; // 1
+				firstSegmentRightID = firstFanVertexID + 2; // 2
+				firstSegmentRightAAID = firstFanVertexID + 3; // 3
+			}
+
+			// Generate the slice.
+			uint16_t arcID = firstFanVertexID + 1;
+			tempGeomExpandIB(numArcPoints * 15);
+			for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
+				// AA fringe (fan)
+				tempGeomAddTriangle(firstFanVertexID, arcID, arcID + 3);
+
+				// Inner rect
+				tempGeomAddTriangle(arcID, arcID + 1, arcID + 4);
+				tempGeomAddTriangle(arcID, arcID + 4, arcID + 3);
+
+				// AA fringe (rect)
+				tempGeomAddTriangle(arcID + 1, arcID + 2, arcID + 5);
+				tempGeomAddTriangle(arcID + 1, arcID + 5, arcID + 4);
+
+				arcID += 3;
+			}
+
+			prevSegmentLeftAAID = firstFanVertexID;
+			prevSegmentLeftID = arcID;
+			prevSegmentRightID = arcID + 1;
+			prevSegmentRightAAID = arcID + 2;
+		} else {
+			// The right point is the inner corner.
+			const Vec2 rightPointAA = p1 - v_hsw_aa;
+
+			const Vec2 l01 = d01.perpCCW();
+			const Vec2 l12 = d12.perpCCW();
+
+			const Vec2 p1_l01_aa = p1 + l01 * hsw_aa;
+			Vec2 innerCornerToOuter = p1_l01_aa - rightPointAA;
+			float radius = innerCornerToOuter.length();
+			innerCornerToOuter *= 1.0f / radius;
+
+			float a01 = atan2f(l01.y, l01.x);
+			float a12 = atan2f(l12.y, l12.x);
+			if (a12 > a01) {
+				a12 -= PI * 2.0f;
+			}
+
+			const uint32_t numArcPoints = max2(2u, (uint32_t)((a01 - a12) / da));
+			const float arcDa = ((a12 - a01) / (float)numArcPoints);
+
+			uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
+			tempGeomExpandVB(numArcPoints * 3 + 4);
+			tempGeomAddPosColor(rightPointAA, c0); // inner corner
+			tempGeomAddPosColor(rightPointAA + innerCornerToOuter * m_FringeWidth, color);
+			tempGeomAddPosColor(rightPointAA + innerCornerToOuter * (radius - m_FringeWidth), color);
+			tempGeomAddPosColor(rightPointAA + innerCornerToOuter * radius, c0);
+
+			for (uint32_t iArcPoint = 1; iArcPoint <= numArcPoints; ++iArcPoint) {
+				float a = a01 + iArcPoint * arcDa;
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				const Vec2 arcPoint = Vec2(p1.x + hsw_aa * ca, p1.y + hsw_aa * sa);
+
+				innerCornerToOuter = arcPoint - rightPointAA;
+				radius = innerCornerToOuter.length();
+				innerCornerToOuter *= 1.0f / radius;
+
+				tempGeomAddPosColor(rightPointAA + innerCornerToOuter * m_FringeWidth, color);
+				tempGeomAddPosColor(rightPointAA + innerCornerToOuter * (radius - m_FringeWidth), color);
+				tempGeomAddPosColor(rightPointAA + innerCornerToOuter * radius, c0);
+			}
+
+			// Indices
+
+			// Generate the segment quad.
+			if (prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF) {
+				tempGeomExpandIB(18);
+				tempGeomAddTriangle(prevSegmentLeftAAID, prevSegmentLeftID, firstFanVertexID + 2);
+				tempGeomAddTriangle(prevSegmentLeftAAID, firstFanVertexID + 2, firstFanVertexID + 3);
+				tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 1);
+				tempGeomAddTriangle(prevSegmentLeftID, firstFanVertexID + 1, firstFanVertexID + 2);
+				tempGeomAddTriangle(prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID + 0);
+				tempGeomAddTriangle(prevSegmentRightID, firstFanVertexID + 0, firstFanVertexID + 1);
+			} else {
+				firstSegmentLeftAAID = firstFanVertexID + 3; // 3
+				firstSegmentLeftID = firstFanVertexID + 2; // 2
+				firstSegmentRightID = firstFanVertexID + 1; // 1
+				firstSegmentRightAAID = firstFanVertexID + 0; // 0
+			}
+
+			// Generate the slice.
+			uint16_t arcID = firstFanVertexID + 1;
+			tempGeomExpandIB(numArcPoints * 15);
+			for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
+				// AA fringe (fan)
+				tempGeomAddTriangle(firstFanVertexID, arcID + 3, arcID);
+
+				// Inner rect
+				tempGeomAddTriangle(arcID, arcID + 4, arcID + 1);
+				tempGeomAddTriangle(arcID, arcID + 3, arcID + 4);
+
+				// AA fringe (rect)
+				tempGeomAddTriangle(arcID + 1, arcID + 5, arcID + 2);
+				tempGeomAddTriangle(arcID + 1, arcID + 4, arcID + 5);
+
+				arcID += 3;
+			}
+
+			prevSegmentLeftAAID = arcID + 2;
+			prevSegmentLeftID = arcID + 1;
+			prevSegmentRightID = arcID;
+			prevSegmentRightAAID = firstFanVertexID;
+		}
+
+		d01 = d12;
+	}
+
+	// Generate the first segment quad. 
+	tempGeomExpandIB(18);
+	tempGeomAddTriangle(prevSegmentLeftAAID, prevSegmentLeftID, firstSegmentLeftID);
+	tempGeomAddTriangle(prevSegmentLeftAAID, firstSegmentLeftID, firstSegmentLeftAAID);
+	tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstSegmentRightID);
+	tempGeomAddTriangle(prevSegmentLeftID, firstSegmentRightID, firstSegmentLeftID);
+	tempGeomAddTriangle(prevSegmentRightID, prevSegmentRightAAID, firstSegmentRightAAID);
+	tempGeomAddTriangle(prevSegmentRightID, firstSegmentRightAAID, firstSegmentRightID);
+
+	// Create a new draw command and copy the data to it.
+	const uint32_t numDrawVertices = m_TempGeomNumVertices;
+	const uint32_t numDrawIndices = m_TempGeomNumIndices;
+
+	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
+
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+	bx::memCopy(dstPos, m_TempGeomPos, sizeof(Vec2) * numDrawVertices);
+	memset64(dstUV, numDrawVertices, &uv.x);
+	bx::memCopy(dstColor, m_TempGeomColor, sizeof(uint32_t) * numDrawVertices);
+
+	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+
+	// TODO: Can the index transform be avoided if I don't know the number of draw vertices?
+	const uint32_t startVertexID = cmd->m_NumVertices;
+	batchTransformDrawIndices(m_TempGeomIndex, m_TempGeomNumIndices, dstIndex, (uint16_t)startVertexID);
+
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
+}
+
+void Context::renderPathStrokeAA_Open_Miter(const Vec2* vtx, uint32_t numPathVertices, float strokeWidth, Color color, LineCap::Enum lineCap)
+{
+	const uint32_t c0 = ColorRGBA::setAlpha(color, 0);
+	const Vec2 uv = getWhitePixelUV();
+	const uint32_t numSegments = numPathVertices - 1;
+	const float hsw = (strokeWidth - m_FringeWidth) * 0.5f;
+	const float hsw_aa = hsw + m_FringeWidth;
+
+	uint32_t numDrawVertices = numPathVertices * 4; // 4 vertices per path vertex (left, right, aaLeft, aaRight)
+	uint32_t numDrawIndices = numSegments * 18; // 6 tris / segment
+	uint32_t numPointsHalfCircle = 0;
+	if (lineCap == LineCap::Round) {
+		const float scale = getState()->m_AvgScale;
+		const float da = acos((scale * hsw) / ((scale * hsw) + m_TesselationTolerance)) * 2.0f;
+		numPointsHalfCircle = max2(2u, (uint32_t)ceilf(PI / da));
+		numDrawVertices += (numPointsHalfCircle * 4) - 8;
+		numDrawIndices += ((numPointsHalfCircle - 2) * 3 + ((numPointsHalfCircle - 1) * 2 * 3)) * 2;
+	}
+
+	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
+
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	memset64(dstUV, numDrawVertices, &uv.x);
+
+	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+
+	const uint16_t startVertexID = (uint16_t)cmd->m_NumVertices;
 
 	cmd->m_NumVertices += numDrawVertices;
 	cmd->m_NumIndices += numDrawIndices;
 
 	Vec2 d01;
-	if (!isClosed) {
+	uint16_t prevSegmentLeftAAID = 0xFFFF;
+	uint16_t prevSegmentLeftID = 0xFFFF;
+	uint16_t prevSegmentRightID = 0xFFFF;
+	uint16_t prevSegmentRightAAID = 0xFFFF;
+	{
 		// First segment of an open path
 		const Vec2& p0 = vtx[0];
 		const Vec2& p1 = vtx[1];
@@ -3718,29 +3946,1420 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 		d01 = p1 - p0;
 		vec2Normalize(&d01);
 
-		Vec2 l01Scaled = d01.perpCCW() * halfStrokeWidth;
+		const Vec2 l01 = d01.perpCCW();
 
-		Vec2 leftPoint = p0 + l01Scaled;
-		Vec2 rightPoint = p0 - l01Scaled;
-		if (lineCap == LineCap::Square) {
-			leftPoint -= d01 * halfStrokeWidth;
-			rightPoint -= d01 * halfStrokeWidth;
+		if (lineCap == LineCap::Butt) {
+			const Vec2 l01_hsw = l01 * hsw;
+			const Vec2 l01_hsw_aa = l01 * hsw_aa;
+
+			*dstPos++ = p0 + l01_hsw_aa;
+			*dstPos++ = p0 + l01_hsw;
+			*dstPos++ = p0 - l01_hsw;
+			*dstPos++ = p0 - l01_hsw_aa;
+
+			*dstColor++ = c0;
+			*dstColor++ = color;
+			*dstColor++ = color;
+			*dstColor++ = c0;
+
+			prevSegmentLeftAAID = startVertexID + 0;
+			prevSegmentLeftID = startVertexID + 1;
+			prevSegmentRightID = startVertexID + 2;
+			prevSegmentRightAAID = startVertexID + 3;
+		} else if (lineCap == LineCap::Square) {
+			const Vec2 l01_hsw = l01 * hsw;
+			const Vec2 d01_hsw = d01 * hsw;
+			const Vec2 l01_hsw_aa = l01 * hsw_aa;
+
+			*dstPos++ = p0 + l01_hsw_aa - d01_hsw;
+			*dstPos++ = p0 + l01_hsw - d01_hsw;
+			*dstPos++ = p0 - l01_hsw - d01_hsw;
+			*dstPos++ = p0 - l01_hsw_aa - d01_hsw;
+
+			*dstColor++ = c0;
+			*dstColor++ = color;
+			*dstColor++ = color;
+			*dstColor++ = c0;
+
+			prevSegmentLeftAAID = startVertexID + 0;
+			prevSegmentLeftID = startVertexID + 1;
+			prevSegmentRightID = startVertexID + 2;
+			prevSegmentRightAAID = startVertexID + 3;
 		} else if (lineCap == LineCap::Round) {
-			// TODO: Even if lineCap == Round assume Butt.
-		}
+			const float startAngle = atan2f(l01.y, l01.x);
+			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
+				float a = startAngle + i * PI / (float)(numPointsHalfCircle - 1);
+				float ca = cosf(a);
+				float sa = sinf(a);
 
-		dstPos[0] = leftPoint;
-		dstPos[1] = rightPoint;
-		dstPos += 2;
-	} else {
-		d01 = vtx[0] - vtx[numPathVertices - 1];
-		vec2Normalize(&d01);
+				*dstPos++ = Vec2(p0.x + ca * hsw, p0.y + sa * hsw);
+				*dstPos++ = Vec2(p0.x + ca * hsw_aa, p0.y + sa * hsw_aa);
+
+				*dstColor++ = color;
+				*dstColor++ = c0;
+			}
+
+			// Generate indices for the triangle fan
+			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
+				const uint16_t id = startVertexID + (uint16_t)(i << 1);
+				*dstIndex++ = startVertexID;
+				*dstIndex++ = id + 2;
+				*dstIndex++ = id + 4;
+			}
+
+			// Generate indices for the AA quads
+			for (uint32_t i = 0; i < numPointsHalfCircle - 1; ++i) {
+				const uint16_t id = startVertexID + (uint16_t)(i << 1);
+				*dstIndex++ = id + 0;
+				*dstIndex++ = id + 1;
+				*dstIndex++ = id + 3;
+				*dstIndex++ = id + 0;
+				*dstIndex++ = id + 3;
+				*dstIndex++ = id + 2;
+			}
+
+			prevSegmentLeftAAID = startVertexID + 1;
+			prevSegmentLeftID = startVertexID;
+			prevSegmentRightID = startVertexID + (uint16_t)((numPointsHalfCircle - 1) * 2);
+			prevSegmentRightAAID = startVertexID + (uint16_t)((numPointsHalfCircle - 1) * 2 + 1);
+		} else {
+			BX_CHECK(false, "Unknown line cap type");
+		}
 	}
 
-	const uint32_t firstSegmentID = isClosed ? 0 : 1;
-	for (uint32_t iSegment = firstSegmentID; iSegment < numSegments; ++iSegment) {
+	// Generate draw vertices...
+	for (uint32_t iSegment = 1; iSegment < numSegments; ++iSegment) {
+		const Vec2& p1 = vtx[iSegment];
+		const Vec2& p2 = vtx[iSegment + 1];
+
+		Vec2 d12 = p2 - p1;
+		vec2Normalize(&d12);
+
+		const Vec2 v = calcExtrusionVector(d01, d12);
+
+		const Vec2 v_hsw = v * hsw;
+		const Vec2 v_hsw_aa = v * hsw_aa;
+
+		const uint16_t curSegmentLeftAAID = startVertexID + (uint16_t)((ptrdiff_t)(dstPos - &vb->m_Pos[vbOffset]));
+
+		*dstPos++ = p1 + v_hsw_aa;
+		*dstPos++ = p1 + v_hsw;
+		*dstPos++ = p1 - v_hsw;
+		*dstPos++ = p1 - v_hsw_aa;
+
+		*dstColor++ = c0;
+		*dstColor++ = color;
+		*dstColor++ = color;
+		*dstColor++ = c0;
+
+		*dstIndex++ = prevSegmentLeftAAID; *dstIndex++ = prevSegmentLeftID;      *dstIndex++ = curSegmentLeftAAID + 1;
+		*dstIndex++ = prevSegmentLeftAAID; *dstIndex++ = curSegmentLeftAAID + 1; *dstIndex++ = curSegmentLeftAAID;
+		*dstIndex++ = prevSegmentLeftID;   *dstIndex++ = prevSegmentRightID;;    *dstIndex++ = curSegmentLeftAAID + 2;
+		*dstIndex++ = prevSegmentLeftID;   *dstIndex++ = curSegmentLeftAAID + 2; *dstIndex++ = curSegmentLeftAAID + 1;
+		*dstIndex++ = prevSegmentRightID;  *dstIndex++ = prevSegmentRightAAID;   *dstIndex++ = curSegmentLeftAAID + 3;
+		*dstIndex++ = prevSegmentRightID;  *dstIndex++ = curSegmentLeftAAID + 3; *dstIndex++ = curSegmentLeftAAID + 2;
+
+		prevSegmentLeftAAID = curSegmentLeftAAID;
+		prevSegmentLeftID = curSegmentLeftAAID + 1;
+		prevSegmentRightID = curSegmentLeftAAID + 2;
+		prevSegmentRightAAID = curSegmentLeftAAID + 3;
+		d01 = d12;
+	}
+
+	{
+		// Last segment of an open path
+		const Vec2& p1 = vtx[numPathVertices - 1];
+		
+		const Vec2 l01 = d01.perpCCW();
+
+		if (lineCap == LineCap::Butt) {
+			const uint16_t curSegmentLeftAAID = startVertexID + (uint16_t)(ptrdiff_t)(dstPos - &vb->m_Pos[vbOffset]);
+			const Vec2 l01_hsw = l01 * hsw;
+			const Vec2 l01_hsw_aa = l01 * hsw_aa;
+
+			*dstPos++ = p1 + l01_hsw_aa;
+			*dstPos++ = p1 + l01_hsw;
+			*dstPos++ = p1 - l01_hsw;
+			*dstPos++ = p1 - l01_hsw_aa;
+
+			*dstColor++ = c0;
+			*dstColor++ = color;
+			*dstColor++ = color;
+			*dstColor++ = c0;
+
+			*dstIndex++ = prevSegmentLeftAAID; *dstIndex++ = prevSegmentLeftID;      *dstIndex++ = curSegmentLeftAAID + 1;
+			*dstIndex++ = prevSegmentLeftAAID; *dstIndex++ = curSegmentLeftAAID + 1; *dstIndex++ = curSegmentLeftAAID;
+			*dstIndex++ = prevSegmentLeftID;   *dstIndex++ = prevSegmentRightID;;    *dstIndex++ = curSegmentLeftAAID + 2;
+			*dstIndex++ = prevSegmentLeftID;   *dstIndex++ = curSegmentLeftAAID + 2; *dstIndex++ = curSegmentLeftAAID + 1;
+			*dstIndex++ = prevSegmentRightID;  *dstIndex++ = prevSegmentRightAAID;   *dstIndex++ = curSegmentLeftAAID + 3;
+			*dstIndex++ = prevSegmentRightID;  *dstIndex++ = curSegmentLeftAAID + 3; *dstIndex++ = curSegmentLeftAAID + 2;
+		} else if (lineCap == LineCap::Square) {
+			const uint16_t curSegmentLeftAAID = startVertexID + (uint16_t)(ptrdiff_t)(dstPos - &vb->m_Pos[vbOffset]);
+			const Vec2 l01_hsw = l01 * hsw;
+			const Vec2 d01_hsw = d01 * hsw;
+			const Vec2 l01_hsw_aa = l01 * hsw_aa;
+
+			*dstPos++ = p1 + l01_hsw_aa + d01_hsw;
+			*dstPos++ = p1 + l01_hsw + d01_hsw;
+			*dstPos++ = p1 - l01_hsw + d01_hsw;
+			*dstPos++ = p1 - l01_hsw_aa + d01_hsw;
+
+			*dstColor++ = c0;
+			*dstColor++ = color;
+			*dstColor++ = color;
+			*dstColor++ = c0;
+
+			*dstIndex++ = prevSegmentLeftAAID; *dstIndex++ = prevSegmentLeftID;      *dstIndex++ = curSegmentLeftAAID + 1;
+			*dstIndex++ = prevSegmentLeftAAID; *dstIndex++ = curSegmentLeftAAID + 1; *dstIndex++ = curSegmentLeftAAID;
+			*dstIndex++ = prevSegmentLeftID;   *dstIndex++ = prevSegmentRightID;;    *dstIndex++ = curSegmentLeftAAID + 2;
+			*dstIndex++ = prevSegmentLeftID;   *dstIndex++ = curSegmentLeftAAID + 2; *dstIndex++ = curSegmentLeftAAID + 1;
+			*dstIndex++ = prevSegmentRightID;  *dstIndex++ = prevSegmentRightAAID;   *dstIndex++ = curSegmentLeftAAID + 3;
+			*dstIndex++ = prevSegmentRightID;  *dstIndex++ = curSegmentLeftAAID + 3; *dstIndex++ = curSegmentLeftAAID + 2;
+		} else if (lineCap == LineCap::Round) {
+			const uint16_t curSegmentLeftID = startVertexID + (uint16_t)(ptrdiff_t)(dstPos - &vb->m_Pos[vbOffset]);
+			const float startAngle = atan2f(l01.y, l01.x);
+			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
+				float a = startAngle - i * PI / (float)(numPointsHalfCircle - 1);
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				*dstPos++ = Vec2(p1.x + ca * hsw, p1.y + sa * hsw);
+				*dstPos++ = Vec2(p1.x + ca * hsw_aa, p1.y + sa * hsw_aa);
+
+				*dstColor++ = color;
+				*dstColor++ = c0;
+			}
+
+			const uint16_t lastArcPointID = (uint16_t)((numPointsHalfCircle - 1) << 1);
+			*dstIndex++ = prevSegmentLeftAAID;
+			*dstIndex++ = prevSegmentLeftID;
+			*dstIndex++ = curSegmentLeftID;
+			*dstIndex++ = prevSegmentLeftAAID; 
+			*dstIndex++ = curSegmentLeftID;
+			*dstIndex++ = curSegmentLeftID + 1;
+			*dstIndex++ = prevSegmentLeftID;
+			*dstIndex++ = prevSegmentRightID;
+			*dstIndex++ = curSegmentLeftID + lastArcPointID;
+			*dstIndex++ = prevSegmentLeftID;   
+			*dstIndex++ = curSegmentLeftID + lastArcPointID;
+			*dstIndex++ = curSegmentLeftID;
+			*dstIndex++ = prevSegmentRightID;  
+			*dstIndex++ = prevSegmentRightAAID;   
+			*dstIndex++ = curSegmentLeftID + lastArcPointID + 1;
+			*dstIndex++ = prevSegmentRightID;  
+			*dstIndex++ = curSegmentLeftID + lastArcPointID + 1;
+			*dstIndex++ = curSegmentLeftID + lastArcPointID;
+
+			// Generate indices for the triangle fan
+			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
+				const uint16_t id = curSegmentLeftID + (uint16_t)(i << 1);
+				*dstIndex++ = curSegmentLeftID;
+				*dstIndex++ = id + 4;
+				*dstIndex++ = id + 2;
+			}
+
+			// Generate indices for the AA quads
+			for (uint32_t i = 0; i < numPointsHalfCircle - 1; ++i) {
+				const uint16_t id = curSegmentLeftID + (uint16_t)(i << 1);
+				*dstIndex++ = id + 0;
+				*dstIndex++ = id + 3;
+				*dstIndex++ = id + 1;
+				*dstIndex++ = id + 0;
+				*dstIndex++ = id + 2;
+				*dstIndex++ = id + 3;
+			}
+		}
+	}
+}
+
+void Context::renderPathStrokeAA_Open_Bevel(const Vec2* vtx, uint32_t numPathVertices, float strokeWidth, Color color, LineCap::Enum lineCap)
+{
+	const uint32_t c0 = ColorRGBA::setAlpha(color, 0);
+	const Vec2 uv = getWhitePixelUV();
+	const float hsw = (strokeWidth - m_FringeWidth) * 0.5f;
+	const float hsw_aa = hsw + m_FringeWidth;
+	const uint32_t numSegments = numPathVertices - 1;
+	const float avgScale = getState()->m_AvgScale;
+	const float da = acos((avgScale * hsw) / ((avgScale * hsw) + m_TesselationTolerance)) * 2.0f;
+	const uint32_t numPointsHalfCircle = max2(2u, (uint32_t)ceilf(PI / da));
+
+	tempGeomReset();
+
+	Vec2 d01;
+	uint16_t prevSegmentLeftID = 0xFFFF;
+	uint16_t prevSegmentLeftAAID = 0xFFFF;
+	uint16_t prevSegmentRightID = 0xFFFF;
+	uint16_t prevSegmentRightAAID = 0xFFFF;
+	{
+		// First segment of an open path
+		const Vec2& p0 = vtx[0];
+		const Vec2& p1 = vtx[1];
+
+		d01 = p1 - p0;
+		vec2Normalize(&d01);
+
+		const Vec2 l01 = d01.perpCCW();
+
+		if (lineCap == LineCap::Butt) {
+			const Vec2 l01_hsw = l01 * hsw;
+			const Vec2 l01_hsw_aa = l01 * hsw_aa;
+
+			tempGeomExpandVB(4);
+			tempGeomAddPosColor(p0 + l01_hsw_aa, c0);
+			tempGeomAddPosColor(p0 + l01_hsw, color);
+			tempGeomAddPosColor(p0 - l01_hsw, color);
+			tempGeomAddPosColor(p0 - l01_hsw_aa, c0);
+
+			prevSegmentLeftAAID = 0;
+			prevSegmentLeftID = 1;
+			prevSegmentRightID = 2;
+			prevSegmentRightAAID = 3;
+		} else if (lineCap == LineCap::Square) {
+			const Vec2 l01_hsw = l01 * hsw;
+			const Vec2 d01_hsw = d01 * hsw;
+			const Vec2 l01_hsw_aa = l01 * hsw_aa;
+
+			tempGeomExpandVB(4);
+			tempGeomAddPosColor(p0 + l01_hsw_aa - d01_hsw, c0);
+			tempGeomAddPosColor(p0 + l01_hsw - d01_hsw, color);
+			tempGeomAddPosColor(p0 - l01_hsw - d01_hsw, color);
+			tempGeomAddPosColor(p0 - l01_hsw_aa - d01_hsw, c0);
+
+			prevSegmentLeftAAID = 0;
+			prevSegmentLeftID = 1;
+			prevSegmentRightID = 2;
+			prevSegmentRightAAID = 3;
+		} else if (lineCap == LineCap::Round) {
+			const float startAngle = atan2f(l01.y, l01.x);
+			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
+				float a = startAngle + i * PI / (float)(numPointsHalfCircle - 1);
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				tempGeomExpandVB(2);
+				tempGeomAddPosColor(Vec2(p0.x + ca * hsw, p0.y + sa * hsw), color);
+				tempGeomAddPosColor(Vec2(p0.x + ca * hsw_aa, p0.y + sa * hsw_aa), c0);
+			}
+
+			// Generate indices for the triangle fan
+			tempGeomExpandIB((numPointsHalfCircle - 2) * 3);
+			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
+				const uint16_t id = (uint16_t)(i << 1);
+				tempGeomAddTriangle(0, id + 2, id + 4);
+			}
+
+			// Generate indices for the AA quads
+			tempGeomExpandIB((numPointsHalfCircle - 1) * 6);
+			for (uint32_t i = 0; i < numPointsHalfCircle - 1; ++i) {
+				const uint16_t id = (uint16_t)(i << 1);
+				tempGeomAddTriangle(id + 0, id + 1, id + 3);
+				tempGeomAddTriangle(id + 0, id + 3, id + 2);
+			}
+
+			prevSegmentLeftAAID = 1;
+			prevSegmentLeftID = 0;
+			prevSegmentRightID = (uint16_t)((numPointsHalfCircle - 1) * 2);
+			prevSegmentRightAAID = (uint16_t)((numPointsHalfCircle - 1) * 2 + 1);
+		} else {
+			BX_CHECK(false, "Unknown line cap type");
+		}
+	}
+
+	for (uint32_t iSegment = 1; iSegment < numSegments; ++iSegment) {
 		const Vec2& p1 = vtx[iSegment];
 		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
+
+		Vec2 d12 = p2 - p1;
+		vec2Normalize(&d12);
+
+		const Vec2 v = calcExtrusionVector(d01, d12);
+		const Vec2 v_hsw_aa = v * hsw_aa;
+
+		// Check which one of the points is the inner corner.
+		float leftPointAAProjDist = d12.x * v_hsw_aa.x + d12.y * v_hsw_aa.y;
+		if (leftPointAAProjDist >= 0.0f) {
+			// The left point is the inner corner.
+			const Vec2 innerCorner = p1 + v_hsw_aa;
+			const Vec2 r01 = d01.perpCW();
+			const Vec2 r12 = d12.perpCW();
+
+			uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
+			tempGeomExpandVB(7);
+			tempGeomAddPosColor(innerCorner, c0);
+			{
+				const Vec2 p1_r01_aa = p1 + r01 * hsw_aa;
+				Vec2 innerCornerToOuter = p1_r01_aa - innerCorner;
+				float radius = innerCornerToOuter.length();
+				innerCornerToOuter *= 1.0f / radius;
+
+				tempGeomAddPosColor(innerCorner + innerCornerToOuter * m_FringeWidth, color);
+				tempGeomAddPosColor(innerCorner + innerCornerToOuter * (radius - m_FringeWidth), color);
+				tempGeomAddPosColor(p1_r01_aa, c0);
+			}
+			{
+				const Vec2 p1_r12_aa = p1 + r12 * hsw_aa;
+				Vec2 innerCornerToOuter = p1_r12_aa - innerCorner;
+				float radius = innerCornerToOuter.length();
+				innerCornerToOuter *= 1.0f / radius;
+
+				tempGeomAddPosColor(innerCorner + innerCornerToOuter * m_FringeWidth, color);
+				tempGeomAddPosColor(innerCorner + innerCornerToOuter * (radius - m_FringeWidth), color);
+				tempGeomAddPosColor(p1_r12_aa, c0);
+			}
+
+			tempGeomExpandIB(33);
+			tempGeomAddTriangle(prevSegmentLeftAAID, prevSegmentLeftID, firstFanVertexID + 1);
+			tempGeomAddTriangle(prevSegmentLeftAAID, firstFanVertexID + 1, firstFanVertexID);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 2);
+			tempGeomAddTriangle(prevSegmentLeftID, firstFanVertexID + 2, firstFanVertexID + 1);
+			tempGeomAddTriangle(prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID + 3);
+			tempGeomAddTriangle(prevSegmentRightID, firstFanVertexID + 3, firstFanVertexID + 2);
+			tempGeomAddTriangle(firstFanVertexID, firstFanVertexID + 1, firstFanVertexID + 4);
+			tempGeomAddTriangle(firstFanVertexID + 1, firstFanVertexID + 2, firstFanVertexID + 5);
+			tempGeomAddTriangle(firstFanVertexID + 1, firstFanVertexID + 5, firstFanVertexID + 4);
+			tempGeomAddTriangle(firstFanVertexID + 2, firstFanVertexID + 3, firstFanVertexID + 6);
+			tempGeomAddTriangle(firstFanVertexID + 2, firstFanVertexID + 6, firstFanVertexID + 5);
+
+			prevSegmentLeftAAID = firstFanVertexID;
+			prevSegmentLeftID = firstFanVertexID + 4;
+			prevSegmentRightID = firstFanVertexID + 5;
+			prevSegmentRightAAID = firstFanVertexID + 6;
+		} else {
+			// The right point is the inner corner.
+			const Vec2 innerCorner = p1 - v_hsw_aa;
+			const Vec2 l01 = d01.perpCCW();
+			const Vec2 l12 = d12.perpCCW();
+
+			uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
+			tempGeomExpandVB(7);
+			tempGeomAddPosColor(innerCorner, c0);
+			{
+				const Vec2 p1_l01_aa = p1 + l01 * hsw_aa;
+				Vec2 innerCornerToOuter = p1_l01_aa - innerCorner;
+				float radius = innerCornerToOuter.length();
+				innerCornerToOuter *= 1.0f / radius;
+
+				tempGeomAddPosColor(innerCorner + innerCornerToOuter * m_FringeWidth, color);
+				tempGeomAddPosColor(innerCorner + innerCornerToOuter * (radius - m_FringeWidth), color);
+				tempGeomAddPosColor(p1_l01_aa, c0);
+			}
+			{
+				const Vec2 p1_l12_aa = p1 + l12 * hsw_aa;
+				Vec2 innerCornerToOuter = p1_l12_aa - innerCorner;
+				float radius = innerCornerToOuter.length();
+				innerCornerToOuter *= 1.0f / radius;
+
+				tempGeomAddPosColor(innerCorner + innerCornerToOuter * m_FringeWidth, color);
+				tempGeomAddPosColor(innerCorner + innerCornerToOuter * (radius - m_FringeWidth), color);
+				tempGeomAddPosColor(p1_l12_aa, c0);
+			}
+
+			tempGeomExpandIB(33);
+			tempGeomAddTriangle(prevSegmentLeftAAID, prevSegmentLeftID, firstFanVertexID + 2);
+			tempGeomAddTriangle(prevSegmentLeftAAID, firstFanVertexID + 2, firstFanVertexID + 3);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 1);
+			tempGeomAddTriangle(prevSegmentLeftID, firstFanVertexID + 1, firstFanVertexID + 2);
+			tempGeomAddTriangle(prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID + 0);
+			tempGeomAddTriangle(prevSegmentRightID, firstFanVertexID + 0, firstFanVertexID + 1);
+			tempGeomAddTriangle(firstFanVertexID, firstFanVertexID + 4, firstFanVertexID + 1);
+			tempGeomAddTriangle(firstFanVertexID + 1, firstFanVertexID + 5, firstFanVertexID + 2);
+			tempGeomAddTriangle(firstFanVertexID + 1, firstFanVertexID + 4, firstFanVertexID + 5);
+			tempGeomAddTriangle(firstFanVertexID + 2, firstFanVertexID + 6, firstFanVertexID + 3);
+			tempGeomAddTriangle(firstFanVertexID + 2, firstFanVertexID + 5, firstFanVertexID + 6);
+
+			prevSegmentLeftAAID = firstFanVertexID + 6;
+			prevSegmentLeftID = firstFanVertexID + 5;
+			prevSegmentRightID = firstFanVertexID + 4;
+			prevSegmentRightAAID = firstFanVertexID;
+		}
+
+		d01 = d12;
+	}
+
+	{
+		// Last segment of an open path
+		const Vec2& p1 = vtx[numPathVertices - 1];
+
+		const Vec2 l01 = d01.perpCCW();
+
+		if (lineCap == LineCap::Butt) {
+			const uint16_t curSegmentLeftAAID = (uint16_t)m_TempGeomNumVertices;
+			const Vec2 l01_hsw = l01 * hsw;
+			const Vec2 l01_hsw_aa = l01 * hsw_aa;
+
+			tempGeomExpandVB(4);
+			tempGeomAddPosColor(p1 + l01_hsw_aa, c0);
+			tempGeomAddPosColor(p1 + l01_hsw, color);
+			tempGeomAddPosColor(p1 - l01_hsw, color);
+			tempGeomAddPosColor(p1 - l01_hsw_aa, c0);
+
+			tempGeomExpandIB(18);
+			tempGeomAddTriangle(prevSegmentLeftAAID, prevSegmentLeftID, curSegmentLeftAAID + 1);
+			tempGeomAddTriangle(prevSegmentLeftAAID, curSegmentLeftAAID + 1, curSegmentLeftAAID);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, curSegmentLeftAAID + 2);
+			tempGeomAddTriangle(prevSegmentLeftID, curSegmentLeftAAID + 2, curSegmentLeftAAID + 1);
+			tempGeomAddTriangle(prevSegmentRightID, prevSegmentRightAAID, curSegmentLeftAAID + 3);
+			tempGeomAddTriangle(prevSegmentRightID, curSegmentLeftAAID + 3, curSegmentLeftAAID + 2);
+		} else if (lineCap == LineCap::Square) {
+			const uint16_t curSegmentLeftAAID = (uint16_t)m_TempGeomNumVertices;
+			const Vec2 l01_hsw = l01 * hsw;
+			const Vec2 d01_hsw = d01 * hsw;
+			const Vec2 l01_hsw_aa = l01 * hsw_aa;
+
+			tempGeomExpandVB(4);
+			tempGeomAddPosColor(p1 + l01_hsw_aa + d01_hsw, c0);
+			tempGeomAddPosColor(p1 + l01_hsw + d01_hsw, color);
+			tempGeomAddPosColor(p1 - l01_hsw + d01_hsw, color);
+			tempGeomAddPosColor(p1 - l01_hsw_aa + d01_hsw, c0);
+
+			tempGeomExpandIB(18);
+			tempGeomAddTriangle(prevSegmentLeftAAID, prevSegmentLeftID, curSegmentLeftAAID + 1);
+			tempGeomAddTriangle(prevSegmentLeftAAID, curSegmentLeftAAID + 1, curSegmentLeftAAID);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, curSegmentLeftAAID + 2);
+			tempGeomAddTriangle(prevSegmentLeftID, curSegmentLeftAAID + 2, curSegmentLeftAAID + 1);
+			tempGeomAddTriangle(prevSegmentRightID, prevSegmentRightAAID, curSegmentLeftAAID + 3);
+			tempGeomAddTriangle(prevSegmentRightID, curSegmentLeftAAID + 3, curSegmentLeftAAID + 2);
+		} else if (lineCap == LineCap::Round) {
+			const uint16_t curSegmentLeftID = (uint16_t)m_TempGeomNumVertices;
+			const float startAngle = atan2f(l01.y, l01.x);
+			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
+				float a = startAngle - i * PI / (float)(numPointsHalfCircle - 1);
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				tempGeomExpandVB(2);
+				tempGeomAddPosColor(Vec2(p1.x + ca * hsw, p1.y + sa * hsw), color);
+				tempGeomAddPosColor(Vec2(p1.x + ca * hsw_aa, p1.y + sa * hsw_aa), c0);
+			}
+
+			tempGeomExpandIB(18);
+			tempGeomAddTriangle(prevSegmentLeftAAID, prevSegmentLeftID, curSegmentLeftID);
+			tempGeomAddTriangle(prevSegmentLeftAAID, curSegmentLeftID, curSegmentLeftID + 1);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, curSegmentLeftID + (uint16_t)((numPointsHalfCircle - 1) * 2));
+			tempGeomAddTriangle(prevSegmentLeftID, curSegmentLeftID + (uint16_t)((numPointsHalfCircle - 1) * 2), curSegmentLeftID);
+			tempGeomAddTriangle(prevSegmentRightID, prevSegmentRightAAID, curSegmentLeftID + (uint16_t)((numPointsHalfCircle - 1) * 2 + 1));
+			tempGeomAddTriangle(prevSegmentRightID, curSegmentLeftID + (uint16_t)((numPointsHalfCircle - 1) * 2 + 1), curSegmentLeftID + (uint16_t)((numPointsHalfCircle - 1) * 2));
+
+			// Generate indices for the triangle fan
+			tempGeomExpandIB((numPointsHalfCircle - 2) * 3);
+			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
+				const uint16_t id = curSegmentLeftID + (uint16_t)(i << 1);
+				tempGeomAddTriangle(curSegmentLeftID, id + 4, id + 2);
+			}
+
+			// Generate indices for the AA quads
+			tempGeomExpandIB((numPointsHalfCircle - 1) * 6);
+			for (uint32_t i = 0; i < numPointsHalfCircle - 1; ++i) {
+				const uint16_t id = curSegmentLeftID + (uint16_t)(i << 1);
+				tempGeomAddTriangle(id + 0, id + 3, id + 1);
+				tempGeomAddTriangle(id + 0, id + 2, id + 3);
+			}
+		}
+	}
+
+	// Create a new draw command and copy the data to it.
+	const uint32_t numDrawVertices = m_TempGeomNumVertices;
+	const uint32_t numDrawIndices = m_TempGeomNumIndices;
+
+	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
+
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+	bx::memCopy(dstPos, m_TempGeomPos, sizeof(Vec2) * numDrawVertices);
+	memset64(dstUV, numDrawVertices, &uv.x);
+	bx::memCopy(dstColor, m_TempGeomColor, sizeof(uint32_t) * numDrawVertices);
+
+	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+
+	const uint32_t startVertexID = cmd->m_NumVertices;
+	batchTransformDrawIndices(m_TempGeomIndex, m_TempGeomNumIndices, dstIndex, (uint16_t)startVertexID);
+
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
+}
+
+void Context::renderPathStrokeAA_Open_Round(const Vec2* vtx, uint32_t numPathVertices, float strokeWidth, Color color, LineCap::Enum lineCap)
+{
+	const uint32_t c0 = ColorRGBA::setAlpha(color, 0);
+	const Vec2 uv = getWhitePixelUV();
+	const float hsw = (strokeWidth - m_FringeWidth) * 0.5f;
+	const float hsw_aa = hsw + m_FringeWidth;
+	const uint32_t numSegments = numPathVertices - 1;
+	const float avgScale = getState()->m_AvgScale;
+	const float da = acos((avgScale * hsw) / ((avgScale * hsw) + m_TesselationTolerance)) * 2.0f;
+	const uint32_t numPointsHalfCircle = max2(2u, (uint32_t)ceilf(PI / da));
+
+	tempGeomReset();
+
+	Vec2 d01;
+	uint16_t prevSegmentLeftID = 0xFFFF;
+	uint16_t prevSegmentLeftAAID = 0xFFFF;
+	uint16_t prevSegmentRightID = 0xFFFF;
+	uint16_t prevSegmentRightAAID = 0xFFFF;
+	{
+		// First segment of an open path
+		const Vec2& p0 = vtx[0];
+		const Vec2& p1 = vtx[1];
+
+		d01 = p1 - p0;
+		vec2Normalize(&d01);
+
+		const Vec2 l01 = d01.perpCCW();
+
+		if (lineCap == LineCap::Butt) {
+			const Vec2 l01_hsw = l01 * hsw;
+			const Vec2 l01_hsw_aa = l01 * hsw_aa;
+
+			tempGeomExpandVB(4);
+			tempGeomAddPosColor(p0 + l01_hsw_aa, c0);
+			tempGeomAddPosColor(p0 + l01_hsw, color);
+			tempGeomAddPosColor(p0 - l01_hsw, color);
+			tempGeomAddPosColor(p0 - l01_hsw_aa, c0);
+
+			prevSegmentLeftAAID = 0;
+			prevSegmentLeftID = 1;
+			prevSegmentRightID = 2;
+			prevSegmentRightAAID = 3;
+		} else if (lineCap == LineCap::Square) {
+			const Vec2 l01_hsw = l01 * hsw;
+			const Vec2 d01_hsw = d01 * hsw;
+			const Vec2 l01_hsw_aa = l01 * hsw_aa;
+
+			tempGeomExpandVB(4);
+			tempGeomAddPosColor(p0 + l01_hsw_aa - d01_hsw, c0);
+			tempGeomAddPosColor(p0 + l01_hsw - d01_hsw, color);
+			tempGeomAddPosColor(p0 - l01_hsw - d01_hsw, color);
+			tempGeomAddPosColor(p0 - l01_hsw_aa - d01_hsw, c0);
+
+			prevSegmentLeftAAID = 0;
+			prevSegmentLeftID = 1;
+			prevSegmentRightID = 2;
+			prevSegmentRightAAID = 3;
+		} else if (lineCap == LineCap::Round) {
+			const float startAngle = atan2f(l01.y, l01.x);
+			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
+				float a = startAngle + i * PI / (float)(numPointsHalfCircle - 1);
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				tempGeomExpandVB(2);
+				tempGeomAddPosColor(Vec2(p0.x + ca * hsw, p0.y + sa * hsw), color);
+				tempGeomAddPosColor(Vec2(p0.x + ca * hsw_aa, p0.y + sa * hsw_aa), c0);
+			}
+
+			// Generate indices for the triangle fan
+			tempGeomExpandIB((numPointsHalfCircle - 2) * 3);
+			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
+				const uint16_t id = (uint16_t)(i << 1);
+				tempGeomAddTriangle(0, id + 2, id + 4);
+			}
+
+			// Generate indices for the AA quads
+			tempGeomExpandIB((numPointsHalfCircle - 1) * 6);
+			for (uint32_t i = 0; i < numPointsHalfCircle - 1; ++i) {
+				const uint16_t id = (uint16_t)(i << 1);
+				tempGeomAddTriangle(id + 0, id + 1, id + 3);
+				tempGeomAddTriangle(id + 0, id + 3, id + 2);
+			}
+
+			prevSegmentLeftAAID = 1;
+			prevSegmentLeftID = 0;
+			prevSegmentRightID = (uint16_t)((numPointsHalfCircle - 1) * 2);
+			prevSegmentRightAAID = (uint16_t)((numPointsHalfCircle - 1) * 2 + 1);
+		} else {
+			BX_CHECK(false, "Unknown line cap type");
+		}
+	}
+
+	for (uint32_t iSegment = 1; iSegment < numSegments; ++iSegment) {
+		const Vec2& p1 = vtx[iSegment];
+		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
+
+		Vec2 d12 = p2 - p1;
+		vec2Normalize(&d12);
+
+		const Vec2 v = calcExtrusionVector(d01, d12);
+		const Vec2 v_hsw_aa = v * hsw_aa;
+
+		// Check which one of the points is the inner corner.
+		float leftPointAAProjDist = d12.x * v_hsw_aa.x + d12.y * v_hsw_aa.y;
+		if (leftPointAAProjDist >= 0.0f) {
+			// The left point is the inner corner.
+			const Vec2 leftPointAA = p1 + v_hsw_aa;
+
+			const Vec2 r01 = d01.perpCW();
+			const Vec2 r12 = d12.perpCW();
+
+			const Vec2 p1_r01_aa = p1 + r01 * hsw_aa;
+			Vec2 innerCornerToOuter = p1_r01_aa - leftPointAA;
+			float radius = innerCornerToOuter.length();
+			innerCornerToOuter *= 1.0f / radius;
+
+			float a01 = atan2f(r01.y, r01.x);
+			float a12 = atan2f(r12.y, r12.x);
+			if (a12 < a01) {
+				a12 += PI * 2.0f;
+			}
+
+			const uint32_t numArcPoints = max2(2u, (uint32_t)((a12 - a01) / da));
+			const float arcDa = ((a12 - a01) / (float)numArcPoints);
+
+			uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
+			tempGeomExpandVB(numArcPoints * 3 + 4);
+			tempGeomAddPosColor(leftPointAA, c0); // inner corner
+			tempGeomAddPosColor(leftPointAA + innerCornerToOuter * m_FringeWidth, color);
+			tempGeomAddPosColor(leftPointAA + innerCornerToOuter * (radius - m_FringeWidth), color);
+			tempGeomAddPosColor(leftPointAA + innerCornerToOuter * radius, c0);
+
+			for (uint32_t iArcPoint = 1; iArcPoint <= numArcPoints; ++iArcPoint) {
+				float a = a01 + iArcPoint * arcDa;
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				const Vec2 arcPoint = Vec2(p1.x + hsw_aa * ca, p1.y + hsw_aa * sa);
+
+				innerCornerToOuter = arcPoint - leftPointAA;
+				radius = innerCornerToOuter.length();
+				innerCornerToOuter *= 1.0f / radius;
+
+				// TODO: Check if adding leftPointAA for every slice affects performance.
+				// 1) Colors will be {c0, c, c, c0} so they can be memset128() instead of touching the color array
+				// 2) Indices below should change to include degenerate triangles (the fan part should be a quad with 1 degenerate triangle).
+
+				tempGeomAddPosColor(leftPointAA + innerCornerToOuter * m_FringeWidth, color);
+				tempGeomAddPosColor(leftPointAA + innerCornerToOuter * (radius - m_FringeWidth), color);
+				tempGeomAddPosColor(leftPointAA + innerCornerToOuter * radius, c0);
+			}
+
+			// Indices
+			tempGeomExpandIB(18 + numArcPoints * 15);
+
+			// Generate the segment quad.
+			tempGeomAddTriangle(prevSegmentLeftAAID, prevSegmentLeftID, firstFanVertexID + 1);
+			tempGeomAddTriangle(prevSegmentLeftAAID, firstFanVertexID + 1, firstFanVertexID);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 2);
+			tempGeomAddTriangle(prevSegmentLeftID, firstFanVertexID + 2, firstFanVertexID + 1);
+			tempGeomAddTriangle(prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID + 3);
+			tempGeomAddTriangle(prevSegmentRightID, firstFanVertexID + 3, firstFanVertexID + 2);
+
+			// Generate the slice.
+			uint16_t arcID = firstFanVertexID + 1;
+			for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
+				// AA fringe (fan)
+				tempGeomAddTriangle(firstFanVertexID, arcID, arcID + 3);
+
+				// Inner rect
+				tempGeomAddTriangle(arcID, arcID + 1, arcID + 4);
+				tempGeomAddTriangle(arcID, arcID + 4, arcID + 3);
+
+				// AA fringe (rect)
+				tempGeomAddTriangle(arcID + 1, arcID + 2, arcID + 5);
+				tempGeomAddTriangle(arcID + 1, arcID + 5, arcID + 4);
+
+				arcID += 3;
+			}
+
+			prevSegmentLeftAAID = firstFanVertexID;
+			prevSegmentLeftID = arcID;
+			prevSegmentRightID = arcID + 1;
+			prevSegmentRightAAID = arcID + 2;
+		} else {
+			// The right point is the inner corner.
+			const Vec2 rightPointAA = p1 - v_hsw_aa;
+
+			const Vec2 l01 = d01.perpCCW();
+			const Vec2 l12 = d12.perpCCW();
+
+			const Vec2 p1_l01_aa = p1 + l01 * hsw_aa;
+			Vec2 innerCornerToOuter = p1_l01_aa - rightPointAA;
+			float radius = innerCornerToOuter.length();
+			innerCornerToOuter *= 1.0f / radius;
+
+			float a01 = atan2f(l01.y, l01.x);
+			float a12 = atan2f(l12.y, l12.x);
+			if (a12 > a01) {
+				a12 -= PI * 2.0f;
+			}
+
+			const uint32_t numArcPoints = max2(2u, (uint32_t)((a01 - a12) / da));
+			const float arcDa = ((a12 - a01) / (float)numArcPoints);
+
+			uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
+			tempGeomExpandVB(numArcPoints * 3 + 4);
+			tempGeomAddPosColor(rightPointAA, c0); // inner corner
+			tempGeomAddPosColor(rightPointAA + innerCornerToOuter * m_FringeWidth, color);
+			tempGeomAddPosColor(rightPointAA + innerCornerToOuter * (radius - m_FringeWidth), color);
+			tempGeomAddPosColor(rightPointAA + innerCornerToOuter * radius, c0);
+
+			for (uint32_t iArcPoint = 1; iArcPoint <= numArcPoints; ++iArcPoint) {
+				float a = a01 + iArcPoint * arcDa;
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				const Vec2 arcPoint = Vec2(p1.x + hsw_aa * ca, p1.y + hsw_aa * sa);
+
+				innerCornerToOuter = arcPoint - rightPointAA;
+				radius = innerCornerToOuter.length();
+				innerCornerToOuter *= 1.0f / radius;
+
+				tempGeomAddPosColor(rightPointAA + innerCornerToOuter * m_FringeWidth, color);
+				tempGeomAddPosColor(rightPointAA + innerCornerToOuter * (radius - m_FringeWidth), color);
+				tempGeomAddPosColor(rightPointAA + innerCornerToOuter * radius, c0);
+			}
+
+			// Indices
+			tempGeomExpandIB(18 + numArcPoints * 15);
+
+			// Generate the segment quad.
+			tempGeomAddTriangle(prevSegmentLeftAAID, prevSegmentLeftID, firstFanVertexID + 2);
+			tempGeomAddTriangle(prevSegmentLeftAAID, firstFanVertexID + 2, firstFanVertexID + 3);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 1);
+			tempGeomAddTriangle(prevSegmentLeftID, firstFanVertexID + 1, firstFanVertexID + 2);
+			tempGeomAddTriangle(prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID + 0);
+			tempGeomAddTriangle(prevSegmentRightID, firstFanVertexID + 0, firstFanVertexID + 1);
+
+			// Generate the slice.
+			uint16_t arcID = firstFanVertexID + 1;
+			for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
+				// AA fringe (fan)
+				tempGeomAddTriangle(firstFanVertexID, arcID + 3, arcID);
+
+				// Inner rect
+				tempGeomAddTriangle(arcID, arcID + 4, arcID + 1);
+				tempGeomAddTriangle(arcID, arcID + 3, arcID + 4);
+
+				// AA fringe (rect)
+				tempGeomAddTriangle(arcID + 1, arcID + 5, arcID + 2);
+				tempGeomAddTriangle(arcID + 1, arcID + 4, arcID + 5);
+
+				arcID += 3;
+			}
+
+			prevSegmentLeftAAID = arcID + 2;
+			prevSegmentLeftID = arcID + 1;
+			prevSegmentRightID = arcID;
+			prevSegmentRightAAID = firstFanVertexID;
+		}
+
+		d01 = d12;
+	}
+	
+	{
+		// Last segment of an open path
+		const Vec2& p1 = vtx[numPathVertices - 1];
+
+		const Vec2 l01 = d01.perpCCW();
+
+		if (lineCap == LineCap::Butt) {
+			const uint16_t curSegmentLeftAAID = (uint16_t)m_TempGeomNumVertices;
+			const Vec2 l01_hsw = l01 * hsw;
+			const Vec2 l01_hsw_aa = l01 * hsw_aa;
+
+			tempGeomExpandVB(4);
+			tempGeomAddPosColor(p1 + l01_hsw_aa, c0);
+			tempGeomAddPosColor(p1 + l01_hsw, color);
+			tempGeomAddPosColor(p1 - l01_hsw, color);
+			tempGeomAddPosColor(p1 - l01_hsw_aa, c0);
+
+			tempGeomExpandIB(18);
+			tempGeomAddTriangle(prevSegmentLeftAAID, prevSegmentLeftID, curSegmentLeftAAID + 1);
+			tempGeomAddTriangle(prevSegmentLeftAAID, curSegmentLeftAAID + 1, curSegmentLeftAAID);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, curSegmentLeftAAID + 2);
+			tempGeomAddTriangle(prevSegmentLeftID, curSegmentLeftAAID + 2, curSegmentLeftAAID + 1);
+			tempGeomAddTriangle(prevSegmentRightID, prevSegmentRightAAID, curSegmentLeftAAID + 3);
+			tempGeomAddTriangle(prevSegmentRightID, curSegmentLeftAAID + 3, curSegmentLeftAAID + 2);
+		} else if (lineCap == LineCap::Square) {
+			const uint16_t curSegmentLeftAAID = (uint16_t)m_TempGeomNumVertices;
+			const Vec2 l01_hsw = l01 * hsw;
+			const Vec2 d01_hsw = d01 * hsw;
+			const Vec2 l01_hsw_aa = l01 * hsw_aa;
+
+			tempGeomExpandVB(4);
+			tempGeomAddPosColor(p1 + l01_hsw_aa + d01_hsw, c0);
+			tempGeomAddPosColor(p1 + l01_hsw + d01_hsw, color);
+			tempGeomAddPosColor(p1 - l01_hsw + d01_hsw, color);
+			tempGeomAddPosColor(p1 - l01_hsw_aa + d01_hsw, c0);
+
+			tempGeomExpandIB(18);
+			tempGeomAddTriangle(prevSegmentLeftAAID, prevSegmentLeftID, curSegmentLeftAAID + 1);
+			tempGeomAddTriangle(prevSegmentLeftAAID, curSegmentLeftAAID + 1, curSegmentLeftAAID);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, curSegmentLeftAAID + 2);
+			tempGeomAddTriangle(prevSegmentLeftID, curSegmentLeftAAID + 2, curSegmentLeftAAID + 1);
+			tempGeomAddTriangle(prevSegmentRightID, prevSegmentRightAAID, curSegmentLeftAAID + 3);
+			tempGeomAddTriangle(prevSegmentRightID, curSegmentLeftAAID + 3, curSegmentLeftAAID + 2);
+		} else if (lineCap == LineCap::Round) {
+			const uint16_t curSegmentLeftID = (uint16_t)m_TempGeomNumVertices;
+			const float startAngle = atan2f(l01.y, l01.x);
+			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
+				float a = startAngle - i * PI / (float)(numPointsHalfCircle - 1);
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				tempGeomExpandVB(2);
+				tempGeomAddPosColor(Vec2(p1.x + ca * hsw, p1.y + sa * hsw), color);
+				tempGeomAddPosColor(Vec2(p1.x + ca * hsw_aa, p1.y + sa * hsw_aa), c0);
+			}
+
+			tempGeomExpandIB(18);
+			tempGeomAddTriangle(prevSegmentLeftAAID, prevSegmentLeftID, curSegmentLeftID);
+			tempGeomAddTriangle(prevSegmentLeftAAID, curSegmentLeftID, curSegmentLeftID + 1);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, curSegmentLeftID + (uint16_t)((numPointsHalfCircle - 1) * 2));
+			tempGeomAddTriangle(prevSegmentLeftID, curSegmentLeftID + (uint16_t)((numPointsHalfCircle - 1) * 2), curSegmentLeftID);
+			tempGeomAddTriangle(prevSegmentRightID, prevSegmentRightAAID, curSegmentLeftID + (uint16_t)((numPointsHalfCircle - 1) * 2 + 1));
+			tempGeomAddTriangle(prevSegmentRightID, curSegmentLeftID + (uint16_t)((numPointsHalfCircle - 1) * 2 + 1), curSegmentLeftID + (uint16_t)((numPointsHalfCircle - 1) * 2));
+
+			// Generate indices for the triangle fan
+			tempGeomExpandIB((numPointsHalfCircle - 2) * 3);
+			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
+				const uint16_t id = curSegmentLeftID + (uint16_t)(i << 1);
+				tempGeomAddTriangle(curSegmentLeftID, id + 4, id + 2);
+			}
+
+			// Generate indices for the AA quads
+			tempGeomExpandIB((numPointsHalfCircle - 1) * 6);
+			for (uint32_t i = 0; i < numPointsHalfCircle - 1; ++i) {
+				const uint16_t id = curSegmentLeftID + (uint16_t)(i << 1);
+				tempGeomAddTriangle(id + 0, id + 3, id + 1);
+				tempGeomAddTriangle(id + 0, id + 2, id + 3);
+			}
+		}
+	}
+
+	// Create a new draw command and copy the data to it.
+	const uint32_t numDrawVertices = m_TempGeomNumVertices;
+	const uint32_t numDrawIndices = m_TempGeomNumIndices;
+
+	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
+
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+	bx::memCopy(dstPos, m_TempGeomPos, sizeof(Vec2) * numDrawVertices);
+	memset64(dstUV, numDrawVertices, &uv.x);
+	bx::memCopy(dstColor, m_TempGeomColor, sizeof(uint32_t) * numDrawVertices);
+
+	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+
+	// TODO: Can the index transform be avoided if I don't know the number of draw vertices?
+	const uint32_t startVertexID = cmd->m_NumVertices;
+	batchTransformDrawIndices(m_TempGeomIndex, m_TempGeomNumIndices, dstIndex, (uint16_t)startVertexID);
+
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
+}
+
+void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, bool isClosed, float thickness, Color color, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
+{
+	BX_UNUSED(lineJoin);
+
+	const State* state = getState();
+
+	const float avgScale = state->m_AvgScale;
+	float strokeWidth = clamp(thickness * avgScale, 0.0f, 200.0f);
+	float alphaScale = state->m_GlobalAlpha;
+	bool isThin = false;
+	if (strokeWidth <= m_FringeWidth) {
+		// nvgStroke()
+		float alpha = clamp(strokeWidth, 0.0f, 1.0f);
+		alphaScale *= alpha * alpha;
+		isThin = true;
+	}
+
+	uint8_t newAlpha = (uint8_t)(alphaScale * ColorRGBA::getAlpha(color));
+	if (newAlpha == 0) {
+		return;
+	}
+
+	const uint32_t c = ColorRGBA::setAlpha(color, newAlpha);
+
+	if (!isThin) {
+		if (isClosed) {
+			if (lineJoin == LineJoin::Miter) {
+				renderPathStrokeAA_Closed_Miter(vtx, numPathVertices, strokeWidth, c);
+			} else if (lineJoin == LineJoin::Bevel) {
+				renderPathStrokeAA_Closed_Bevel(vtx, numPathVertices, strokeWidth, c);
+			} else if (lineJoin == LineJoin::Round) {
+				renderPathStrokeAA_Closed_Round(vtx, numPathVertices, strokeWidth, c);
+			} else {
+				BX_CHECK(false, "Unknown line join type");
+			}
+		} else {
+			if (lineJoin == LineJoin::Miter) {
+				renderPathStrokeAA_Open_Miter(vtx, numPathVertices, strokeWidth, c, lineCap);
+			} else if (lineJoin == LineJoin::Bevel) {
+				renderPathStrokeAA_Open_Bevel(vtx, numPathVertices, strokeWidth, c, lineCap);
+			} else if (lineJoin == LineJoin::Round) {
+				renderPathStrokeAA_Open_Round(vtx, numPathVertices, strokeWidth, c, lineCap);
+			} else {
+				BX_CHECK(false, "Unknown line join type");
+			}
+		}
+	} else {
+		// Thin strokes with AA => ignore specified line join (alway miter since it won't be visible)
+		// TODO: Is this always true? What about large miters?
+		if (isClosed) {
+			renderPathStrokeAA_Closed_Miter(vtx, numPathVertices, m_FringeWidth, c);
+		} else {
+			renderPathStrokeAA_Open_Miter(vtx, numPathVertices, m_FringeWidth, c, lineCap == LineCap::Round ? LineCap::Square : lineCap);
+		}
+	}
+}
+
+void Context::renderPathStrokeNoAA_Open_Miter(const Vec2* vtx, uint32_t numPathVertices, float strokeWidth, Color color, LineCap::Enum lineCap)
+{
+	// TODO: Miter limit -> convert to bevel
+	const Vec2 uv = getWhitePixelUV();
+	const float halfStrokeWidth = strokeWidth * 0.5f;
+	const uint32_t numSegments = numPathVertices - 1;
+
+	uint32_t numDrawVertices = numPathVertices * 2; // 2 vertices per path vertex (left, right)
+	uint32_t numDrawIndices = numSegments * 6; // 2 tris / segment
+	uint32_t numPointsHalfCircle = 0;
+	if (lineCap == LineCap::Round) {
+		const float scale = getState()->m_AvgScale;
+		const float da = acos((scale * halfStrokeWidth) / ((scale * halfStrokeWidth) + m_TesselationTolerance)) * 2.0f;
+		numPointsHalfCircle = max2(2u, (uint32_t)ceilf(PI / da));
+		numDrawVertices += (numPointsHalfCircle * 2) - 4;
+		numDrawIndices += (numPointsHalfCircle - 2) * 3 * 2;
+	}
+
+	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
+
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+	const uint16_t startVertexID = (uint16_t)cmd->m_NumVertices;
+
+	memset64(dstUV, numDrawVertices, &uv.x);
+	memset32(dstColor, numDrawVertices, &color);
+
+	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
+
+	uint16_t prevSegmentLeftID = 0xFFFF;
+	uint16_t prevSegmentRightID = 0xFFFF;
+	Vec2 d01;
+	{
+		// First segment of an open path
+		const Vec2& p0 = vtx[0];
+		const Vec2& p1 = vtx[1];
+
+		d01 = p1 - p0;
+		vec2Normalize(&d01);
+
+		const Vec2 l01 = d01.perpCCW();
+
+		if (lineCap == LineCap::Butt) {
+			const Vec2 l01_hsw = l01 * halfStrokeWidth;
+			
+			*dstPos++ = p0 + l01_hsw;
+			*dstPos++ = p0 - l01_hsw;
+
+			prevSegmentLeftID = startVertexID + 0;
+			prevSegmentRightID = startVertexID + 1;
+		} else if (lineCap == LineCap::Square) {
+			const Vec2 l01_hsw = l01 * halfStrokeWidth;
+			const Vec2 d01_hsw = d01 * halfStrokeWidth;
+			
+			*dstPos++ = p0 + l01_hsw - d01_hsw;
+			*dstPos++ = p0 - l01_hsw - d01_hsw;
+
+			prevSegmentLeftID = startVertexID + 0;
+			prevSegmentRightID = startVertexID + 1;
+		} else if (lineCap == LineCap::Round) {
+			const float startAngle = atan2f(l01.y, l01.x);
+			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
+				float a = startAngle + i * PI / (float)(numPointsHalfCircle - 1);
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				*dstPos++ = Vec2(p0.x + ca * halfStrokeWidth, p0.y + sa * halfStrokeWidth);
+			}
+
+			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
+				*dstIndex++ = startVertexID;
+				*dstIndex++ = startVertexID + (uint16_t)(i + 1);
+				*dstIndex++ = startVertexID + (uint16_t)(i + 2);
+			}
+
+			prevSegmentLeftID = startVertexID;
+			prevSegmentRightID = startVertexID + (uint16_t)(numPointsHalfCircle - 1);
+		} else {
+			BX_CHECK(false, "Unknown line cap type");
+		}
+	}
+
+	BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF, "Invalid cap indices");
+	for (uint32_t iSegment = 1; iSegment < numSegments; ++iSegment) {
+		const uint16_t curSegmentLeftID = startVertexID + (uint16_t)(ptrdiff_t)(dstPos - &vb->m_Pos[vbOffset]);
+
+		const Vec2& p1 = vtx[iSegment];
+		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
+
+		Vec2 d12 = p2 - p1;
+		vec2Normalize(&d12);
+
+		const Vec2 v = calcExtrusionVector(d01, d12);
+		const Vec2 v_hsw = v * halfStrokeWidth;
+
+		*dstPos++ = p1 + v_hsw;
+		*dstPos++ = p1 - v_hsw;
+
+		*dstIndex++ = prevSegmentLeftID;
+		*dstIndex++ = prevSegmentRightID;
+		*dstIndex++ = curSegmentLeftID + 1;
+		*dstIndex++ = prevSegmentLeftID;
+		*dstIndex++ = curSegmentLeftID + 1;
+		*dstIndex++ = curSegmentLeftID;
+
+		prevSegmentLeftID = curSegmentLeftID;
+		prevSegmentRightID = curSegmentLeftID + 1;
+		d01 = d12;
+	}
+
+	{
+		// Last segment of an open path
+		const Vec2& p1 = vtx[numPathVertices - 1];
+		
+		const Vec2 l01 = d01.perpCCW();
+
+		if (lineCap == LineCap::Butt) {
+			const uint16_t curSegmentLeftID = startVertexID + (uint16_t)(ptrdiff_t)(dstPos - &vb->m_Pos[vbOffset]);
+			const Vec2 l01_hsw = l01 * halfStrokeWidth;
+
+			*dstPos++ = p1 + l01_hsw;
+			*dstPos++ = p1 - l01_hsw;
+
+			*dstIndex++ = prevSegmentLeftID;
+			*dstIndex++ = prevSegmentRightID;
+			*dstIndex++ = curSegmentLeftID + 1;
+			*dstIndex++ = prevSegmentLeftID;
+			*dstIndex++ = curSegmentLeftID + 1;
+			*dstIndex++ = curSegmentLeftID;
+		} else if (lineCap == LineCap::Square) {
+			const uint16_t curSegmentLeftID = startVertexID + (uint16_t)(ptrdiff_t)(dstPos - &vb->m_Pos[vbOffset]);
+			const Vec2 l01_hsw = l01 * halfStrokeWidth;
+			const Vec2 d01_hsw = d01 * halfStrokeWidth;
+
+			*dstPos++ = p1 + l01_hsw + d01_hsw;
+			*dstPos++ = p1 - l01_hsw + d01_hsw;
+
+			*dstIndex++ = prevSegmentLeftID;
+			*dstIndex++ = prevSegmentRightID;
+			*dstIndex++ = curSegmentLeftID + 1;
+			*dstIndex++ = prevSegmentLeftID;
+			*dstIndex++ = curSegmentLeftID + 1;
+			*dstIndex++ = curSegmentLeftID;
+		} else if (lineCap == LineCap::Round) {
+			const uint16_t curSegmentLeftID = startVertexID + (uint16_t)(ptrdiff_t)(dstPos - &vb->m_Pos[vbOffset]);
+			const float startAngle = atan2f(l01.y, l01.x);
+			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
+				float a = startAngle - i * PI / (float)(numPointsHalfCircle - 1);
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				*dstPos++ = Vec2(p1.x + ca * halfStrokeWidth, p1.y + sa * halfStrokeWidth);
+			}
+
+			const uint16_t curSegmentRightID = curSegmentLeftID + (uint16_t)(numPointsHalfCircle - 1);
+			*dstIndex++ = prevSegmentLeftID;
+			*dstIndex++ = prevSegmentRightID;
+			*dstIndex++ = curSegmentRightID;
+			*dstIndex++ = prevSegmentLeftID;
+			*dstIndex++ = curSegmentRightID;
+			*dstIndex++ = curSegmentLeftID;
+
+			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
+				const uint16_t id = curSegmentLeftID + (uint16_t)i;
+				*dstIndex++ = curSegmentLeftID;
+				*dstIndex++ = id + 2;
+				*dstIndex++ = id + 1;
+			}
+		}
+	}
+}
+
+void Context::renderPathStrokeNoAA_Open_Bevel(const Vec2* vtx, uint32_t numPathVertices, float strokeWidth, Color color, LineCap::Enum lineCap)
+{
+	const Vec2 uv = getWhitePixelUV();
+	const float hsw = strokeWidth * 0.5f;
+	const uint32_t numSegments = numPathVertices - 1;
+	const float avgScale = getState()->m_AvgScale;
+	const float da = acos((avgScale * hsw) / ((avgScale * hsw) + m_TesselationTolerance)) * 2.0f;
+	const uint32_t numPointsHalfCircle = max2(2u, (uint32_t)ceilf(PI / da));
+
+	tempGeomReset();
+
+	Vec2 d01;
+	uint16_t prevSegmentLeftID = 0xFFFF;
+	uint16_t prevSegmentRightID = 0xFFFF;
+	{
+		// First segment of an open path
+		const Vec2& p0 = vtx[0];
+		const Vec2& p1 = vtx[1];
+
+		d01 = p1 - p0;
+		vec2Normalize(&d01);
+
+		const Vec2 l01 = d01.perpCCW();
+
+		if (lineCap == LineCap::Butt) {
+			const Vec2 l01_hsw = l01 * hsw;
+
+			tempGeomExpandVB(2);
+			tempGeomAddPos(p0 + l01_hsw);
+			tempGeomAddPos(p0 - l01_hsw);
+
+			prevSegmentLeftID = 0;
+			prevSegmentRightID = 1;
+		} else if (lineCap == LineCap::Square) {
+			const Vec2 l01_hsw = l01 * hsw;
+			const Vec2 d01_hsw = d01 * hsw;
+
+			tempGeomExpandVB(2);
+			tempGeomAddPos(p0 + l01_hsw - d01_hsw);
+			tempGeomAddPos(p0 - l01_hsw - d01_hsw);
+
+			prevSegmentLeftID = 0;
+			prevSegmentRightID = 1;
+		} else if (lineCap == LineCap::Round) {
+			tempGeomExpandVB(numPointsHalfCircle);
+
+			const float startAngle = atan2f(l01.y, l01.x);
+			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
+				float a = startAngle + i * PI / (float)(numPointsHalfCircle - 1);
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				tempGeomAddPos(Vec2(p0.x + ca * hsw, p0.y + sa * hsw));
+			}
+
+			tempGeomExpandIB((numPointsHalfCircle - 2) * 3);
+			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
+				tempGeomAddTriangle(0, (uint16_t)(i + 1), (uint16_t)(i + 2));
+			}
+
+			prevSegmentLeftID = 0;
+			prevSegmentRightID = (uint16_t)(numPointsHalfCircle - 1);
+		} else {
+			BX_CHECK(false, "Unknown line cap type");
+		}
+	}
+
+	BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF, "Invalid cap indices");
+	for (uint32_t iSegment = 1; iSegment < numSegments; ++iSegment) {
+		const Vec2& p1 = vtx[iSegment];
+		const Vec2& p2 = vtx[iSegment + 1];
+
+		Vec2 d12 = p2 - p1;
+		vec2Normalize(&d12);
+
+		const Vec2 v = calcExtrusionVector(d01, d12);
+		const Vec2 v_hsw = v * hsw;
+
+		// Check which one of the points is the inner corner.
+		float leftPointProjDist = d12.x * v_hsw.x + d12.y * v_hsw.y;
+		if (leftPointProjDist >= 0.0f) {
+			// The left point is the inner corner.
+			const Vec2 r01 = d01.perpCW();
+			const Vec2 r12 = d12.perpCW();
+			const uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
+
+			tempGeomExpandVB(3);
+			tempGeomAddPos(p1 + v_hsw);
+			tempGeomAddPos(p1 + r01 * hsw);
+			tempGeomAddPos(p1 + r12 * hsw);
+
+			tempGeomExpandIB(9);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 1);
+			tempGeomAddTriangle(prevSegmentLeftID, firstFanVertexID + 1, firstFanVertexID);
+			tempGeomAddTriangle(firstFanVertexID, firstFanVertexID + 1, firstFanVertexID + 2);
+
+			prevSegmentLeftID = firstFanVertexID;
+			prevSegmentRightID = firstFanVertexID + 2;
+		} else {
+			// The right point is the inner corner.
+			const Vec2 l01 = d01.perpCCW();
+			const Vec2 l12 = d12.perpCCW();
+			const uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
+
+			tempGeomExpandVB(3);
+			tempGeomAddPos(p1 - v_hsw);
+			tempGeomAddPos(p1 + l01 * hsw);
+			tempGeomAddPos(p1 + l12 * hsw);
+
+			tempGeomExpandIB(9);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstFanVertexID);
+			tempGeomAddTriangle(prevSegmentLeftID, firstFanVertexID, firstFanVertexID + 1);
+			tempGeomAddTriangle(firstFanVertexID, firstFanVertexID + 2, firstFanVertexID + 1);
+
+			prevSegmentLeftID = firstFanVertexID + 2;
+			prevSegmentRightID = firstFanVertexID;
+		}
+
+		d01 = d12;
+	}
+
+	{
+		// Last segment of an open path
+		const Vec2& p1 = vtx[numPathVertices - 1];
+
+		const Vec2 l01 = d01.perpCCW();
+
+		if (lineCap == LineCap::Butt) {
+			const uint16_t curSegmentLeftID = (uint16_t)m_TempGeomNumVertices;
+			const Vec2 l01_hsw = l01 * hsw;
+
+			tempGeomExpandVB(2);
+			tempGeomAddPos(p1 + l01_hsw);
+			tempGeomAddPos(p1 - l01_hsw);
+
+			tempGeomExpandIB(6);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, curSegmentLeftID + 1);
+			tempGeomAddTriangle(prevSegmentLeftID, curSegmentLeftID + 1, curSegmentLeftID);
+		} else if (lineCap == LineCap::Square) {
+			const uint16_t curSegmentLeftID = (uint16_t)m_TempGeomNumVertices;
+			const Vec2 l01_hsw = l01 * hsw;
+			const Vec2 d01_hsw = d01 * hsw;
+
+			tempGeomExpandVB(2);
+			tempGeomAddPos(p1 + l01_hsw + d01_hsw);
+			tempGeomAddPos(p1 - l01_hsw + d01_hsw);
+
+			tempGeomExpandIB(6);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, curSegmentLeftID + 1);
+			tempGeomAddTriangle(prevSegmentLeftID, curSegmentLeftID + 1, curSegmentLeftID);
+		} else if (lineCap == LineCap::Round) {
+			tempGeomExpandVB(numPointsHalfCircle);
+
+			const uint16_t curSegmentLeftID = (uint16_t)m_TempGeomNumVertices;
+			const float startAngle = atan2f(l01.y, l01.x);
+			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
+				float a = startAngle - i * PI / (float)(numPointsHalfCircle - 1);
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				tempGeomAddPos(Vec2(p1.x + ca * hsw, p1.y + sa * hsw));
+			}
+
+			tempGeomExpandIB(6 + (numPointsHalfCircle - 2) * 3);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, curSegmentLeftID + (uint16_t)(numPointsHalfCircle - 1));
+			tempGeomAddTriangle(prevSegmentLeftID, curSegmentLeftID + (uint16_t)(numPointsHalfCircle - 1), curSegmentLeftID);
+			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
+				const uint16_t id = curSegmentLeftID + (uint16_t)i;
+				tempGeomAddTriangle(curSegmentLeftID, id + 2, id + 1);
+			}
+		}
+	}
+
+	// Create a new draw command and copy the data to it.
+	const uint32_t numDrawVertices = m_TempGeomNumVertices;
+	const uint32_t numDrawIndices = m_TempGeomNumIndices;
+
+	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
+
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+	bx::memCopy(dstPos, m_TempGeomPos, sizeof(Vec2) * numDrawVertices);
+	memset64(dstUV, numDrawVertices, &uv.x);
+	memset32(dstColor, numDrawVertices, &color);
+
+	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+
+	const uint32_t startVertexID = cmd->m_NumVertices;
+	batchTransformDrawIndices(m_TempGeomIndex, m_TempGeomNumIndices, dstIndex, (uint16_t)startVertexID);
+
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
+}
+
+void Context::renderPathStrokeNoAA_Open_Round(const Vec2* vtx, uint32_t numPathVertices, float strokeWidth, Color color, LineCap::Enum lineCap)
+{
+	const Vec2 uv = getWhitePixelUV();
+	const float halfStrokeWidth = strokeWidth * 0.5f;
+	const uint32_t numSegments = numPathVertices - 1;
+	const float avgScale = getState()->m_AvgScale;
+	const float da = acos((avgScale * halfStrokeWidth) / ((avgScale * halfStrokeWidth) + m_TesselationTolerance)) * 2.0f;
+	const uint32_t numPointsHalfCircle = max2(2u, (uint32_t)ceilf(PI / da));
+
+	tempGeomReset();
+
+	Vec2 d01;
+	uint16_t prevSegmentLeftID = 0xFFFF;
+	uint16_t prevSegmentRightID = 0xFFFF;
+	{
+		// First segment of an open path
+		const Vec2& p0 = vtx[0];
+		const Vec2& p1 = vtx[1];
+
+		d01 = p1 - p0;
+		vec2Normalize(&d01);
+
+		const Vec2 l01 = d01.perpCCW();
+
+		if (lineCap == LineCap::Butt) {
+			const Vec2 l01_hsw = l01 * halfStrokeWidth;
+
+			tempGeomExpandVB(2);
+			tempGeomAddPos(p0 + l01_hsw);
+			tempGeomAddPos(p0 - l01_hsw);
+
+			prevSegmentLeftID = 0;
+			prevSegmentRightID = 1;
+		} else if (lineCap == LineCap::Square) {
+			const Vec2 l01_hsw = l01 * halfStrokeWidth;
+			const Vec2 d01_hsw = d01 * halfStrokeWidth;
+
+			tempGeomExpandVB(2);
+			tempGeomAddPos(p0 + l01_hsw - d01_hsw);
+			tempGeomAddPos(p0 - l01_hsw - d01_hsw);
+
+			prevSegmentLeftID = 0;
+			prevSegmentRightID = 1;
+		} else if (lineCap == LineCap::Round) {
+			tempGeomExpandVB(numPointsHalfCircle);
+
+			const float startAngle = atan2f(l01.y, l01.x);
+			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
+				float a = startAngle + i * PI / (float)(numPointsHalfCircle - 1);
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				tempGeomAddPos(Vec2(p0.x + ca * halfStrokeWidth, p0.y + sa * halfStrokeWidth));
+			}
+
+			tempGeomExpandIB((numPointsHalfCircle - 2) * 3);
+			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
+				tempGeomAddTriangle(0, (uint16_t)(i + 1), (uint16_t)(i + 2));
+			}
+			 
+			prevSegmentLeftID = 0;
+			prevSegmentRightID = (uint16_t)(numPointsHalfCircle - 1);
+		} else {
+			BX_CHECK(false, "Unknown line cap type");
+		}
+	}
+
+	BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF, "Invalid cap indices");
+	for (uint32_t iSegment = 1; iSegment < numSegments; ++iSegment) {
+		const Vec2& p1 = vtx[iSegment];
+		const Vec2& p2 = vtx[iSegment + 1];
 
 		Vec2 d12 = p2 - p1;
 		vec2Normalize(&d12);
@@ -3752,54 +5371,600 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bo
 		const Vec2 leftPoint = p1 + v_hsw;
 		const Vec2 rightPoint = p1 - v_hsw;
 
-		dstPos[0] = leftPoint;
-		dstPos[1] = rightPoint;
-		dstPos += 2;
+		// Check which one of the points is the inner corner.
+		float leftPointProjDist = d12.x * v_hsw.x + d12.y * v_hsw.y;
+		if (leftPointProjDist >= 0.0f) {
+			// The left point is the inner corner.
+			const Vec2 r01 = d01.perpCW();
+			const Vec2 r12 = d12.perpCW();
+
+			const Vec2 p1_01 = p1 + r01 * halfStrokeWidth;
+			const Vec2 p1_12 = p1 + r12 * halfStrokeWidth;
+			float a01 = atan2f(r01.y, r01.x);
+			float a12 = atan2f(r12.y, r12.x);
+			if (a12 < a01) {
+				a12 += PI * 2.0f;
+			}
+
+			const uint32_t numArcPoints = max2(2u, (uint32_t)((a12 - a01) / da));
+			const float arcDa = ((a12 - a01) / (float)numArcPoints);
+
+			uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
+			tempGeomExpandVB(numArcPoints + 2);
+			tempGeomAddPos(leftPoint); // inner corner
+			tempGeomAddPos(p1_01);
+			for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
+				float a = a01 + iArcPoint * arcDa;
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				tempGeomAddPos(Vec2(p1.x + halfStrokeWidth * ca, p1.y + halfStrokeWidth * sa));
+			}
+			tempGeomAddPos(p1_12);
+
+			// Indices
+			tempGeomExpandIB(6 + numArcPoints * 3);
+
+			// Generate the segment quad.
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 1);
+			tempGeomAddTriangle(prevSegmentLeftID, firstFanVertexID + 1, firstFanVertexID);
+
+			// Generate the triangle fan.
+			for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
+				const uint16_t id = firstFanVertexID + (uint16_t)iArcPoint;
+				tempGeomAddTriangle(firstFanVertexID, id + 1, id + 2);
+			}
+
+			prevSegmentLeftID = firstFanVertexID;
+			prevSegmentRightID = firstFanVertexID + (uint16_t)numArcPoints + 1;
+		} else {
+			// The right point is the inner corner.
+			const Vec2 l01 = d01.perpCCW();
+			const Vec2 l12 = d12.perpCCW();
+
+			const Vec2 p1_01 = p1 + l01 * halfStrokeWidth;
+			const Vec2 p1_12 = p1 + l12 * halfStrokeWidth;
+			float a01 = atan2f(l01.y, l01.x);
+			float a12 = atan2f(l12.y, l12.x);
+			if (a12 > a01) {
+				a12 -= PI * 2.0f;
+			}
+
+			const uint32_t numArcPoints = max2(2u, (uint32_t)((a01 - a12) / da));
+			const float arcDa = ((a12 - a01) / (float)numArcPoints);
+
+			uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
+			tempGeomExpandVB(numArcPoints + 2);
+			tempGeomAddPos(rightPoint); // inner corner
+			tempGeomAddPos(p1_01);
+			for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
+				float a = a01 + iArcPoint * arcDa;
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				tempGeomAddPos(Vec2(p1.x + halfStrokeWidth * ca, p1.y + halfStrokeWidth * sa));
+			}
+			tempGeomAddPos(p1_12);
+
+			// Indices
+			tempGeomExpandIB(6 + numArcPoints * 3);
+
+			// Generate the segment quad.
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstFanVertexID);
+			tempGeomAddTriangle(prevSegmentLeftID, firstFanVertexID, firstFanVertexID + 1);
+
+			// Generate the triangle fan.
+			for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
+				const uint16_t id = firstFanVertexID + (uint16_t)iArcPoint;
+				tempGeomAddTriangle(firstFanVertexID, id + 2, id + 1);
+			}
+
+			prevSegmentLeftID = firstFanVertexID + (uint16_t)numArcPoints + 1;
+			prevSegmentRightID = firstFanVertexID;
+		}
 
 		d01 = d12;
 	}
 
-	if (!isClosed) {
+	{
+		// Last segment of an open path
 		const Vec2& p1 = vtx[numPathVertices - 1];
 
-		Vec2 l01 = d01.perpCCW() * halfStrokeWidth;
+		const Vec2 l01 = d01.perpCCW();
 
-		Vec2 leftPoint = p1 + l01;
-		Vec2 rightPoint = p1 - l01;
-		if (lineCap == LineCap::Square) {
-			leftPoint += d01 * halfStrokeWidth;
-			rightPoint += d01 * halfStrokeWidth;
+		if (lineCap == LineCap::Butt) {
+			const uint16_t curSegmentLeftID = (uint16_t)m_TempGeomNumVertices;
+			const Vec2 l01_hsw = l01 * halfStrokeWidth;
+
+			tempGeomExpandVB(2);
+			tempGeomAddPos(p1 + l01_hsw);
+			tempGeomAddPos(p1 - l01_hsw);
+
+			tempGeomExpandIB(6);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, curSegmentLeftID + 1);
+			tempGeomAddTriangle(prevSegmentLeftID, curSegmentLeftID + 1, curSegmentLeftID);
+		} else if (lineCap == LineCap::Square) {
+			const uint16_t curSegmentLeftID = (uint16_t)m_TempGeomNumVertices;
+			const Vec2 l01_hsw = l01 * halfStrokeWidth;
+			const Vec2 d01_hsw = d01 * halfStrokeWidth;
+
+			tempGeomExpandVB(2);
+			tempGeomAddPos(p1 + l01_hsw + d01_hsw);
+			tempGeomAddPos(p1 - l01_hsw + d01_hsw);
+
+			tempGeomExpandIB(6);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, curSegmentLeftID + 1);
+			tempGeomAddTriangle(prevSegmentLeftID, curSegmentLeftID + 1, curSegmentLeftID);
 		} else if (lineCap == LineCap::Round) {
-			// TODO: Even if lineCap == Round assume Butt.
-		}
+			tempGeomExpandVB(numPointsHalfCircle);
 
-		dstPos[0] = leftPoint;
-		dstPos[1] = rightPoint;
-		dstPos += 2;
+			const uint16_t curSegmentLeftID = (uint16_t)m_TempGeomNumVertices;
+			const float startAngle = atan2f(l01.y, l01.x);
+			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
+				float a = startAngle - i * PI / (float)(numPointsHalfCircle - 1);
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				tempGeomAddPos(Vec2(p1.x + ca * halfStrokeWidth, p1.y + sa * halfStrokeWidth));
+			}
+
+			tempGeomExpandIB(6 + (numPointsHalfCircle - 2) * 3);
+			tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, curSegmentLeftID + (uint16_t)(numPointsHalfCircle - 1));
+			tempGeomAddTriangle(prevSegmentLeftID, curSegmentLeftID + (uint16_t)(numPointsHalfCircle - 1), curSegmentLeftID);
+			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
+				const uint16_t id = curSegmentLeftID + (uint16_t)i;
+				tempGeomAddTriangle(curSegmentLeftID, id + 2, id + 1);
+			}
+		}
+	}
+
+	// Create a new draw command and copy the data to it.
+	const uint32_t numDrawVertices = m_TempGeomNumVertices;
+	const uint32_t numDrawIndices = m_TempGeomNumIndices;
+
+	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
+
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+	bx::memCopy(dstPos, m_TempGeomPos, sizeof(Vec2) * numDrawVertices);
+	memset64(dstUV, numDrawVertices, &uv.x);
+	memset32(dstColor, numDrawVertices, &color);
+
+	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+
+	// TODO: Can the index transform be avoided if I don't know the number of draw vertices?
+	const uint32_t startVertexID = cmd->m_NumVertices;
+	batchTransformDrawIndices(m_TempGeomIndex, m_TempGeomNumIndices, dstIndex, (uint16_t)startVertexID);
+
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
+}
+
+void Context::renderPathStrokeNoAA_Closed_Miter(const Vec2* vtx, uint32_t numPathVertices, float strokeWidth, Color color)
+{
+	// TODO: Miter limit -> convert to bevel
+	const Vec2 uv = getWhitePixelUV();
+	const float halfStrokeWidth = strokeWidth * 0.5f;
+	const uint32_t numSegments = numPathVertices;
+
+	const uint32_t numDrawVertices = numPathVertices * 2;
+	const uint32_t numDrawIndices = numSegments * 6;
+
+	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
+
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	memset64(dstUV, numDrawVertices, &uv.x);
+
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+	memset32(dstColor, numDrawVertices, &color);
+
+	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+
+	const uint16_t startVertexID = (uint16_t)cmd->m_NumVertices;
+
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
+
+	Vec2 d01 = vtx[0] - vtx[numPathVertices - 1];
+	vec2Normalize(&d01);
+
+	for (uint32_t iSegment = 0; iSegment < numSegments; ++iSegment) {
+		const Vec2& p1 = vtx[iSegment];
+		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
+
+		Vec2 d12 = p2 - p1;
+		vec2Normalize(&d12);
+
+		const Vec2 v = calcExtrusionVector(d01, d12);
+		const Vec2 v_hsw = v * halfStrokeWidth;
+
+		*dstPos++ = p1 + v_hsw;
+		*dstPos++ = p1 - v_hsw;
+
+		d01 = d12;
 	}
 
 	// Generate indices...
-	uint32_t firstVertexID = startVertexID;
-	uint32_t lastSegmentID = numSegments - (isClosed ? 1 : 0);
+	uint16_t firstVertexID = startVertexID;
+	const uint32_t lastSegmentID = numSegments - 1;
 	for (uint32_t iSegment = 0; iSegment < lastSegmentID; ++iSegment) {
-		*dstIndex++ = (uint16_t)firstVertexID;
-		*dstIndex++ = (uint16_t)(firstVertexID + 1);
-		*dstIndex++ = (uint16_t)(firstVertexID + 3);
-		*dstIndex++ = (uint16_t)firstVertexID;
-		*dstIndex++ = (uint16_t)(firstVertexID + 3);
-		*dstIndex++ = (uint16_t)(firstVertexID + 2);
+		*dstIndex++ = firstVertexID + 0; *dstIndex++ = firstVertexID + 1; *dstIndex++ = firstVertexID + 3;
+		*dstIndex++ = firstVertexID + 0; *dstIndex++ = firstVertexID + 3; *dstIndex++ = firstVertexID + 2;
 		firstVertexID += 2;
 	}
 
-	if (isClosed) {
-		// Last segment
-		*dstIndex++ = (uint16_t)firstVertexID;
-		*dstIndex++ = (uint16_t)(firstVertexID + 1);
-		*dstIndex++ = (uint16_t)(startVertexID + 1);
-		*dstIndex++ = (uint16_t)firstVertexID;
-		*dstIndex++ = (uint16_t)(startVertexID + 1);
-		*dstIndex++ = (uint16_t)startVertexID;
+	// Last segment
+	*dstIndex++ = firstVertexID + 0; *dstIndex++ = firstVertexID + 1; *dstIndex++ = startVertexID + 1;
+	*dstIndex++ = firstVertexID + 0; *dstIndex++ = startVertexID + 1; *dstIndex++ = startVertexID + 0;
+}
+
+void Context::renderPathStrokeNoAA_Closed_Bevel(const Vec2* vtx, uint32_t numPathVertices, float strokeWidth, Color color)
+{
+	// TODO: This can be implemented without using the temporary geometry (write directly to the draw command)
+	const Vec2 uv = getWhitePixelUV();
+	const float hsw = strokeWidth * 0.5f;
+	const uint32_t numSegments = numPathVertices;
+
+	tempGeomReset();
+
+	Vec2 d01 = vtx[0] - vtx[numPathVertices - 1];
+	vec2Normalize(&d01);
+
+	uint16_t prevSegmentLeftID = 0xFFFF;
+	uint16_t prevSegmentRightID = 0xFFFF;
+	uint16_t firstSegmentLeftID = 0xFFFF;
+	uint16_t firstSegmentRightID = 0xFFFF;
+
+	for (uint32_t iSegment = 0; iSegment < numSegments; ++iSegment) {
+		const Vec2& p1 = vtx[iSegment];
+		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
+
+		Vec2 d12 = p2 - p1;
+		vec2Normalize(&d12);
+
+		const Vec2 v = calcExtrusionVector(d01, d12);
+		const Vec2 v_hsw = v * hsw;
+
+		// Check which one of the points is the inner corner.
+		float leftPointProjDist = d12.x * v_hsw.x + d12.y * v_hsw.y;
+		if (leftPointProjDist >= 0.0f) {
+			// The left point is the inner corner.
+			const Vec2 r01 = d01.perpCW();
+			const Vec2 r12 = d12.perpCW();
+			const uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
+
+			tempGeomExpandVB(3);
+			tempGeomAddPos(p1 + v_hsw);
+			tempGeomAddPos(p1 + r01 * hsw);
+			tempGeomAddPos(p1 + r12 * hsw);
+
+			if (prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF) {
+				tempGeomExpandIB(6);
+				tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 1);
+				tempGeomAddTriangle(prevSegmentLeftID, firstFanVertexID + 1, firstFanVertexID);
+			} else {
+				firstSegmentLeftID = firstFanVertexID; // 0
+				firstSegmentRightID = firstFanVertexID + 1; // 1
+			}
+
+			tempGeomExpandIB(3);
+			tempGeomAddTriangle(firstFanVertexID, firstFanVertexID + 1, firstFanVertexID + 2);
+
+			prevSegmentLeftID = firstFanVertexID;
+			prevSegmentRightID = firstFanVertexID + 2;
+		} else {
+			// The right point is the inner corner.
+			const Vec2 l01 = d01.perpCCW();
+			const Vec2 l12 = d12.perpCCW();
+
+			uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
+			tempGeomExpandVB(3);
+			tempGeomAddPos(p1 - v_hsw);
+			tempGeomAddPos(p1 + l01 * hsw);
+			tempGeomAddPos(p1 + l12 * hsw);
+
+			if (prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF) {
+				tempGeomExpandIB(6);
+				tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstFanVertexID);
+				tempGeomAddTriangle(prevSegmentLeftID, firstFanVertexID, firstFanVertexID + 1);
+			} else {
+				firstSegmentLeftID = firstFanVertexID + 1; // 1
+				firstSegmentRightID = firstFanVertexID; // 0
+			}
+
+			tempGeomExpandIB(3);
+			tempGeomAddTriangle(firstFanVertexID, firstFanVertexID + 2, firstFanVertexID + 1);
+
+			prevSegmentLeftID = firstFanVertexID + 2;
+			prevSegmentRightID = firstFanVertexID;
+		}
+
+		d01 = d12;
 	}
+
+	// Generate the first segment quad. 
+	tempGeomExpandIB(6);
+	tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstSegmentRightID);
+	tempGeomAddTriangle(prevSegmentLeftID, firstSegmentRightID, firstSegmentLeftID);
+
+	// Create a new draw command and copy the data to it.
+	const uint32_t numDrawVertices = m_TempGeomNumVertices;
+	const uint32_t numDrawIndices = m_TempGeomNumIndices;
+
+	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
+
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+	bx::memCopy(dstPos, m_TempGeomPos, sizeof(Vec2) * numDrawVertices);
+	memset64(dstUV, numDrawVertices, &uv.x);
+	memset32(dstColor, numDrawVertices, &color);
+
+	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+
+	const uint32_t startVertexID = cmd->m_NumVertices;
+	batchTransformDrawIndices(m_TempGeomIndex, m_TempGeomNumIndices, dstIndex, (uint16_t)startVertexID);
+
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
+}
+
+void Context::renderPathStrokeNoAA_Closed_Round(const Vec2* vtx, uint32_t numPathVertices, float strokeWidth, Color color)
+{
+	const Vec2 uv = getWhitePixelUV();
+	const float halfStrokeWidth = strokeWidth * 0.5f;
+	const uint32_t numSegments = numPathVertices;
+	const float avgScale = getState()->m_AvgScale;
+	const float da = acos((avgScale * halfStrokeWidth) / ((avgScale * halfStrokeWidth) + m_TesselationTolerance)) * 2.0f;
+
+	tempGeomReset();
+
+	Vec2 d01 = vtx[0] - vtx[numPathVertices - 1];
+	vec2Normalize(&d01);
+
+	uint16_t prevSegmentLeftID = 0xFFFF;
+	uint16_t prevSegmentRightID = 0xFFFF;
+	uint16_t firstSegmentLeftID = 0xFFFF;
+	uint16_t firstSegmentRightID = 0xFFFF;
+
+	for (uint32_t iSegment = 0; iSegment < numSegments; ++iSegment) {
+		const Vec2& p1 = vtx[iSegment];
+		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
+
+		Vec2 d12 = p2 - p1;
+		vec2Normalize(&d12);
+
+		const Vec2 v = calcExtrusionVector(d01, d12);
+		const Vec2 v_hsw = v * halfStrokeWidth;
+
+		// Check which one of the points is the inner corner.
+		float leftPointProjDist = d12.x * v_hsw.x + d12.y * v_hsw.y;
+		if (leftPointProjDist >= 0.0f) {
+			// The left point is the inner corner.
+			const Vec2 r01 = d01.perpCW();
+			const Vec2 r12 = d12.perpCW();
+
+			float a01 = atan2f(r01.y, r01.x);
+			float a12 = atan2f(r12.y, r12.x);
+			if (a12 < a01) {
+				a12 += PI * 2.0f;
+			}
+
+			const uint32_t numArcPoints = max2(2u, (uint32_t)((a12 - a01) / da));
+			const float arcDa = ((a12 - a01) / (float)numArcPoints);
+
+			uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
+			tempGeomExpandVB(numArcPoints + 2);
+			tempGeomAddPos(p1 + v_hsw); // inner corner
+			tempGeomAddPos(p1 + r01 * halfStrokeWidth);
+			for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
+				float a = a01 + iArcPoint * arcDa;
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				tempGeomAddPos(Vec2(p1.x + halfStrokeWidth * ca, p1.y + halfStrokeWidth * sa));
+			}
+			tempGeomAddPos(p1 + r12 * halfStrokeWidth);
+
+			// Generate the segment quad.
+			if (prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF) {
+				tempGeomExpandIB(6);
+				tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 1);
+				tempGeomAddTriangle(prevSegmentLeftID, firstFanVertexID + 1, firstFanVertexID);
+			} else {
+				firstSegmentLeftID = firstFanVertexID; // 0
+				firstSegmentRightID = firstFanVertexID + 1; // 1
+			}
+
+			// Generate the triangle fan.
+			tempGeomExpandIB(numArcPoints * 3);
+			for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
+				const uint16_t id = firstFanVertexID + (uint16_t)iArcPoint;
+				tempGeomAddTriangle(firstFanVertexID, id + 1, id + 2);
+			}
+
+			prevSegmentLeftID = firstFanVertexID;
+			prevSegmentRightID = firstFanVertexID + (uint16_t)numArcPoints + 1;
+		} else {
+			// The right point is the inner corner.
+			const Vec2 l01 = d01.perpCCW();
+			const Vec2 l12 = d12.perpCCW();
+
+			float a01 = atan2f(l01.y, l01.x);
+			float a12 = atan2f(l12.y, l12.x);
+			if (a12 > a01) {
+				a12 -= PI * 2.0f;
+			}
+
+			const uint32_t numArcPoints = max2(2u, (uint32_t)((a01 - a12) / da));
+			const float arcDa = ((a12 - a01) / (float)numArcPoints);
+
+			uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
+			tempGeomExpandVB(numArcPoints + 2);
+			tempGeomAddPos(p1 - v_hsw); // inner corner
+			tempGeomAddPos(p1 + l01 * halfStrokeWidth);
+			for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
+				float a = a01 + iArcPoint * arcDa;
+				float ca = cosf(a);
+				float sa = sinf(a);
+
+				tempGeomAddPos(Vec2(p1.x + halfStrokeWidth * ca, p1.y + halfStrokeWidth * sa));
+			}
+			tempGeomAddPos(p1 + l12 * halfStrokeWidth);
+
+			// Generate the segment quad.
+			if (prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF) {
+				tempGeomExpandIB(6);
+				tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstFanVertexID);
+				tempGeomAddTriangle(prevSegmentLeftID, firstFanVertexID, firstFanVertexID + 1);
+			} else {
+				firstSegmentLeftID = firstFanVertexID + 1; // 1
+				firstSegmentRightID = firstFanVertexID; // 0
+			}
+
+			// Generate the triangle fan.
+			tempGeomExpandIB(numArcPoints * 3);
+			for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
+				const uint16_t id = firstFanVertexID + (uint16_t)iArcPoint;
+				tempGeomAddTriangle(firstFanVertexID, id + 2, id + 1);
+			}
+
+			prevSegmentLeftID = firstFanVertexID + (uint16_t)numArcPoints + 1;
+			prevSegmentRightID = firstFanVertexID;
+		}
+
+		d01 = d12;
+	}
+
+	// Generate the first segment quad. 
+	tempGeomExpandIB(6);
+	tempGeomAddTriangle(prevSegmentLeftID, prevSegmentRightID, firstSegmentRightID);
+	tempGeomAddTriangle(prevSegmentLeftID, firstSegmentRightID, firstSegmentLeftID);
+
+	// Create a new draw command and copy the data to it.
+	const uint32_t numDrawVertices = m_TempGeomNumVertices;
+	const uint32_t numDrawIndices = m_TempGeomNumIndices;
+
+	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
+
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+
+	bx::memCopy(dstPos, m_TempGeomPos, sizeof(Vec2) * numDrawVertices);
+	memset64(dstUV, numDrawVertices, &uv.x);
+	memset32(dstColor, numDrawVertices, &color);
+
+	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+
+	// TODO: Can the index transform be avoided if I don't know the number of draw vertices?
+	const uint32_t startVertexID = cmd->m_NumVertices;
+	batchTransformDrawIndices(m_TempGeomIndex, m_TempGeomNumIndices, dstIndex, (uint16_t)startVertexID);
+
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
+}
+
+void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, bool isClosed, float thickness, Color color, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
+{
+	const State* state = getState();
+
+	const float avgScale = state->m_AvgScale;
+	float strokeWidth = clamp(thickness * avgScale, 0.0f, 200.0f);
+	float alphaScale = state->m_GlobalAlpha;
+	if (strokeWidth < 1.0f) {
+		float alpha = clamp(strokeWidth, 0.0f, 1.0f);
+		alphaScale *= alpha * alpha;
+		strokeWidth = 1.0f;
+	}
+
+	uint8_t newAlpha = (uint8_t)(alphaScale * ColorRGBA::getAlpha(color));
+	if (newAlpha == 0) {
+		return;
+	}
+
+	const uint32_t c = ColorRGBA::setAlpha(color, newAlpha);
+
+	if (isClosed) {
+		if (lineJoin == LineJoin::Miter) {
+			renderPathStrokeNoAA_Closed_Miter(vtx, numPathVertices, strokeWidth, c);
+		} else if (lineJoin == LineJoin::Bevel) {
+			renderPathStrokeNoAA_Closed_Bevel(vtx, numPathVertices, strokeWidth, c);
+		} else if (lineJoin == LineJoin::Round) {
+			renderPathStrokeNoAA_Closed_Round(vtx, numPathVertices, strokeWidth, c);
+		} else {
+			BX_CHECK(false, "Unknown line join type");
+		}
+	} else {
+		if (lineJoin == LineJoin::Miter) {
+			renderPathStrokeNoAA_Open_Miter(vtx, numPathVertices, strokeWidth, c, lineCap);
+		} else if (lineJoin == LineJoin::Bevel) {
+			renderPathStrokeNoAA_Open_Bevel(vtx, numPathVertices, strokeWidth, c, lineCap);
+		} else if (lineJoin == LineJoin::Round) {
+			renderPathStrokeNoAA_Open_Round(vtx, numPathVertices, strokeWidth, c, lineCap);
+		} else {
+			BX_CHECK(false, "Unknown line join type");
+		}
+	}
+}
+
+void Context::tempGeomReset()
+{
+	m_TempGeomNumVertices = 0;
+	m_TempGeomNumIndices = 0;
+}
+
+void Context::tempGeomExpandVB(uint32_t n)
+{
+	if (m_TempGeomNumVertices + n > m_TempGeomVertexCapacity) {
+		m_TempGeomVertexCapacity += n;
+		m_TempGeomPos = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_TempGeomPos, sizeof(Vec2) * m_TempGeomVertexCapacity, 16);
+		m_TempGeomColor = (uint32_t*)BX_ALIGNED_REALLOC(m_Allocator, m_TempGeomColor, sizeof(uint32_t) * m_TempGeomVertexCapacity, 16);
+	}
+}
+
+void Context::tempGeomExpandIB(uint32_t n)
+{
+	if (m_TempGeomNumIndices + n > m_TempGeomIndexCapacity) {
+		m_TempGeomIndexCapacity += n;
+		m_TempGeomIndex = (uint16_t*)BX_ALIGNED_REALLOC(m_Allocator, m_TempGeomIndex, sizeof(uint16_t) * m_TempGeomIndexCapacity, 16);
+	}
+}
+
+void Context::tempGeomAddPos(const Vec2& v)
+{
+	BX_CHECK(m_TempGeomNumVertices + 1 <= m_TempGeomVertexCapacity, "");
+	m_TempGeomPos[m_TempGeomNumVertices++] = v;
+}
+
+void Context::tempGeomAddPosColor(const Vec2& v, uint32_t c)
+{
+	BX_CHECK(m_TempGeomNumVertices + 1 <= m_TempGeomVertexCapacity, "");
+	const uint32_t id = m_TempGeomNumVertices++;
+	m_TempGeomPos[id] = v;
+	m_TempGeomColor[id] = c;
+}
+
+void Context::tempGeomAddTriangle(uint16_t i0, uint16_t i1, uint16_t i2)
+{
+	BX_CHECK(m_TempGeomNumIndices + 3 <= m_TempGeomIndexCapacity, "");
+	m_TempGeomIndex[m_TempGeomNumIndices + 0] = i0;
+	m_TempGeomIndex[m_TempGeomNumIndices + 1] = i1;
+	m_TempGeomIndex[m_TempGeomNumIndices + 2] = i2;
+	m_TempGeomNumIndices += 3;
 }
 
 DrawCommand* Context::allocDrawCommand_TexturedVertexColor(uint32_t numVertices, uint32_t numIndices, ImageHandle img)

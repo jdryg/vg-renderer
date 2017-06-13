@@ -1,7 +1,9 @@
 #ifndef VG_COMMON_H
 #define VG_COMMON_H
 
-#include <bgfx/bgfx.h> // BGFX_HANDLE
+#ifndef VG_CONFIG_DEBUG
+#	define VG_CONFIG_DEBUG 0
+#endif
 
 #ifndef VG_CONFIG_SHAPE_DYNAMIC_TEXT
 #	define VG_CONFIG_SHAPE_DYNAMIC_TEXT 1
@@ -26,6 +28,9 @@
 #ifndef VG_CONFIG_ENABLE_SIMD
 #	define VG_CONFIG_ENABLE_SIMD 1
 #endif
+
+#define VG_HANDLE(_name) struct _name { uint16_t idx; }
+#define VG_INVALID_HANDLE { UINT16_MAX }
 
 #define VG_COLOR_RED_SHIFT   0
 #define VG_COLOR_GREEN_SHIFT 8
@@ -152,10 +157,15 @@ struct ImageFlags
 	};
 };
 
-BGFX_HANDLE(GradientHandle);
-BGFX_HANDLE(ImagePatternHandle);
-BGFX_HANDLE(ImageHandle);
-BGFX_HANDLE(FontHandle);
+VG_HANDLE(GradientHandle);
+VG_HANDLE(ImagePatternHandle);
+VG_HANDLE(ImageHandle);
+VG_HANDLE(FontHandle);
+
+inline bool isValid(GradientHandle _handle) { return UINT16_MAX != _handle.idx; };
+inline bool isValid(ImagePatternHandle _handle) { return UINT16_MAX != _handle.idx; };
+inline bool isValid(ImageHandle _handle) { return UINT16_MAX != _handle.idx; };
+inline bool isValid(FontHandle _handle) { return UINT16_MAX != _handle.idx; };
 
 struct Font
 {
