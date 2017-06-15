@@ -117,9 +117,9 @@ struct LineCap
 {
 	enum Enum : uint32_t
 	{
-		Butt,
-		Round,
-		Square,
+		Butt = 0,
+		Round = 1,
+		Square = 2,
 	};
 };
 
@@ -127,9 +127,9 @@ struct LineJoin
 {
 	enum Enum : uint32_t
 	{
-		Miter,
-		Round,
-		Bevel
+		Miter = 0,
+		Round = 1,
+		Bevel = 2
 	};
 };
 
