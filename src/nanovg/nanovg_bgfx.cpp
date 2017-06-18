@@ -30,9 +30,6 @@
 #include <bx/allocator.h>
 #include <bx/crtimpl.h>
 
-// JD: Fixed size pool for vertex buffers to avoid memcpy'ing to bgfx
-#include "../memory/allocator.h"
-#include "../memory/fixed_size_pool.h"
 #include <bx/mutex.h>
 #include <assert.h>
 #include <memory.h> // memset, memcpy
@@ -43,16 +40,6 @@ namespace
 {
 #include "vs_nanovg_fill.bin.h"
 #include "fs_nanovg_fill.bin.h"
-
-	static Memory::FixedSizePool* s_VertexBufferPool = nullptr;
-	static bx::Mutex s_VertexBufferPoolMutex;
-
-	void glnvg__releaseVertexBuffer(void* ptr, void* /*userData*/)
-	{
-		bx::MutexScope mutexScope(s_VertexBufferPoolMutex);
-		assert(s_VertexBufferPool);
-		s_VertexBufferPool->free(ptr);
-	}
 
 	static bgfx::VertexDecl s_nvgDecl;
 
@@ -181,7 +168,65 @@ namespace
 		unsigned char* uniforms;
 		int cuniforms;
 		int nuniforms;
+
+		// VB data pool
+		NVGvertex** m_VBDataPool;
+		uint32_t m_VBDataPoolCapacity;
+#if BX_CONFIG_SUPPORTS_THREADING
+		// NOTE: This must be a ptr because GLNVGcontext is malloc'd and zero-initialized. 
+		// In order to avoid major changes the mutex is allocated separately.
+		bx::Mutex* m_VBDataPoolMutex;
+#endif
 	};
+
+	NVGvertex* glnvg__allocVertexBufferData(GLNVGcontext* gl)
+	{
+#if BX_CONFIG_SUPPORTS_THREADING
+		bx::MutexScope ms(*gl->m_VBDataPoolMutex);
+#endif
+
+		for (uint32_t i = 0; i < gl->m_VBDataPoolCapacity; ++i) {
+			// If LSB of pointer is set it means that the ptr is valid and the buffer is free for reuse.
+			if (((uintptr_t)gl->m_VBDataPool[i]) & 1) {
+				// Remove the free flag
+				gl->m_VBDataPool[i] = (NVGvertex*)((uintptr_t)gl->m_VBDataPool[i] & ~1);
+				return gl->m_VBDataPool[i];
+			} else if (gl->m_VBDataPool[i] == nullptr) {
+				gl->m_VBDataPool[i] = (NVGvertex*)BX_ALIGNED_ALLOC(gl->m_allocator, sizeof(NVGvertex) * 65536, 16);
+				return gl->m_VBDataPool[i];
+			}
+		}
+
+		uint32_t oldCapacity = gl->m_VBDataPoolCapacity;
+		gl->m_VBDataPoolCapacity += 8;
+		gl->m_VBDataPool = (NVGvertex**)BX_REALLOC(gl->m_allocator, gl->m_VBDataPool, sizeof(NVGvertex*) * gl->m_VBDataPoolCapacity);
+		bx::memSet(&gl->m_VBDataPool[oldCapacity], 0, sizeof(NVGvertex*) * (gl->m_VBDataPoolCapacity - oldCapacity));
+
+		gl->m_VBDataPool[oldCapacity] = (NVGvertex*)BX_ALIGNED_ALLOC(gl->m_allocator, sizeof(NVGvertex) * 65536, 16);
+		return gl->m_VBDataPool[oldCapacity];
+	}
+
+	void glnvg__freeVertexBufferData(GLNVGcontext* gl, NVGvertex* ptr)
+	{
+#if BX_CONFIG_SUPPORTS_THREADING
+		bx::MutexScope ms(*gl->m_VBDataPoolMutex);
+#endif
+
+		BX_CHECK(ptr != nullptr, "Tried to release a null vertex buffer");
+		for (uint32_t i = 0; i < gl->m_VBDataPoolCapacity; ++i) {
+			if (gl->m_VBDataPool[i] == ptr) {
+				// Mark buffer as free by setting the LSB of the ptr to 1.
+				gl->m_VBDataPool[i] = (NVGvertex*)((uintptr_t)gl->m_VBDataPool[i] | 1);
+				return;
+			}
+		}
+	}
+
+	void glnvg__freeVertexBufferDataCallback(void* ptr, void* userData)
+	{
+		GLNVGcontext* gl = (GLNVGcontext*)userData;
+		glnvg__freeVertexBufferData(gl, (NVGvertex*)ptr);
+	}
 
 	static struct GLNVGtexture* glnvg__allocTexture(struct GLNVGcontext* gl)
 	{
@@ -784,8 +829,7 @@ namespace
 						vb->dvb = bgfx::createDynamicVertexBuffer(65536, s_nvgDecl, 0);
 					}
 
-//					bgfx::updateDynamicVertexBuffer(vb->dvb, 0, bgfx::copy(vb->verts, sizeof(NVGvertex) * vb->nverts));
-					const bgfx::Memory* mem = bgfx::makeRef(vb->verts, sizeof(NVGvertex) * vb->nverts, glnvg__releaseVertexBuffer, nullptr);
+					const bgfx::Memory* mem = bgfx::makeRef(vb->verts, sizeof(NVGvertex) * vb->nverts, glnvg__freeVertexBufferDataCallback, gl);
 					bgfx::updateDynamicVertexBuffer(vb->dvb, 0, mem);
 					
 					// Reset vertex buffer's buffer in order to reallocate it in the next frame.
@@ -884,15 +928,8 @@ namespace
 		GLNVGvertexBuffer* vb = &gl->vertexBuffers[gl->nvertexBuffers++];
 		if (vb->cverts == 0 || vb->verts == NULL) 
 		{
-			// Initialize the pool if it's not initialized yet.
-			bx::MutexScope mutexScope(s_VertexBufferPoolMutex);
-
-			if (!s_VertexBufferPool) {
-				s_VertexBufferPool = M_NEW(Memory::FixedSizePool)(sizeof(NVGvertex) * 65536, 4, Memory::Allocator::get());
-			}
-
 			vb->cverts = 65536;
-			vb->verts = (NVGvertex*)s_VertexBufferPool->alloc();
+			vb->verts = glnvg__allocVertexBufferData(gl);
 
 			// Always allocate the maximum number of vertices a VB can handle.
 //			vb->cverts = 65536;
@@ -1135,18 +1172,25 @@ namespace
 
 		for (int i = 0, num = gl->cvertexBuffers; i < num; ++i) 
 		{
-			if (gl->vertexBuffers[i].verts) 
-			{
-//				BX_FREE(gl->m_allocator, gl->vertexBuffers[i].verts);
-				s_VertexBufferPool->free(gl->vertexBuffers[i].verts);
-			}
-
 			if (bgfx::isValid(gl->vertexBuffers[i].dvb)) 
 			{
 				bgfx::destroyDynamicVertexBuffer(gl->vertexBuffers[i].dvb);
 			}
 		}
 
+		for (int i = 0, num = (int)gl->m_VBDataPoolCapacity; i < num; ++i) {
+			NVGvertex* buffer = gl->m_VBDataPool[i];
+			if (!buffer) {
+				continue;
+			}
+
+			if ((uintptr_t)buffer & 1) {
+				buffer = (NVGvertex*)((uintptr_t)buffer & ~1);
+				BX_ALIGNED_FREE(gl->m_allocator, buffer, 16);
+			}
+		}
+
+		BX_FREE(gl->m_allocator, gl->m_VBDataPool);
 		BX_FREE(gl->m_allocator, gl->vertexBuffers);
 		BX_FREE(gl->m_allocator, gl->uniforms);
 		BX_FREE(gl->m_allocator, gl->paths);
@@ -1194,6 +1238,8 @@ NVGcontext* nvgCreate(int edgeaa, unsigned char _viewId, bx::AllocatorI* _alloca
 	gl->m_allocator   = _allocator;
 	gl->edgeAntiAlias = edgeaa;
 	gl->m_viewId      = uint8_t(_viewId);
+
+	gl->m_VBDataPoolMutex = BX_NEW(_allocator, bx::Mutex)();
 
 	ctx = nvgCreateInternal(&params);
 	if (ctx == NULL) goto error;

@@ -18,7 +18,7 @@
 
 #define USE_RECURSIVE_BEZIER_TESSELLATION 0
 
-// JD: Custom memory allocator
+#if NVG_CUSTOM_MEMORY_ALLOCATOR
 #include "../memory/allocator.h"
 
 #define NVGmalloc(x) M_ALLOC(x)
@@ -28,6 +28,17 @@
 #define FONSmalloc(x) M_ALLOC(x)
 #define FONSrealloc(x, y) M_REALLOC(x, y)
 #define FONSfree(x) M_FREE(x)
+#else
+#include <malloc.h>
+
+#define NVGmalloc(x) malloc(x)
+#define NVGrealloc(x, y) realloc(x, y)
+#define NVGfree(x) free(x)
+
+#define FONSmalloc(x) malloc(x)
+#define FONSrealloc(x, y) realloc(x, y)
+#define FONSfree(x) free(x)
+#endif
 
 #include <stdio.h>
 #include <math.h>
@@ -51,8 +62,8 @@ BX_PRAGMA_DIAGNOSTIC_PUSH();
 BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wmissing-field-initializers");
 BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wshadow");
 BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wint-to-pointer-cast")
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb/stb_image.c>
+//#define STB_IMAGE_IMPLEMENTATION
+#include <stb/stb_image.h>
 BX_PRAGMA_DIAGNOSTIC_POP();
 
 #ifdef _MSC_VER
