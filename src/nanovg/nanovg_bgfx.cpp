@@ -235,7 +235,7 @@ namespace
 
 		for (i = 0; i < gl->ntextures; i++)
 		{
-			if (gl->textures[i].id.idx == bgfx::invalidHandle)
+			if (gl->textures[i].id.idx == bgfx::kInvalidHandle)
 			{
 				tex = &gl->textures[i];
 				break;
@@ -290,7 +290,7 @@ namespace
 					bgfx::destroyTexture(gl->textures[ii].id);
 				}
 				memset(&gl->textures[ii], 0, sizeof(gl->textures[ii]) );
-				gl->textures[ii].id.idx = bgfx::invalidHandle;
+				gl->textures[ii].id.idx = bgfx::kInvalidHandle;
 				return 1;
 			}
 		}
@@ -356,7 +356,7 @@ namespace
 		}
 		else
 		{
-			gl->u_halfTexel.idx = bgfx::invalidHandle;
+			gl->u_halfTexel.idx = bgfx::kInvalidHandle;
 		}
 
 		s_nvgDecl
