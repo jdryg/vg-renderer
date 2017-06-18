@@ -1190,6 +1190,9 @@ namespace
 			}
 		}
 
+#if BX_CONFIG_SUPPORTS_THREADING
+		BX_DELETE(gl->m_allocator, gl->m_VBDataPoolMutex);
+#endif
 		BX_FREE(gl->m_allocator, gl->m_VBDataPool);
 		BX_FREE(gl->m_allocator, gl->vertexBuffers);
 		BX_FREE(gl->m_allocator, gl->uniforms);
@@ -1239,7 +1242,9 @@ NVGcontext* nvgCreate(int edgeaa, unsigned char _viewId, bx::AllocatorI* _alloca
 	gl->edgeAntiAlias = edgeaa;
 	gl->m_viewId      = uint8_t(_viewId);
 
+#if BX_CONFIG_SUPPORTS_THREADING
 	gl->m_VBDataPoolMutex = BX_NEW(_allocator, bx::Mutex)();
+#endif
 
 	ctx = nvgCreateInternal(&params);
 	if (ctx == NULL) goto error;
