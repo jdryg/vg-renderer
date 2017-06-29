@@ -3366,7 +3366,7 @@ void Context::renderPathStrokeAAThin(const Vec2* vtx, uint32_t numPathVertices, 
 					BX_CHECK(closed, "Invalid previous segment");
 					firstSegmentLeftAAID = firstFanVertexID;
 					firstSegmentMiddleID = firstFanVertexID + 1;
-					firstSegmentRightAAID = firstFanVertexID + 3;
+					firstSegmentRightAAID = firstFanVertexID + 2;
 				}
 
 				uint16_t id[3] = {
