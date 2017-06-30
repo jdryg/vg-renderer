@@ -2829,6 +2829,11 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 						p1 + r01 * hsw_aa
 					};
 
+					if (_LineJoin == LineJoin::Bevel) {
+						const float cosAngle = fabsf(r01.dot(r12));
+						p[0] -= d01 * (cosAngle * m_FringeWidth);
+					}
+
 					tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
 				}
 
@@ -2852,6 +2857,11 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 						p1 + r12 * hsw,
 						p1 + r12 * hsw_aa
 					};
+
+					if (_LineJoin == LineJoin::Bevel) {
+						const float cosAngle = fabsf(r01.dot(r12));
+						p[0] += d12 * (cosAngle * m_FringeWidth);
+					}
 
 					tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
 				}
@@ -2975,6 +2985,11 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 						p1 + l01 * hsw_aa
 					};
 
+					if (_LineJoin == LineJoin::Bevel) {
+						const float cosAngle = fabsf(l01.dot(l12));
+						p[0] -= d01 * (cosAngle * m_FringeWidth);
+					}
+
 					tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
 				}
 
@@ -2998,6 +3013,11 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 						p1 + l12 * hsw,
 						p1 + l12 * hsw_aa
 					};
+
+					if (_LineJoin == LineJoin::Bevel) {
+						const float cosAngle = fabsf(l01.dot(l12));
+						p[0] += d12 * (cosAngle * m_FringeWidth);
+					}
 
 					tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
 				}
