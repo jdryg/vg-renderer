@@ -2638,16 +2638,24 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 		if (_LineCap == LineCap::Butt) {
 			const Vec2 l01_hsw = l01 * hsw;
 			const Vec2 l01_hsw_aa = l01 * hsw_aa;
+			const Vec2 d01_aa = d01 * m_FringeWidth;
 
 			Vec2 p[4] = {
-				p0 + l01_hsw_aa,
+				p0 + l01_hsw_aa - d01_aa,
 				p0 + l01_hsw,
 				p0 - l01_hsw,
-				p0 - l01_hsw_aa
+				p0 - l01_hsw_aa - d01_aa
 			};
 
 			tempGeomExpandVB(4);
 			tempGeomAddPosColor(&p[0], &c0_c_c_c0[0], 4);
+
+			uint16_t id[6] = {
+				0, 2, 1,
+				0, 3, 2
+			};
+			tempGeomExpandIB(6);
+			tempGeomAddIndices(&id[0], 6);
 
 			prevSegmentLeftAAID = 0;
 			prevSegmentLeftID = 1;
@@ -2657,16 +2665,24 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 			const Vec2 l01_hsw = l01 * hsw;
 			const Vec2 d01_hsw = d01 * hsw;
 			const Vec2 l01_hsw_aa = l01 * hsw_aa;
+			const Vec2 d01_hsw_aa = d01 * hsw_aa;
 
 			Vec2 p[4] = {
-				p0 + l01_hsw_aa - d01_hsw,
+				p0 + l01_hsw_aa - d01_hsw_aa,
 				p0 + l01_hsw - d01_hsw,
 				p0 - l01_hsw - d01_hsw,
-				p0 - l01_hsw_aa - d01_hsw
+				p0 - l01_hsw_aa - d01_hsw_aa
 			};
 
 			tempGeomExpandVB(4);
 			tempGeomAddPosColor(&p[0], &c0_c_c_c0[0], 4);
+
+			uint16_t id[6] = {
+				0, 2, 1,
+				0, 3, 2
+			};
+			tempGeomExpandIB(6);
+			tempGeomAddIndices(&id[0], 6);
 
 			prevSegmentLeftAAID = 0;
 			prevSegmentLeftID = 1;
@@ -2736,15 +2752,17 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 		float leftPointAAProjDist = d12.x * v_hsw_aa.x + d12.y * v_hsw_aa.y;
 		if (leftPointAAProjDist >= 0.0f) {
 			// The left point is the inner corner.
-			const Vec2 innerCorner = p1 + v_hsw_aa;
+			const Vec2 v_hsw = v * hsw;
+			const Vec2 innerCornerAA = p1 + v_hsw_aa;
+			const Vec2 innerCorner = p1 + v_hsw;
 
 			if (_LineJoin == LineJoin::Miter) {
 				const uint16_t firstVertexID = (uint16_t)m_TempGeomNumVertices;
 
 				Vec2 p[4] = {
+					innerCornerAA,
 					innerCorner,
-					p1 + v * hsw,
-					p1 - v * hsw,
+					p1 - v_hsw,
 					p1 - v_hsw_aa
 				};
 
@@ -2796,116 +2814,102 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 				}
 
 				const uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
-				tempGeomExpandVB(numArcPoints * 3 + 4);
-				tempGeomAddPosColor(&innerCorner, &c0_c_c_c0[3], 1);
+				tempGeomExpandVB(numArcPoints * 2 + 4);
+
+				Vec2 p[2] = {
+					innerCornerAA,
+					innerCorner
+				};
+				tempGeomAddPosColor(&p[0], &c0_c_c_c0[0], 2);
 
 				// First arc vertex
 				{
-					const Vec2 p1_r01_aa = p1 + r01 * hsw_aa;
-					Vec2 innerCornerToOuter = p1_r01_aa - innerCorner;
-					float radius = innerCornerToOuter.length();
-					innerCornerToOuter *= 1.0f / radius;
-
-					Vec2 p[3] = {
-						innerCorner + innerCornerToOuter * m_FringeWidth,
-						innerCorner + innerCornerToOuter * (radius - m_FringeWidth),
-						p1_r01_aa
+					Vec2 p[2] = {
+						p1 + r01 * hsw, 
+						p1 + r01 * hsw_aa
 					};
 
-					tempGeomAddPosColor(&p[0], &c0_c_c_c0[1], 3);
+					tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
 				}
 
 				// Middle arc vertices
 				for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
 					float a = a01 + iArcPoint * arcDa;
-					float ca = cosf(a);
-					float sa = sinf(a);
 
-					const Vec2 arcPoint = Vec2(p1.x + hsw_aa * ca, p1.y + hsw_aa * sa);
-					Vec2 innerCornerToOuter = arcPoint - innerCorner;
-					float radius = innerCornerToOuter.length();
-					innerCornerToOuter *= 1.0f / radius;
+					const Vec2 arcPointDir(cosf(a), sinf(a));
 
-					Vec2 p[3] = {
-						innerCorner + innerCornerToOuter * m_FringeWidth,
-						innerCorner + innerCornerToOuter * (radius - m_FringeWidth),
-						arcPoint
+					Vec2 p[2] = {
+						p1 + arcPointDir * hsw,
+						p1 + arcPointDir * hsw_aa
 					};
 
-					tempGeomAddPosColor(&p[0], &c0_c_c_c0[1], 3);
+					tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
 				}
 
 				// Last arc vertex
-					{
-						const Vec2 p1_r12_aa = p1 + r12 * hsw_aa;
-						Vec2 innerCornerToOuter = p1_r12_aa - innerCorner;
-						float radius = innerCornerToOuter.length();
-						innerCornerToOuter *= 1.0f / radius;
+				{
+					Vec2 p[2] = {
+						p1 + r12 * hsw,
+						p1 + r12 * hsw_aa
+					};
 
-						Vec2 p[3] = {
-							innerCorner + innerCornerToOuter * m_FringeWidth,
-							innerCorner + innerCornerToOuter * (radius - m_FringeWidth),
-							p1_r12_aa
-						};
+					tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
+				}
 
-						tempGeomAddPosColor(&p[0], &c0_c_c_c0[1], 3);
-					}
+				if (prevSegmentLeftAAID != 0xFFFF) {
+					BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
+					uint16_t id[18] = {
+						prevSegmentLeftAAID, prevSegmentLeftID, firstFanVertexID + 1,
+						prevSegmentLeftAAID, firstFanVertexID + 1, firstFanVertexID,
+						prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 2,
+						prevSegmentLeftID, firstFanVertexID + 2, firstFanVertexID + 1,
+						prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID + 3,
+						prevSegmentRightID, firstFanVertexID + 3, firstFanVertexID + 2
+					};
 
-					if (prevSegmentLeftAAID != 0xFFFF) {
-						BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
+					tempGeomExpandIB(18);
+					tempGeomAddIndices(&id[0], 18);
+				} else {
+					BX_CHECK(_Closed, "Invalid previous segment");
+					firstSegmentLeftAAID = firstFanVertexID; // 0
+					firstSegmentLeftID = firstFanVertexID + 1; // 1
+					firstSegmentRightID = firstFanVertexID + 2; // 2
+					firstSegmentRightAAID = firstFanVertexID + 3; // 3
+				}
 
-						uint16_t id[18] = {
-							prevSegmentLeftAAID, prevSegmentLeftID, firstFanVertexID + 1,
-							prevSegmentLeftAAID, firstFanVertexID + 1, firstFanVertexID,
-							prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 2,
-							prevSegmentLeftID, firstFanVertexID + 2, firstFanVertexID + 1,
-							prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID + 3,
-							prevSegmentRightID, firstFanVertexID + 3, firstFanVertexID + 2
-						};
+				// Generate the slice.
+				uint16_t arcID = firstFanVertexID + 2;
+				tempGeomExpandIB(numArcPoints * 9);
+				for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
+					uint16_t id[9] = {
+						firstFanVertexID + 1, arcID, arcID + 2,
+						arcID, arcID + 1, arcID + 3,
+						arcID, arcID + 3, arcID + 2
+					};
+					tempGeomAddIndices(&id[0], 9);
 
-						tempGeomExpandIB(18);
-						tempGeomAddIndices(&id[0], 18);
-					} else {
-						BX_CHECK(_Closed, "Invalid previous segment");
-						firstSegmentLeftAAID = firstFanVertexID; // 0
-						firstSegmentLeftID = firstFanVertexID + 1; // 1
-						firstSegmentRightID = firstFanVertexID + 2; // 2
-						firstSegmentRightAAID = firstFanVertexID + 3; // 3
-					}
+					arcID += 2;
+				}
 
-					// Generate the slice.
-					uint16_t arcID = firstFanVertexID + 1;
-					tempGeomExpandIB(numArcPoints * 15);
-					for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
-						uint16_t id[15] = {
-							firstFanVertexID, arcID, arcID + 3,
-							arcID, arcID + 1, arcID + 4,
-							arcID, arcID + 4, arcID + 3,
-							arcID + 1, arcID + 2, arcID + 5,
-							arcID + 1, arcID + 5, arcID + 4
-						};
-						tempGeomAddIndices(&id[0], 15);
-
-						arcID += 3;
-					}
-
-					prevSegmentLeftAAID = firstFanVertexID;
-					prevSegmentLeftID = arcID;
-					prevSegmentRightID = arcID + 1;
-					prevSegmentRightAAID = arcID + 2;
+				prevSegmentLeftAAID = firstFanVertexID;
+				prevSegmentLeftID = firstFanVertexID + 1;
+				prevSegmentRightID = arcID;
+				prevSegmentRightAAID = arcID + 1;
 			}
 		} else {
 			// The right point is the inner corner.
-			const Vec2 innerCorner = p1 - v_hsw_aa;
+			const Vec2 v_hsw = v * hsw;
+			const Vec2 innerCornerAA = p1 - v_hsw_aa;
+			const Vec2 innerCorner = p1 - v_hsw;
 
 			if (_LineJoin == LineJoin::Miter) {
 				const uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
 
 				Vec2 p[4] = {
+					innerCornerAA,
 					innerCorner,
-					p1 - v * hsw,
-					p1 + v * hsw,
+					p1 + v_hsw,
 					p1 + v_hsw_aa
 				};
 
@@ -2956,102 +2960,87 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 				}
 
 				const uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
-				tempGeomExpandVB(numArcPoints * 3 + 4);
-				tempGeomAddPosColor(&innerCorner, &c0_c_c_c0[3], 1);
+				tempGeomExpandVB(numArcPoints * 2 + 4);
+
+				Vec2 p[2] = {
+					innerCornerAA,
+					innerCorner
+				};
+				tempGeomAddPosColor(&p[0], &c0_c_c_c0[0], 2);
 
 				// First arc vertex
 				{
-					const Vec2 p1_l01_aa = p1 + l01 * hsw_aa;
-					Vec2 innerCornerToOuter = p1_l01_aa - innerCorner;
-					float radius = innerCornerToOuter.length();
-					innerCornerToOuter *= 1.0f / radius;
-
-					Vec2 p[3] = {
-						innerCorner + innerCornerToOuter * m_FringeWidth,
-						innerCorner + innerCornerToOuter * (radius - m_FringeWidth),
-						p1_l01_aa
+					Vec2 p[2] = {
+						p1 + l01 * hsw,
+						p1 + l01 * hsw_aa
 					};
 
-					tempGeomAddPosColor(&p[0], &c0_c_c_c0[1], 3);
+					tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
 				}
 
 				// Middle arc vertices
 				for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
 					float a = a01 + iArcPoint * arcDa;
-					float ca = cosf(a);
-					float sa = sinf(a);
 
-					const Vec2 arcPoint = Vec2(p1.x + hsw_aa * ca, p1.y + hsw_aa * sa);
-					Vec2 innerCornerToOuter = arcPoint - innerCorner;
-					float radius = innerCornerToOuter.length();
-					innerCornerToOuter *= 1.0f / radius;
+					const Vec2 arcPointDir(cosf(a), sinf(a));
 
-					Vec2 p[3] = {
-						innerCorner + innerCornerToOuter * m_FringeWidth,
-						innerCorner + innerCornerToOuter * (radius - m_FringeWidth),
-						arcPoint
+					Vec2 p[2] = {
+						p1 + arcPointDir * hsw,
+						p1 + arcPointDir * hsw_aa
 					};
 
-					tempGeomAddPosColor(&p[0], &c0_c_c_c0[1], 3);
+					tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
 				}
 
 				// Last arc vertex
-					{
-						const Vec2 p1_l12_aa = p1 + l12 * hsw_aa;
-						Vec2 innerCornerToOuter = p1_l12_aa - innerCorner;
-						float radius = innerCornerToOuter.length();
-						innerCornerToOuter *= 1.0f / radius;
+				{
+					Vec2 p[2] = {
+						p1 + l12 * hsw,
+						p1 + l12 * hsw_aa
+					};
 
-						Vec2 p[3] = {
-							innerCorner + innerCornerToOuter * m_FringeWidth,
-							innerCorner + innerCornerToOuter * (radius - m_FringeWidth),
-							p1_l12_aa
-						};
+					tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
+				}
 
-						tempGeomAddPosColor(&p[0], &c0_c_c_c0[1], 3);
-					}
+				if (prevSegmentLeftAAID != 0xFFFF) {
+					BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
-					if (prevSegmentLeftAAID != 0xFFFF) {
-						BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
+					uint16_t id[18] = {
+						prevSegmentLeftAAID, prevSegmentLeftID, firstFanVertexID + 2,
+						prevSegmentLeftAAID, firstFanVertexID + 2, firstFanVertexID + 3,
+						prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 1,
+						prevSegmentLeftID, firstFanVertexID + 1, firstFanVertexID + 2,
+						prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID + 0,
+						prevSegmentRightID, firstFanVertexID + 0, firstFanVertexID + 1
+					};
 
-						uint16_t id[18] = {
-							prevSegmentLeftAAID, prevSegmentLeftID, firstFanVertexID + 2,
-							prevSegmentLeftAAID, firstFanVertexID + 2, firstFanVertexID + 3,
-							prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 1,
-							prevSegmentLeftID, firstFanVertexID + 1, firstFanVertexID + 2,
-							prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID + 0,
-							prevSegmentRightID, firstFanVertexID + 0, firstFanVertexID + 1
-						};
+					tempGeomExpandIB(18);
+					tempGeomAddIndices(&id[0], 18);
+				} else {
+					firstSegmentLeftAAID = firstFanVertexID + 3; // 3
+					firstSegmentLeftID = firstFanVertexID + 2; // 2
+					firstSegmentRightID = firstFanVertexID + 1; // 1
+					firstSegmentRightAAID = firstFanVertexID + 0; // 0
+				}
 
-						tempGeomExpandIB(18);
-						tempGeomAddIndices(&id[0], 18);
-					} else {
-						firstSegmentLeftAAID = firstFanVertexID + 3; // 3
-						firstSegmentLeftID = firstFanVertexID + 2; // 2
-						firstSegmentRightID = firstFanVertexID + 1; // 1
-						firstSegmentRightAAID = firstFanVertexID + 0; // 0
-					}
+				// Generate the slice.
+				uint16_t arcID = firstFanVertexID + 2;
+				tempGeomExpandIB(numArcPoints * 9);
+				for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
+					uint16_t id[9] = {
+						firstFanVertexID + 1, arcID + 2, arcID,
+						arcID, arcID + 3, arcID + 1,
+						arcID, arcID + 2, arcID + 3
+					};
+					tempGeomAddIndices(&id[0], 9);
 
-					// Generate the slice.
-					uint16_t arcID = firstFanVertexID + 1;
-					tempGeomExpandIB(numArcPoints * 15);
-					for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
-						uint16_t id[15] = {
-							firstFanVertexID, arcID + 3, arcID,
-							arcID, arcID + 4, arcID + 1,
-							arcID, arcID + 3, arcID + 4,
-							arcID + 1, arcID + 5, arcID + 2,
-							arcID + 1, arcID + 4, arcID + 5
-						};
+					arcID += 2;
+				}
 
-						tempGeomAddIndices(&id[0], 15);
-						arcID += 3;
-					}
-
-					prevSegmentLeftAAID = arcID + 2;
-					prevSegmentLeftID = arcID + 1;
-					prevSegmentRightID = arcID;
-					prevSegmentRightAAID = firstFanVertexID;
+				prevSegmentLeftAAID = arcID + 1;
+				prevSegmentLeftID = arcID;
+				prevSegmentRightID = firstFanVertexID + 1;
+				prevSegmentRightAAID = firstFanVertexID;
 			}
 		}
 
@@ -3068,55 +3057,61 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 			const uint16_t curSegmentLeftAAID = (uint16_t)m_TempGeomNumVertices;
 			const Vec2 l01_hsw = l01 * hsw;
 			const Vec2 l01_hsw_aa = l01 * hsw_aa;
+			const Vec2 d01_aa = d01 * m_FringeWidth;
 
 			Vec2 p[4] = {
-				p1 + l01_hsw_aa,
+				p1 + l01_hsw_aa + d01_aa,
 				p1 + l01_hsw,
 				p1 - l01_hsw,
-				p1 - l01_hsw_aa
+				p1 - l01_hsw_aa + d01_aa
 			};
 
 			tempGeomExpandVB(4);
 			tempGeomAddPosColor(&p[0], &c0_c_c_c0[0], 4);
 
-			uint16_t id[18] = {
+			uint16_t id[24] = {
 				prevSegmentLeftAAID, prevSegmentLeftID, curSegmentLeftAAID + 1,
 				prevSegmentLeftAAID, curSegmentLeftAAID + 1, curSegmentLeftAAID,
 				prevSegmentLeftID, prevSegmentRightID, curSegmentLeftAAID + 2,
 				prevSegmentLeftID, curSegmentLeftAAID + 2, curSegmentLeftAAID + 1,
 				prevSegmentRightID, prevSegmentRightAAID, curSegmentLeftAAID + 3,
-				prevSegmentRightID, curSegmentLeftAAID + 3, curSegmentLeftAAID + 2
+				prevSegmentRightID, curSegmentLeftAAID + 3, curSegmentLeftAAID + 2,
+				curSegmentLeftAAID, curSegmentLeftAAID + 1, curSegmentLeftAAID + 2,
+				curSegmentLeftAAID, curSegmentLeftAAID + 2, curSegmentLeftAAID + 3
 			};
 
-			tempGeomExpandIB(18);
-			tempGeomAddIndices(&id[0], 18);
+			tempGeomExpandIB(24);
+			tempGeomAddIndices(&id[0], 24);
 		} else if (_LineCap == LineCap::Square) {
 			const uint16_t curSegmentLeftAAID = (uint16_t)m_TempGeomNumVertices;
 			const Vec2 l01_hsw = l01 * hsw;
 			const Vec2 d01_hsw = d01 * hsw;
 			const Vec2 l01_hsw_aa = l01 * hsw_aa;
+			const Vec2 d01_hsw_aa = d01 * hsw_aa;
 
 			Vec2 p[4] = {
-				p1 + l01_hsw_aa + d01_hsw,
+				p1 + l01_hsw_aa + d01_hsw_aa,
 				p1 + l01_hsw + d01_hsw,
 				p1 - l01_hsw + d01_hsw,
-				p1 - l01_hsw_aa + d01_hsw
+				p1 - l01_hsw_aa + d01_hsw_aa
 			};
 
 			tempGeomExpandVB(4);
 			tempGeomAddPosColor(&p[0], &c0_c_c_c0[0], 4);
 
-			uint16_t id[18] = {
+			uint16_t id[24] = {
 				prevSegmentLeftAAID, prevSegmentLeftID, curSegmentLeftAAID + 1,
 				prevSegmentLeftAAID, curSegmentLeftAAID + 1, curSegmentLeftAAID,
 				prevSegmentLeftID, prevSegmentRightID, curSegmentLeftAAID + 2,
 				prevSegmentLeftID, curSegmentLeftAAID + 2, curSegmentLeftAAID + 1,
 				prevSegmentRightID, prevSegmentRightAAID, curSegmentLeftAAID + 3,
-				prevSegmentRightID, curSegmentLeftAAID + 3, curSegmentLeftAAID + 2
+				prevSegmentRightID, curSegmentLeftAAID + 3, curSegmentLeftAAID + 2,
+				curSegmentLeftAAID, curSegmentLeftAAID + 1, curSegmentLeftAAID + 2,
+				curSegmentLeftAAID, curSegmentLeftAAID + 2, curSegmentLeftAAID + 3
 			};
 
-			tempGeomExpandIB(18);
-			tempGeomAddIndices(&id[0], 18);
+			tempGeomExpandIB(24);
+			tempGeomAddIndices(&id[0], 24);
 		} else if (_LineCap == LineCap::Round) {
 			const uint16_t curSegmentLeftID = (uint16_t)m_TempGeomNumVertices;
 			const float startAngle = atan2f(l01.y, l01.x);
@@ -5389,144 +5384,83 @@ __forceinline void Context::tempGeomAddIndices(const uint16_t* __restrict src, u
 
 	uint16_t* dst = &m_TempGeomIndex[m_TempGeomNumIndices];
 
-	BX_CHECK(n <= 18, "");
+	BX_CHECK(n <= 24 && (n % 3) == 0, "Invalid number of indices passed to tempGeomAddIndices()");
 	switch (n) {
+	case 24:
+#if VG_CONFIG_ENABLE_SIMD
+		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src));
+		_mm_storeu_ps((float*)(dst + 8), _mm_loadu_ps((float*)(src + 8)));
+		_mm_storeu_ps((float*)(dst + 16), _mm_loadu_ps((float*)(src + 16)));
+#else
+		*(uint64_t*)dst = *(uint64_t*)src;
+		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4);
+		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8);
+		*(uint64_t*)(dst + 12) = *(uint64_t*)(src + 12);
+		*(uint64_t*)(dst + 16) = *(uint64_t*)(src + 16);
+		*(uint64_t*)(dst + 20) = *(uint64_t*)(src + 20);
+#endif
+		break;
+	case 21:
+#if VG_CONFIG_ENABLE_SIMD
+		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src));
+		_mm_storeu_ps((float*)(dst + 8), _mm_loadu_ps((float*)(src + 8)));
+#else
+		*(uint64_t*)dst = *(uint64_t*)src;
+		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4);
+		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8);
+		*(uint64_t*)(dst + 12) = *(uint64_t*)(src + 12);
+#endif
+		*(uint64_t*)(dst + 16) = *(uint64_t*)(src + 16);
+		*(dst + 20) = *(src + 20);
+		break;
 	case 18:
 #if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src)); // 8
-		_mm_storeu_ps((float*)(dst + 8), _mm_loadu_ps((float*)(src + 8))); // 8
+		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src));
+		_mm_storeu_ps((float*)(dst + 8), _mm_loadu_ps((float*)(src + 8)));
 #else
-		*(uint64_t*)dst = *(uint64_t*)src; // 4
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4); // 4
-		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8); // 4
-		*(uint64_t*)(dst + 12) = *(uint64_t*)(src + 12); // 4
+		*(uint64_t*)dst = *(uint64_t*)src;
+		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4);
+		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8);
+		*(uint64_t*)(dst + 12) = *(uint64_t*)(src + 12);
 #endif
-		*(uint32_t*)(dst + 16) = *(uint32_t*)(src + 16); // 2
-		break;
-	case 17:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src)); // 8
-		_mm_storeu_ps((float*)(dst + 8), _mm_loadu_ps((float*)(src + 8))); // 8
-#else
-		*(uint64_t*)dst = *(uint64_t*)src; // 4
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4); // 4
-		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8); // 4
-		*(uint64_t*)(dst + 12) = *(uint64_t*)(src + 12); // 4
-#endif
-		*(dst + 16) = *(src + 16); // 1
-		break;
-	case 16:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src)); // 8
-		_mm_storeu_ps((float*)(dst + 8), _mm_loadu_ps((float*)(src + 8))); // 8
-#else
-		*(uint64_t*)dst = *(uint64_t*)src; // 4
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4); // 4
-		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8); // 4
-		*(uint64_t*)(dst + 12) = *(uint64_t*)(src + 12); // 4
-#endif
+		*(uint32_t*)(dst + 16) = *(uint32_t*)(src + 16);
 		break;
 	case 15:
 #if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src)); // 8
+		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src));
 #else
-		*(uint64_t*)dst = *(uint64_t*)src; // 4
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4); // 4
+		*(uint64_t*)dst = *(uint64_t*)src;
+		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4);
 #endif
-		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8); // 4
-		*(uint32_t*)(dst + 12) = *(uint32_t*)(src + 12); // 2
-		*(dst + 14) = *(src + 14); // 1
-		break;
-	case 14:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src)); // 8
-#else
-		*(uint64_t*)dst = *(uint64_t*)src; // 4
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4); // 4
-#endif
-		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8); // 4
-		*(uint32_t*)(dst + 12) = *(uint32_t*)(src + 12); // 2
-		break;
-	case 13:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src)); // 8
-#else
-		*(uint64_t*)dst = *(uint64_t*)src; // 4
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4); // 4
-#endif
-		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8); // 4
-		*(dst + 12) = *(src + 12); // 1
+		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8);
+		*(uint32_t*)(dst + 12) = *(uint32_t*)(src + 12);
+		*(dst + 14) = *(src + 14);
 		break;
 	case 12:
 #if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src)); // 8
+		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src));
 #else
-		*(uint64_t*)dst = *(uint64_t*)src; // 4
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4); // 4
+		*(uint64_t*)dst = *(uint64_t*)src;
+		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4);
 #endif
-		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8); // 4
-		break;
-	case 11:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src)); // 8
-#else
-		*(uint64_t*)dst = *(uint64_t*)src; // 4
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4); // 4
-#endif
-		*(uint32_t*)(dst + 8) = *(uint32_t*)(src + 8); // 2
-		*(dst + 10) = *(src + 10); // 1
-		break;
-	case 10:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src)); // 8
-#else
-		*(uint64_t*)dst = *(uint64_t*)src; // 4
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4); // 4
-#endif
-		*(uint32_t*)(dst + 8) = *(uint32_t*)(src + 8); // 2
+		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8);
 		break;
 	case 9:
 #if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src)); // 8
+		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src));
 #else
-		*(uint64_t*)dst = *(uint64_t*)src; // 4
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4); // 4
-#endif
-		*(dst + 8) = *(src + 8); // 1
-		break;
-	case 8:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src)); // 8
-#else
-		*(uint64_t*)dst = *(uint64_t*)src; // 4
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4); // 4
-#endif
-		break;
-	case 7:
 		*(uint64_t*)dst = *(uint64_t*)src;
-		*(uint32_t*)(dst + 4) = *(uint32_t*)(src + 4);
-		*(dst + 6) = *(src + 6);
+		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4);
+#endif
+		*(dst + 8) = *(src + 8);
 		break;
 	case 6:
 		*(uint64_t*)dst = *(uint64_t*)src;
 		*(uint32_t*)(dst + 4) = *(uint32_t*)(src + 4);
 		break;
-	case 5:
-		*(uint64_t*)dst = *(uint64_t*)src;
-		*(dst + 4) = *(src + 4);
-		break;
-	case 4:
-		*(uint64_t*)dst = *(uint64_t*)src;
-		break;
 	case 3:
 		*(uint32_t*)dst = *(uint32_t*)src;
 		*(dst + 2) = *(src + 2);
-		break;
-	case 2:
-		*(uint32_t*)dst = *(uint32_t*)src;
-		break;
-	case 1:
-		*dst = *src;
 		break;
 	}
 
