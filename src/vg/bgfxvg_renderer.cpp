@@ -203,7 +203,10 @@ struct CachedShape
 	float m_AvgScale;
 
 	CachedShape() : m_AvgScale(0.0f), m_DrawCommands(nullptr), m_NumDrawCommands(0), m_TextCommands(nullptr), m_NumTextCommands(0)
-	{}
+	{
+		bx::memSet(m_InvTransformMtx, 0, sizeof(float) * 6);
+		m_InvTransformMtx[0] = m_InvTransformMtx[3] = 1.0f;
+	}
 
 	~CachedShape()
 	{}
@@ -873,7 +876,9 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID) :
 	m_TempGeomNumVertices(0),
 	m_TempGeomVertexCapacity(0),
 	m_TempGeomNumIndices(0),
-	m_TempGeomIndexCapacity(0)
+	m_TempGeomIndexCapacity(0),
+	m_NextGradientID(0),
+	m_NextImagePatternID(0)
 {
 	for (uint32_t i = 0; i < MAX_FONT_IMAGES; ++i) {
 		m_FontImages[i] = VG_INVALID_HANDLE;
@@ -890,6 +895,9 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID) :
 	m_OuterColorUniform = BGFX_INVALID_HANDLE;
 
 	bx::memSet(m_FontData, 0, sizeof(void*) * VG_CONFIG_MAX_FONTS);
+	bx::memSet(m_Gradients, 0, sizeof(Gradient) * VG_CONFIG_MAX_GRADIENTS);
+	bx::memSet(m_ImagePatterns, 0, sizeof(ImagePattern) * VG_CONFIG_MAX_IMAGE_PATTERNS);
+	bx::memSet(m_StateStack, 0, sizeof(State) * MAX_STATE_STACK_SIZE);
 }
 
 Context::~Context()
@@ -4955,7 +4963,9 @@ DrawCommand* Context::allocDrawCommand_ColorGradient(uint32_t numVertices, uint3
 	}
 
 	if (!m_ForceNewDrawCommand) {
-		DrawCommand* prevCmd = m_NumDrawCommands != 0 ? &m_DrawCommands[m_NumDrawCommands - 1] : nullptr;
+		BX_CHECK(m_NumDrawCommands != 0, "Something terrible happened!");
+		DrawCommand* prevCmd = &m_DrawCommands[m_NumDrawCommands - 1];
+
 		BX_CHECK(prevCmd->m_VertexBufferID == vbID, "Cannot merge draw commands with different vertex buffers");
 		BX_CHECK(prevCmd->m_IB == ib, "Cannot merge draw commands with different index buffers");
 		if (prevCmd->m_Type == DrawCommand::Type_ColorGradient &&

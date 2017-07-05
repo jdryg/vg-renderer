@@ -12,8 +12,10 @@ NanoVGRenderer::NanoVGRenderer() :
 	m_ImagePatterns(nullptr),
 	m_NextGradientID(0),
 	m_NextImagePatternID(0),
-	m_NextFontID(0)
+	m_NextFontID(0),
+	m_Allocator(nullptr)
 {
+	bx::memSet(m_FontData, 0, sizeof(void*) * VG_CONFIG_MAX_FONTS);
 }
 
 NanoVGRenderer::~NanoVGRenderer()
