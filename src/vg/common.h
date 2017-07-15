@@ -65,6 +65,7 @@ struct ColorRGBA
 		Black = 0xFF000000,
 		Red = 0xFF0000FF,
 		Green = 0xFF00FF00,
+		Blue = 0xFFFF0000,
 		White = 0xFFFFFFFF
 	};
 

@@ -2717,8 +2717,8 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
 				uint16_t id[3] = {
 					0,
-					(uint16_t)(i << 1) + 2,
-					(uint16_t)(i << 1) + 4
+					(uint16_t)((i << 1) + 2),
+					(uint16_t)((i << 1) + 4)
 				};
 				tempGeomAddIndices(&id[0], 3);
 			}
@@ -2727,8 +2727,8 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 			for (uint32_t i = 0; i < numPointsHalfCircle - 1; ++i) {
 				const uint16_t idBase = (uint16_t)(i << 1);
 				uint16_t id[6] = {
-					idBase, idBase + 1, idBase + 3,
-					idBase, idBase + 3, idBase + 2
+					idBase, (uint16_t)(idBase + 1), (uint16_t)(idBase + 3),
+					idBase, (uint16_t)(idBase + 3), (uint16_t)(idBase + 2)
 				};
 				tempGeomAddIndices(&id[0], 6);
 			}
@@ -2781,12 +2781,12 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 					BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[18] = {
-						prevSegmentLeftAAID, prevSegmentLeftID, firstVertexID + 1,
-						prevSegmentLeftAAID, firstVertexID + 1, firstVertexID,
-						prevSegmentLeftID, prevSegmentRightID, firstVertexID + 2,
-						prevSegmentLeftID, firstVertexID + 2, firstVertexID + 1,
-						prevSegmentRightID, prevSegmentRightAAID, firstVertexID + 3,
-						prevSegmentRightID, firstVertexID + 3, firstVertexID + 2
+						prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(firstVertexID + 1),
+						prevSegmentLeftAAID, (uint16_t)(firstVertexID + 1), firstVertexID,
+						prevSegmentLeftID, prevSegmentRightID, (uint16_t)(firstVertexID + 2),
+						prevSegmentLeftID, (uint16_t)(firstVertexID + 2), (uint16_t)(firstVertexID + 1),
+						prevSegmentRightID, prevSegmentRightAAID, (uint16_t)(firstVertexID + 3),
+						prevSegmentRightID, (uint16_t)(firstVertexID + 3), (uint16_t)(firstVertexID + 2)
 					};
 
 					tempGeomExpandIB(18);
@@ -2878,12 +2878,12 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 					BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[18] = {
-						prevSegmentLeftAAID, prevSegmentLeftID, firstFanVertexID + 1,
-						prevSegmentLeftAAID, firstFanVertexID + 1, firstFanVertexID,
-						prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 2,
-						prevSegmentLeftID, firstFanVertexID + 2, firstFanVertexID + 1,
-						prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID + 3,
-						prevSegmentRightID, firstFanVertexID + 3, firstFanVertexID + 2
+						prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(firstFanVertexID + 1),
+						prevSegmentLeftAAID, (uint16_t)(firstFanVertexID + 1), firstFanVertexID,
+						prevSegmentLeftID, prevSegmentRightID, (uint16_t)(firstFanVertexID + 2),
+						prevSegmentLeftID, (uint16_t)(firstFanVertexID + 2), (uint16_t)(firstFanVertexID + 1),
+						prevSegmentRightID, prevSegmentRightAAID, (uint16_t)(firstFanVertexID + 3),
+						prevSegmentRightID, (uint16_t)(firstFanVertexID + 3), (uint16_t)(firstFanVertexID + 2)
 					};
 
 					tempGeomExpandIB(18);
@@ -2901,9 +2901,9 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 				tempGeomExpandIB(numArcPoints * 9);
 				for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
 					uint16_t id[9] = {
-						firstFanVertexID + 1, arcID, arcID + 2,
-						arcID, arcID + 1, arcID + 3,
-						arcID, arcID + 3, arcID + 2
+						(uint16_t)(firstFanVertexID + 1), arcID, (uint16_t)(arcID + 2),
+						arcID, (uint16_t)(arcID + 1), (uint16_t)(arcID + 3),
+						arcID, (uint16_t)(arcID + 3), (uint16_t)(arcID + 2)
 					};
 					tempGeomAddIndices(&id[0], 9);
 
@@ -2938,12 +2938,12 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 					BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[18] = {
-						prevSegmentLeftAAID, prevSegmentLeftID, firstFanVertexID + 2,
-						prevSegmentLeftAAID, firstFanVertexID + 2, firstFanVertexID + 3,
-						prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 1,
-						prevSegmentLeftID, firstFanVertexID + 1, firstFanVertexID + 2,
-						prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID + 0,
-						prevSegmentRightID, firstFanVertexID + 0, firstFanVertexID + 1
+						prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(firstFanVertexID + 2),
+						prevSegmentLeftAAID, (uint16_t)(firstFanVertexID + 2), (uint16_t)(firstFanVertexID + 3),
+						prevSegmentLeftID, prevSegmentRightID, (uint16_t)(firstFanVertexID + 1),
+						prevSegmentLeftID, (uint16_t)(firstFanVertexID + 1), (uint16_t)(firstFanVertexID + 2),
+						prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID,
+						prevSegmentRightID, firstFanVertexID, (uint16_t)(firstFanVertexID + 1)
 					};
 
 					tempGeomExpandIB(18);
@@ -3034,12 +3034,12 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 					BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[18] = {
-						prevSegmentLeftAAID, prevSegmentLeftID, firstFanVertexID + 2,
-						prevSegmentLeftAAID, firstFanVertexID + 2, firstFanVertexID + 3,
-						prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 1,
-						prevSegmentLeftID, firstFanVertexID + 1, firstFanVertexID + 2,
-						prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID + 0,
-						prevSegmentRightID, firstFanVertexID + 0, firstFanVertexID + 1
+						prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(firstFanVertexID + 2),
+						prevSegmentLeftAAID, (uint16_t)(firstFanVertexID + 2), (uint16_t)(firstFanVertexID + 3),
+						prevSegmentLeftID, prevSegmentRightID, (uint16_t)(firstFanVertexID + 1),
+						prevSegmentLeftID, (uint16_t)(firstFanVertexID + 1), (uint16_t)(firstFanVertexID + 2),
+						prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID,
+						prevSegmentRightID, firstFanVertexID, (uint16_t)(firstFanVertexID + 1)
 					};
 
 					tempGeomExpandIB(18);
@@ -3056,9 +3056,9 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 				tempGeomExpandIB(numArcPoints * 9);
 				for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
 					uint16_t id[9] = {
-						firstFanVertexID + 1, arcID + 2, arcID,
-						arcID, arcID + 3, arcID + 1,
-						arcID, arcID + 2, arcID + 3
+						(uint16_t)(firstFanVertexID + 1), (uint16_t)(arcID + 2), arcID,
+						arcID, (uint16_t)(arcID + 3), (uint16_t)(arcID + 1),
+						arcID, (uint16_t)(arcID + 2), (uint16_t)(arcID + 3)
 					};
 					tempGeomAddIndices(&id[0], 9);
 
@@ -3098,14 +3098,14 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 			tempGeomAddPosColor(&p[0], &c0_c_c_c0[0], 4);
 
 			uint16_t id[24] = {
-				prevSegmentLeftAAID, prevSegmentLeftID, curSegmentLeftAAID + 1,
-				prevSegmentLeftAAID, curSegmentLeftAAID + 1, curSegmentLeftAAID,
-				prevSegmentLeftID, prevSegmentRightID, curSegmentLeftAAID + 2,
-				prevSegmentLeftID, curSegmentLeftAAID + 2, curSegmentLeftAAID + 1,
-				prevSegmentRightID, prevSegmentRightAAID, curSegmentLeftAAID + 3,
-				prevSegmentRightID, curSegmentLeftAAID + 3, curSegmentLeftAAID + 2,
-				curSegmentLeftAAID, curSegmentLeftAAID + 1, curSegmentLeftAAID + 2,
-				curSegmentLeftAAID, curSegmentLeftAAID + 2, curSegmentLeftAAID + 3
+				prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(curSegmentLeftAAID + 1),
+				prevSegmentLeftAAID, (uint16_t)(curSegmentLeftAAID + 1), curSegmentLeftAAID,
+				prevSegmentLeftID, prevSegmentRightID, (uint16_t)(curSegmentLeftAAID + 2),
+				prevSegmentLeftID, (uint16_t)(curSegmentLeftAAID + 2), (uint16_t)(curSegmentLeftAAID + 1),
+				prevSegmentRightID, prevSegmentRightAAID, (uint16_t)(curSegmentLeftAAID + 3),
+				prevSegmentRightID, (uint16_t)(curSegmentLeftAAID + 3), (uint16_t)(curSegmentLeftAAID + 2),
+				curSegmentLeftAAID, (uint16_t)(curSegmentLeftAAID + 1), (uint16_t)(curSegmentLeftAAID + 2),
+				curSegmentLeftAAID, (uint16_t)(curSegmentLeftAAID + 2), (uint16_t)(curSegmentLeftAAID + 3)
 			};
 
 			tempGeomExpandIB(24);
@@ -3128,14 +3128,14 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 			tempGeomAddPosColor(&p[0], &c0_c_c_c0[0], 4);
 
 			uint16_t id[24] = {
-				prevSegmentLeftAAID, prevSegmentLeftID, curSegmentLeftAAID + 1,
-				prevSegmentLeftAAID, curSegmentLeftAAID + 1, curSegmentLeftAAID,
-				prevSegmentLeftID, prevSegmentRightID, curSegmentLeftAAID + 2,
-				prevSegmentLeftID, curSegmentLeftAAID + 2, curSegmentLeftAAID + 1,
-				prevSegmentRightID, prevSegmentRightAAID, curSegmentLeftAAID + 3,
-				prevSegmentRightID, curSegmentLeftAAID + 3, curSegmentLeftAAID + 2,
-				curSegmentLeftAAID, curSegmentLeftAAID + 1, curSegmentLeftAAID + 2,
-				curSegmentLeftAAID, curSegmentLeftAAID + 2, curSegmentLeftAAID + 3
+				prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(curSegmentLeftAAID + 1),
+				prevSegmentLeftAAID, (uint16_t)(curSegmentLeftAAID + 1), curSegmentLeftAAID,
+				prevSegmentLeftID, prevSegmentRightID, (uint16_t)(curSegmentLeftAAID + 2),
+				prevSegmentLeftID, (uint16_t)(curSegmentLeftAAID + 2), (uint16_t)(curSegmentLeftAAID + 1),
+				prevSegmentRightID, prevSegmentRightAAID, (uint16_t)(curSegmentLeftAAID + 3),
+				prevSegmentRightID, (uint16_t)(curSegmentLeftAAID + 3), (uint16_t)(curSegmentLeftAAID + 2),
+				curSegmentLeftAAID, (uint16_t)(curSegmentLeftAAID + 1), (uint16_t)(curSegmentLeftAAID + 2),
+				curSegmentLeftAAID, (uint16_t)(curSegmentLeftAAID + 2), (uint16_t)(curSegmentLeftAAID + 3)
 			};
 
 			tempGeomExpandIB(24);
@@ -3160,11 +3160,11 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 
 			uint16_t id[18] = {
 				prevSegmentLeftAAID, prevSegmentLeftID, curSegmentLeftID,
-				prevSegmentLeftAAID, curSegmentLeftID, curSegmentLeftID + 1,
-				prevSegmentLeftID, prevSegmentRightID, curSegmentLeftID + (uint16_t)((numPointsHalfCircle - 1) * 2),
-				prevSegmentLeftID, curSegmentLeftID + (uint16_t)((numPointsHalfCircle - 1) * 2), curSegmentLeftID,
-				prevSegmentRightID, prevSegmentRightAAID, curSegmentLeftID + (uint16_t)((numPointsHalfCircle - 1) * 2 + 1),
-				prevSegmentRightID, curSegmentLeftID + (uint16_t)((numPointsHalfCircle - 1) * 2 + 1), curSegmentLeftID + (uint16_t)((numPointsHalfCircle - 1) * 2)
+				prevSegmentLeftAAID, curSegmentLeftID, (uint16_t)(curSegmentLeftID + 1),
+				prevSegmentLeftID, prevSegmentRightID, (uint16_t)(curSegmentLeftID + (numPointsHalfCircle - 1) * 2),
+				prevSegmentLeftID, (uint16_t)(curSegmentLeftID + (numPointsHalfCircle - 1) * 2), curSegmentLeftID,
+				prevSegmentRightID, prevSegmentRightAAID, (uint16_t)(curSegmentLeftID + (numPointsHalfCircle - 1) * 2 + 1),
+				prevSegmentRightID, (uint16_t)(curSegmentLeftID + (numPointsHalfCircle - 1) * 2 + 1), (uint16_t)(curSegmentLeftID + (numPointsHalfCircle - 1) * 2)
 			};
 
 			tempGeomExpandIB(18);
@@ -3176,8 +3176,8 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 				const uint16_t idBase = curSegmentLeftID + (uint16_t)(i << 1);
 				uint16_t id[3] = {
 					curSegmentLeftID,
-					idBase + 4,
-					idBase + 2
+					(uint16_t)(idBase + 4),
+					(uint16_t)(idBase + 2)
 				};
 				tempGeomAddIndices(&id[0], 3);
 			}
@@ -3187,8 +3187,8 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 			for (uint32_t i = 0; i < numPointsHalfCircle - 1; ++i) {
 				const uint16_t idBase = curSegmentLeftID + (uint16_t)(i << 1);
 				uint16_t id[6] = {
-					idBase + 0, idBase + 3, idBase + 1,
-					idBase + 0, idBase + 2, idBase + 3
+					idBase, (uint16_t)(idBase + 3), (uint16_t)(idBase + 1),
+					idBase, (uint16_t)(idBase + 2), (uint16_t)(idBase + 3)
 				};
 				tempGeomAddIndices(&id[0], 6);
 			}
@@ -3339,10 +3339,10 @@ void Context::renderPathStrokeAAThin(const Vec2* vtx, uint32_t numPathVertices, 
 					BX_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[12] = {
-						prevSegmentLeftAAID, prevSegmentMiddleID, firstVertexID + 1,
-						prevSegmentLeftAAID, firstVertexID + 1, firstVertexID,
-						prevSegmentMiddleID, prevSegmentRightAAID, firstVertexID + 2,
-						prevSegmentMiddleID, firstVertexID + 2, firstVertexID + 1
+						prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(firstVertexID + 1),
+						prevSegmentLeftAAID, (uint16_t)(firstVertexID + 1), firstVertexID,
+						prevSegmentMiddleID, prevSegmentRightAAID, (uint16_t)(firstVertexID + 2),
+						prevSegmentMiddleID, (uint16_t)(firstVertexID + 2), (uint16_t)(firstVertexID + 1)
 					};
 
 					tempGeomExpandIB(12);
@@ -3377,10 +3377,10 @@ void Context::renderPathStrokeAAThin(const Vec2* vtx, uint32_t numPathVertices, 
 					BX_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[12] = {
-						prevSegmentLeftAAID, prevSegmentMiddleID, firstFanVertexID + 1,
-						prevSegmentLeftAAID, firstFanVertexID + 1, firstFanVertexID,
-						prevSegmentMiddleID, prevSegmentRightAAID, firstFanVertexID + 2,
-						prevSegmentMiddleID, firstFanVertexID + 2, firstFanVertexID + 1
+						prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(firstFanVertexID + 1),
+						prevSegmentLeftAAID, (uint16_t)(firstFanVertexID + 1), firstFanVertexID,
+						prevSegmentMiddleID, prevSegmentRightAAID, (uint16_t)(firstFanVertexID + 2),
+						prevSegmentMiddleID, (uint16_t)(firstFanVertexID + 2), (uint16_t)(firstFanVertexID + 1)
 					};
 
 					tempGeomExpandIB(12);
@@ -3393,7 +3393,7 @@ void Context::renderPathStrokeAAThin(const Vec2* vtx, uint32_t numPathVertices, 
 				}
 
 				uint16_t id[3] = {
-					firstFanVertexID + 1, firstFanVertexID + 2, firstFanVertexID + 3
+					(uint16_t)(firstFanVertexID + 1), (uint16_t)(firstFanVertexID + 2), (uint16_t)(firstFanVertexID + 3)
 				};
 				tempGeomExpandIB(3);
 				tempGeomAddIndices(&id[0], 3);
@@ -3422,10 +3422,10 @@ void Context::renderPathStrokeAAThin(const Vec2* vtx, uint32_t numPathVertices, 
 					BX_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[12] = {
-						prevSegmentLeftAAID, prevSegmentMiddleID, firstFanVertexID + 1,
-						prevSegmentLeftAAID, firstFanVertexID + 1, firstFanVertexID + 2,
-						prevSegmentMiddleID, prevSegmentRightAAID, firstFanVertexID + 0,
-						prevSegmentMiddleID, firstFanVertexID + 0, firstFanVertexID + 1
+						prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(firstFanVertexID + 1),
+						prevSegmentLeftAAID, (uint16_t)(firstFanVertexID + 1), (uint16_t)(firstFanVertexID + 2),
+						prevSegmentMiddleID, prevSegmentRightAAID, firstFanVertexID,
+						prevSegmentMiddleID, firstFanVertexID, (uint16_t)(firstFanVertexID + 1)
 					};
 
 					tempGeomExpandIB(12);
@@ -3458,10 +3458,10 @@ void Context::renderPathStrokeAAThin(const Vec2* vtx, uint32_t numPathVertices, 
 					BX_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[12] = {
-						prevSegmentLeftAAID, prevSegmentMiddleID, firstFanVertexID + 1,
-						prevSegmentLeftAAID, firstFanVertexID + 1, firstFanVertexID + 2,
-						prevSegmentMiddleID, prevSegmentRightAAID, firstFanVertexID + 0,
-						prevSegmentMiddleID, firstFanVertexID + 0, firstFanVertexID + 1
+						prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(firstFanVertexID + 1),
+						prevSegmentLeftAAID, (uint16_t)(firstFanVertexID + 1), (uint16_t)(firstFanVertexID + 2),
+						prevSegmentMiddleID, prevSegmentRightAAID, firstFanVertexID ,
+						prevSegmentMiddleID, firstFanVertexID, (uint16_t)(firstFanVertexID + 1)
 					};
 
 					tempGeomExpandIB(12);
@@ -3473,7 +3473,7 @@ void Context::renderPathStrokeAAThin(const Vec2* vtx, uint32_t numPathVertices, 
 				}
 
 				uint16_t id[3] = {
-					firstFanVertexID + 1, firstFanVertexID + 3, firstFanVertexID + 2
+					(uint16_t)(firstFanVertexID + 1), (uint16_t)(firstFanVertexID + 3), (uint16_t)(firstFanVertexID + 2)
 				};
 				tempGeomAddIndices(&id[0], 3);
 
@@ -3506,10 +3506,10 @@ void Context::renderPathStrokeAAThin(const Vec2* vtx, uint32_t numPathVertices, 
 			tempGeomAddPosColor(&p[0], &c0_c_c0_c0[0], 3);
 
 			uint16_t id[12] = {
-				prevSegmentLeftAAID, prevSegmentMiddleID, curSegmentLeftAAID + 1,
-				prevSegmentLeftAAID, curSegmentLeftAAID + 1, curSegmentLeftAAID,
-				prevSegmentMiddleID, prevSegmentRightAAID, curSegmentLeftAAID + 2,
-				prevSegmentMiddleID, curSegmentLeftAAID + 2, curSegmentLeftAAID + 1
+				prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(curSegmentLeftAAID + 1),
+				prevSegmentLeftAAID, (uint16_t)(curSegmentLeftAAID + 1), curSegmentLeftAAID,
+				prevSegmentMiddleID, prevSegmentRightAAID, (uint16_t)(curSegmentLeftAAID + 2),
+				prevSegmentMiddleID, (uint16_t)(curSegmentLeftAAID + 2), (uint16_t)(curSegmentLeftAAID + 1)
 			};
 
 			tempGeomExpandIB(12);
@@ -3529,10 +3529,10 @@ void Context::renderPathStrokeAAThin(const Vec2* vtx, uint32_t numPathVertices, 
 			tempGeomAddPosColor(&p[0], &c0_c_c0_c0[0], 3);
 
 			uint16_t id[12] = {
-				prevSegmentLeftAAID, prevSegmentMiddleID, curSegmentLeftAAID + 1,
-				prevSegmentLeftAAID, curSegmentLeftAAID + 1, curSegmentLeftAAID,
-				prevSegmentMiddleID, prevSegmentRightAAID, curSegmentLeftAAID + 2,
-				prevSegmentMiddleID, curSegmentLeftAAID + 2, curSegmentLeftAAID + 1
+				prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(curSegmentLeftAAID + 1),
+				prevSegmentLeftAAID, (uint16_t)(curSegmentLeftAAID + 1), curSegmentLeftAAID,
+				prevSegmentMiddleID, prevSegmentRightAAID, (uint16_t)(curSegmentLeftAAID + 2),
+				prevSegmentMiddleID, (uint16_t)(curSegmentLeftAAID + 2), (uint16_t)(curSegmentLeftAAID + 1)
 			};
 
 			tempGeomExpandIB(12);
@@ -3696,8 +3696,8 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 					BX_CHECK(prevSegmentRightID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[6] = {
-						prevSegmentLeftID, prevSegmentRightID, firstVertexID + 1,
-						prevSegmentLeftID, firstVertexID + 1, firstVertexID
+						prevSegmentLeftID, prevSegmentRightID, (uint16_t)(firstVertexID + 1),
+						prevSegmentLeftID, (uint16_t)(firstVertexID + 1), firstVertexID
 					};
 
 					tempGeomExpandIB(6);
@@ -3751,8 +3751,8 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 					BX_CHECK(prevSegmentRightID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[6] = {
-						prevSegmentLeftID, prevSegmentRightID, firstFanVertexID + 1,
-						prevSegmentLeftID, firstFanVertexID + 1, firstFanVertexID
+						prevSegmentLeftID, prevSegmentRightID, (uint16_t)(firstFanVertexID + 1),
+						prevSegmentLeftID, (uint16_t)(firstFanVertexID + 1), firstFanVertexID
 					};
 
 					tempGeomExpandIB(6);
@@ -3767,7 +3767,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 				for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
 					const uint16_t idBase = firstFanVertexID + (uint16_t)iArcPoint;
 					uint16_t id[3] = {
-						firstFanVertexID, idBase + 1, idBase + 2
+						firstFanVertexID, (uint16_t)(idBase + 1), (uint16_t)(idBase + 2)
 					};
 					tempGeomAddIndices(&id[0], 3);
 				}
@@ -3795,7 +3795,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 
 					uint16_t id[6] = {
 						prevSegmentLeftID, prevSegmentRightID, firstVertexID,
-						prevSegmentLeftID, firstVertexID, firstVertexID + 1
+						prevSegmentLeftID, firstVertexID, (uint16_t)(firstVertexID + 1)
 					};
 
 					tempGeomExpandIB(6);
@@ -3847,7 +3847,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 				if (prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF) {
 					uint16_t id[6] = {
 						prevSegmentLeftID, prevSegmentRightID, firstFanVertexID,
-						prevSegmentLeftID, firstFanVertexID, firstFanVertexID + 1
+						prevSegmentLeftID, firstFanVertexID, (uint16_t)(firstFanVertexID + 1)
 					};
 
 					tempGeomExpandIB(6);
@@ -3861,7 +3861,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 				for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
 					const uint16_t idBase = firstFanVertexID + (uint16_t)iArcPoint;
 					uint16_t id[3] = {
-						firstFanVertexID, idBase + 2, idBase + 1
+						firstFanVertexID, (uint16_t)(idBase + 2), (uint16_t)(idBase + 1)
 					};
 					tempGeomAddIndices(&id[0], 3);
 				}
@@ -3893,8 +3893,8 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 			tempGeomAddPos(&p[0], 2);
 
 			uint16_t id[6] = {
-				prevSegmentLeftID, prevSegmentRightID, curSegmentLeftID + 1,
-				prevSegmentLeftID, curSegmentLeftID + 1, curSegmentLeftID
+				prevSegmentLeftID, prevSegmentRightID, (uint16_t)(curSegmentLeftID + 1),
+				prevSegmentLeftID, (uint16_t)(curSegmentLeftID + 1), curSegmentLeftID
 			};
 
 			tempGeomExpandIB(6);
@@ -3913,8 +3913,8 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 			tempGeomAddPos(&p[0], 2);
 
 			uint16_t id[6] = {
-				prevSegmentLeftID, prevSegmentRightID, curSegmentLeftID + 1,
-				prevSegmentLeftID, curSegmentLeftID + 1, curSegmentLeftID
+				prevSegmentLeftID, prevSegmentRightID, (uint16_t)(curSegmentLeftID + 1),
+				prevSegmentLeftID, (uint16_t)(curSegmentLeftID + 1), curSegmentLeftID
 			};
 
 			tempGeomExpandIB(6);
@@ -3935,8 +3935,8 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 			}
 
 			uint16_t id[6] = {
-				prevSegmentLeftID, prevSegmentRightID, curSegmentLeftID + (uint16_t)(numPointsHalfCircle - 1),
-				prevSegmentLeftID, curSegmentLeftID + (uint16_t)(numPointsHalfCircle - 1), curSegmentLeftID
+				prevSegmentLeftID, prevSegmentRightID, (uint16_t)(curSegmentLeftID + (numPointsHalfCircle - 1)),
+				prevSegmentLeftID, (uint16_t)(curSegmentLeftID + (numPointsHalfCircle - 1)), curSegmentLeftID
 			};
 
 			tempGeomExpandIB(6 + (numPointsHalfCircle - 2) * 3);
@@ -3944,7 +3944,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
 				const uint16_t idBase = curSegmentLeftID + (uint16_t)i;
 				uint16_t id[3] = {
-					curSegmentLeftID, idBase + 2, idBase + 1
+					curSegmentLeftID, (uint16_t)(idBase + 2), (uint16_t)(idBase + 1)
 				};
 				tempGeomAddIndices(&id[0], 3);
 			}
@@ -5291,7 +5291,7 @@ inline void Context::tempGeomReset()
 	m_TempGeomNumIndices = 0;
 }
 
-inline void Context::tempGeomExpandVB(uint32_t n)
+BX_FORCE_INLINE void Context::tempGeomExpandVB(uint32_t n)
 {
 	if (m_TempGeomNumVertices + n > m_TempGeomVertexCapacity) {
 		tempGeomReallocVB(n);
@@ -5305,7 +5305,7 @@ void Context::tempGeomReallocVB(uint32_t n)
 	m_TempGeomColor = (uint32_t*)BX_ALIGNED_REALLOC(m_Allocator, m_TempGeomColor, sizeof(uint32_t) * m_TempGeomVertexCapacity, 16);
 }
 
-__forceinline void Context::tempGeomExpandIB(uint32_t n)
+BX_FORCE_INLINE void Context::tempGeomExpandIB(uint32_t n)
 {
 	if (m_TempGeomNumIndices + n > m_TempGeomIndexCapacity) {
 		tempGeomReallocIB(n);
@@ -5318,181 +5318,30 @@ void Context::tempGeomReallocIB(uint32_t n)
 	m_TempGeomIndex = (uint16_t*)BX_ALIGNED_REALLOC(m_Allocator, m_TempGeomIndex, sizeof(uint16_t) * m_TempGeomIndexCapacity, 16);
 }
 
-inline void Context::tempGeomAddPos(const Vec2* srcPos, uint32_t n)
-{
-	BX_CHECK(m_TempGeomNumVertices + 1 <= m_TempGeomVertexCapacity, "");
-	BX_CHECK(n <= 2, "");
-
-	Vec2* dstPos = &m_TempGeomPos[m_TempGeomNumVertices];
-
-	switch (n) {
-	case 2:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dstPos, _mm_loadu_ps((float*)srcPos));
-#else
-		*(uint64_t*)dstPos = *(uint64_t*)srcPos;
-		*(uint64_t*)(dstPos + 1) = *(uint64_t*)(srcPos + 1);
-#endif
-		break;
-	case 1:
-		*(uint64_t*)dstPos = *(uint64_t*)srcPos;
-		break;
-	}
-
-	m_TempGeomNumVertices += n;
-}
-
-inline void Context::tempGeomAddPosColor(const Vec2* srcPos, const uint32_t* srcColor, uint32_t n)
+BX_FORCE_INLINE void Context::tempGeomAddPos(const Vec2* srcPos, uint32_t n)
 {
 	BX_CHECK(m_TempGeomNumVertices + n <= m_TempGeomVertexCapacity, "Not enough free space for temporary geometry");
-	BX_CHECK(n <= 4, "");
 
-	Vec2* dstPos = &m_TempGeomPos[m_TempGeomNumVertices];
-
-	switch (n) {
-	case 4:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dstPos, _mm_loadu_ps((float*)srcPos));
-		_mm_storeu_ps((float*)(dstPos + 2), _mm_loadu_ps((float*)(srcPos + 2)));
-#else
-		*(uint64_t*)dstPos = *(uint64_t*)srcPos;
-		*(uint64_t*)(dstPos + 1) = *(uint64_t*)(srcPos + 1);
-		*(uint64_t*)(dstPos + 2) = *(uint64_t*)(srcPos + 2);
-		*(uint64_t*)(dstPos + 3) = *(uint64_t*)(srcPos + 3);
-#endif
-		break;
-	case 3:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dstPos, _mm_loadu_ps((float*)srcPos));
-#else
-		*(uint64_t*)dstPos = *(uint64_t*)srcPos;
-		*(uint64_t*)(dstPos + 1) = *(uint64_t*)(srcPos + 1);
-#endif
-		*(uint64_t*)(dstPos + 2) = *(uint64_t*)(srcPos + 2);
-		break;
-	case 2:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dstPos, _mm_loadu_ps((float*)srcPos));
-#else
-		*(uint64_t*)dstPos = *(uint64_t*)srcPos;
-		*(uint64_t*)(dstPos + 1) = *(uint64_t*)(srcPos + 1);
-#endif
-		break;
-	case 1:
-		*(uint64_t*)dstPos = *(uint64_t*)srcPos;
-		break;
-	}
-
-	uint32_t* dstColor = &m_TempGeomColor[m_TempGeomNumVertices];
-	switch (n) {
-	case 4:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dstColor, _mm_loadu_ps((float*)srcColor));
-#else
-		*(uint64_t*)dstColor = *(uint64_t*)srcColor;
-		*(uint64_t*)(dstColor + 2) = *(uint64_t*)(srcColor + 2);
-#endif
-		break;
-	case 3:
-		*(uint64_t*)dstColor = *(uint64_t*)srcColor;
-		*(dstColor + 2) = *(srcColor + 2);
-		break;
-	case 2:
-		*(uint64_t*)dstColor = *(uint64_t*)srcColor;
-		break;
-	case 1:
-		*dstColor = *srcColor;
-		break;
-	}
+	bx::memCopy(&m_TempGeomPos[m_TempGeomNumVertices], srcPos, sizeof(Vec2) * n);
 
 	m_TempGeomNumVertices += n;
 }
 
-__forceinline void Context::tempGeomAddIndices(const uint16_t* __restrict src, uint32_t n)
+BX_FORCE_INLINE void Context::tempGeomAddPosColor(const Vec2* srcPos, const uint32_t* srcColor, uint32_t n)
 {
-	BX_CHECK(m_TempGeomNumIndices + n <= m_TempGeomIndexCapacity, "");
+	BX_CHECK(m_TempGeomNumVertices + n <= m_TempGeomVertexCapacity, "Not enough free space for temporary geometry");
 
-	uint16_t* dst = &m_TempGeomIndex[m_TempGeomNumIndices];
+	bx::memCopy(&m_TempGeomPos[m_TempGeomNumVertices], srcPos, sizeof(Vec2) * n);
+	bx::memCopy(&m_TempGeomColor[m_TempGeomNumVertices], srcColor, sizeof(uint32_t) * n);
 
-	BX_CHECK(n <= 24 && (n % 3) == 0, "Invalid number of indices passed to tempGeomAddIndices()");
-	switch (n) {
-	case 24:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src));
-		_mm_storeu_ps((float*)(dst + 8), _mm_loadu_ps((float*)(src + 8)));
-		_mm_storeu_ps((float*)(dst + 16), _mm_loadu_ps((float*)(src + 16)));
-#else
-		*(uint64_t*)dst = *(uint64_t*)src;
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4);
-		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8);
-		*(uint64_t*)(dst + 12) = *(uint64_t*)(src + 12);
-		*(uint64_t*)(dst + 16) = *(uint64_t*)(src + 16);
-		*(uint64_t*)(dst + 20) = *(uint64_t*)(src + 20);
-#endif
-		break;
-	case 21:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src));
-		_mm_storeu_ps((float*)(dst + 8), _mm_loadu_ps((float*)(src + 8)));
-#else
-		*(uint64_t*)dst = *(uint64_t*)src;
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4);
-		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8);
-		*(uint64_t*)(dst + 12) = *(uint64_t*)(src + 12);
-#endif
-		*(uint64_t*)(dst + 16) = *(uint64_t*)(src + 16);
-		*(dst + 20) = *(src + 20);
-		break;
-	case 18:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src));
-		_mm_storeu_ps((float*)(dst + 8), _mm_loadu_ps((float*)(src + 8)));
-#else
-		*(uint64_t*)dst = *(uint64_t*)src;
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4);
-		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8);
-		*(uint64_t*)(dst + 12) = *(uint64_t*)(src + 12);
-#endif
-		*(uint32_t*)(dst + 16) = *(uint32_t*)(src + 16);
-		break;
-	case 15:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src));
-#else
-		*(uint64_t*)dst = *(uint64_t*)src;
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4);
-#endif
-		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8);
-		*(uint32_t*)(dst + 12) = *(uint32_t*)(src + 12);
-		*(dst + 14) = *(src + 14);
-		break;
-	case 12:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src));
-#else
-		*(uint64_t*)dst = *(uint64_t*)src;
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4);
-#endif
-		*(uint64_t*)(dst + 8) = *(uint64_t*)(src + 8);
-		break;
-	case 9:
-#if VG_CONFIG_ENABLE_SIMD
-		_mm_storeu_ps((float*)dst, _mm_loadu_ps((float*)src));
-#else
-		*(uint64_t*)dst = *(uint64_t*)src;
-		*(uint64_t*)(dst + 4) = *(uint64_t*)(src + 4);
-#endif
-		*(dst + 8) = *(src + 8);
-		break;
-	case 6:
-		*(uint64_t*)dst = *(uint64_t*)src;
-		*(uint32_t*)(dst + 4) = *(uint32_t*)(src + 4);
-		break;
-	case 3:
-		*(uint32_t*)dst = *(uint32_t*)src;
-		*(dst + 2) = *(src + 2);
-		break;
-	}
+	m_TempGeomNumVertices += n;
+}
+
+BX_FORCE_INLINE void Context::tempGeomAddIndices(const uint16_t* src, uint32_t n)
+{
+	BX_CHECK(m_TempGeomNumIndices + n <= m_TempGeomIndexCapacity, "Not enough free space for temporary geometry");
+
+	bx::memCopy(&m_TempGeomIndex[m_TempGeomNumIndices], src, sizeof(uint16_t) * n);
 
 	m_TempGeomNumIndices += n;
 }
