@@ -3,6 +3,7 @@
 #include "../nanovg/nanovg.h"
 #include <bx/allocator.h>
 #include <bx/bx.h>
+#include <bx/string.h>
 
 namespace vg
 {
@@ -875,7 +876,7 @@ void NanoVGRenderer::SubmitShape(Shape* shape, GetStringByIDFunc stringCallback,
 
 			uint32_t len;
 			const char* text = stringCallback(stringID, len, userData);
-			const char* end = len != ~0u ? text + len : text + strlen(text);
+			const char* end = len != ~0u ? text + len : text + bx::strLen(text);
 
 			Text(font, alignment, col, x, y, text, end);
 			break;

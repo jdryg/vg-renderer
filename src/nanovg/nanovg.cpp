@@ -1271,6 +1271,7 @@ static void nvg__tesselateBezier(NVGcontext* ctx,
 								 float x3, float y3, float x4, float y4,
 								 int level, int type)
 {
+	BX_UNUSED(level);
 	const int MAX_LEVELS = 10;
 	float* stack = (float*)alloca(sizeof(float) * 8 * MAX_LEVELS);
 	float* stackPtr = stack;

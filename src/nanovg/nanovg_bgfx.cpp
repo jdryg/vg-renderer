@@ -28,7 +28,6 @@
 
 #include <bx/bx.h>
 #include <bx/allocator.h>
-#include <bx/crtimpl.h>
 
 #include <bx/mutex.h>
 #include <assert.h>
@@ -287,7 +286,7 @@ namespace
 				if (bgfx::isValid(gl->textures[ii].id)
 				&& (gl->textures[ii].flags & NVG_IMAGE_NODELETE) == 0)
 				{
-					bgfx::destroyTexture(gl->textures[ii].id);
+					bgfx::destroy(gl->textures[ii].id);
 				}
 				memset(&gl->textures[ii], 0, sizeof(gl->textures[ii]) );
 				gl->textures[ii].id.idx = bgfx::kInvalidHandle;
@@ -1143,22 +1142,22 @@ namespace
 			return;
 		}
 
-		bgfx::destroyProgram(gl->prog);
-		bgfx::destroyTexture(gl->texMissing);
+		bgfx::destroy(gl->prog);
+		bgfx::destroy(gl->texMissing);
 
-		bgfx::destroyUniform(gl->u_scissorMat);
-		bgfx::destroyUniform(gl->u_paintMat);
-		bgfx::destroyUniform(gl->u_innerCol);
-		bgfx::destroyUniform(gl->u_outerCol);
-		bgfx::destroyUniform(gl->u_viewSize);
-		bgfx::destroyUniform(gl->u_scissorExtScale);
-		bgfx::destroyUniform(gl->u_extentRadius);
-		bgfx::destroyUniform(gl->u_params);
-		bgfx::destroyUniform(gl->s_tex);
+		bgfx::destroy(gl->u_scissorMat);
+		bgfx::destroy(gl->u_paintMat);
+		bgfx::destroy(gl->u_innerCol);
+		bgfx::destroy(gl->u_outerCol);
+		bgfx::destroy(gl->u_viewSize);
+		bgfx::destroy(gl->u_scissorExtScale);
+		bgfx::destroy(gl->u_extentRadius);
+		bgfx::destroy(gl->u_params);
+		bgfx::destroy(gl->s_tex);
 
 		if (bgfx::isValid(gl->u_halfTexel) )
 		{
-			bgfx::destroyUniform(gl->u_halfTexel);
+			bgfx::destroy(gl->u_halfTexel);
 		}
 
 		for (uint32_t ii = 0, num = gl->ntextures; ii < num; ++ii)
@@ -1166,7 +1165,7 @@ namespace
 			if (bgfx::isValid(gl->textures[ii].id)
 			&& (gl->textures[ii].flags & NVG_IMAGE_NODELETE) == 0)
 			{
-				bgfx::destroyTexture(gl->textures[ii].id);
+				bgfx::destroy(gl->textures[ii].id);
 			}
 		}
 
@@ -1174,7 +1173,7 @@ namespace
 		{
 			if (bgfx::isValid(gl->vertexBuffers[i].dvb)) 
 			{
-				bgfx::destroyDynamicVertexBuffer(gl->vertexBuffers[i].dvb);
+				bgfx::destroy(gl->vertexBuffers[i].dvb);
 			}
 		}
 

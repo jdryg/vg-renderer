@@ -29,6 +29,7 @@
 
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4127) // conditional expression is constant (e.g. BezierTo)
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment withing conditional expression
+BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wshadow");
 
 #include "bgfxvg_renderer.h"
 #include "shape.h"
@@ -38,7 +39,7 @@ BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment withing conditional expres
 
 #include <bgfx/embedded_shader.h>
 #include <bx/allocator.h>
-#include <bx/fpumath.h>
+#include <bx/math.h>
 #include <bx/mutex.h>
 #include <bx/simd_t.h>
 #include <bx/handlealloc.h>
@@ -904,25 +905,25 @@ Context::~Context()
 {
 	for (uint32_t i = 0; i < DrawCommand::NumTypes; ++i) {
 		if (bgfx::isValid(m_ProgramHandle[i])) {
-			bgfx::destroyProgram(m_ProgramHandle[i]);
+			bgfx::destroy(m_ProgramHandle[i]);
 		}
 	}
 
-	bgfx::destroyUniform(m_TexUniform);
-	bgfx::destroyUniform(m_PaintMatUniform);
-	bgfx::destroyUniform(m_ExtentRadiusFeatherUniform);
-	bgfx::destroyUniform(m_InnerColorUniform);
-	bgfx::destroyUniform(m_OuterColorUniform);
+	bgfx::destroy(m_TexUniform);
+	bgfx::destroy(m_PaintMatUniform);
+	bgfx::destroy(m_ExtentRadiusFeatherUniform);
+	bgfx::destroy(m_InnerColorUniform);
+	bgfx::destroy(m_OuterColorUniform);
 
 	for (uint32_t i = 0; i < m_VertexBufferCapacity; ++i) {
 		if (bgfx::isValid(m_VertexBuffers[i].m_PosBufferHandle)) {
-			bgfx::destroyDynamicVertexBuffer(m_VertexBuffers[i].m_PosBufferHandle);
+			bgfx::destroy(m_VertexBuffers[i].m_PosBufferHandle);
 		}
 		if (bgfx::isValid(m_VertexBuffers[i].m_UVBufferHandle)) {
-			bgfx::destroyDynamicVertexBuffer(m_VertexBuffers[i].m_UVBufferHandle);
+			bgfx::destroy(m_VertexBuffers[i].m_UVBufferHandle);
 		}
 		if (bgfx::isValid(m_VertexBuffers[i].m_ColorBufferHandle)) {
-			bgfx::destroyDynamicVertexBuffer(m_VertexBuffers[i].m_ColorBufferHandle);
+			bgfx::destroy(m_VertexBuffers[i].m_ColorBufferHandle);
 	}
 	}
 	BX_FREE(m_Allocator, m_VertexBuffers);
@@ -5191,7 +5192,7 @@ bool Context::deleteImage(ImageHandle img)
 
 	Image* tex = &m_Images[img.idx];
 	BX_CHECK(bgfx::isValid(tex->m_bgfxHandle), "Invalid texture handle");
-	bgfx::destroyTexture(tex->m_bgfxHandle);
+	bgfx::destroy(tex->m_bgfxHandle);
 	tex->reset();
 	
 	m_ImageAlloc.free(img.idx);
