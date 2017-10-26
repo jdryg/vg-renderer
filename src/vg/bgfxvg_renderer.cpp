@@ -110,10 +110,10 @@ struct VertexBuffer
 	Vec2* m_Pos;
 	Vec2* m_UV;
 	uint32_t* m_Color;
+	uint32_t m_Count;
 	bgfx::DynamicVertexBufferHandle m_PosBufferHandle;
 	bgfx::DynamicVertexBufferHandle m_UVBufferHandle;
 	bgfx::DynamicVertexBufferHandle m_ColorBufferHandle;
-	uint32_t m_Count;
 };
 
 struct IndexBuffer
@@ -121,8 +121,9 @@ struct IndexBuffer
 	uint16_t* m_Indices;
 	uint32_t m_Count;
 	uint32_t m_Capacity;
+	bgfx::DynamicIndexBufferHandle m_bgfxHandle;
 
-	IndexBuffer() : m_Indices(nullptr), m_Count(0), m_Capacity(0)
+	IndexBuffer() : m_Indices(nullptr), m_Count(0), m_Capacity(0), m_bgfxHandle(VG_INVALID_HANDLE)
 	{}
 
 	void reset()
@@ -149,10 +150,10 @@ struct Gradient
 // All textures are RGBA
 struct Image
 {
-	bgfx::TextureHandle m_bgfxHandle;
 	uint16_t m_Width;
 	uint16_t m_Height;
 	uint32_t m_Flags;
+	bgfx::TextureHandle m_bgfxHandle;
 
 	inline void reset()
 	{
@@ -172,16 +173,14 @@ struct DrawCommand
 		NumTypes
 	};
 
+	Type m_Type;
 	uint32_t m_VertexBufferID;
-	IndexBuffer* m_IB; // TODO: Index buffer is common to all draw calls at the moment. Either remove the ptr (and get it from the Context) or somehow break commands into different IBs
-	GradientHandle m_GradientHandle; // Type_ColorGradient
-	ImageHandle m_ImageHandle; // Type_TexturedVertexColor
 	uint32_t m_FirstVertexID;
 	uint32_t m_FirstIndexID;
 	uint32_t m_NumVertices;
 	uint32_t m_NumIndices;
-	float m_ScissorRect[4];
-	Type m_Type;
+	uint16_t m_ScissorRect[4];
+	uint16_t m_HandleID; // Type_TexturedVertexColor => ImageHandle, Type_ColorGradient => GradientHandle
 };
 
 struct CachedDrawCommand
@@ -924,9 +923,15 @@ Context::~Context()
 		}
 		if (bgfx::isValid(m_VertexBuffers[i].m_ColorBufferHandle)) {
 			bgfx::destroy(m_VertexBuffers[i].m_ColorBufferHandle);
-	}
+		}
 	}
 	BX_FREE(m_Allocator, m_VertexBuffers);
+
+	if (bgfx::isValid(m_IndexBuffer->m_bgfxHandle)) {
+		bgfx::destroy(m_IndexBuffer->m_bgfxHandle);
+	}
+	BX_ALIGNED_FREE(m_Allocator, m_IndexBuffer->m_Indices, 16);
+	BX_DELETE(m_Allocator, m_IndexBuffer);
 
 	for (uint32_t i = 0; i < m_Vec2DataPoolCapacity; ++i) {
 		Vec2* buffer = m_Vec2DataPool[i];
@@ -972,7 +977,6 @@ Context::~Context()
 	}
 
 	BX_FREE(m_Allocator, m_SubPaths);
-	BX_DELETE(m_Allocator, m_IndexBuffer);
 
 	BX_FREE(m_Allocator, m_Images);
 
@@ -1124,23 +1128,20 @@ void Context::endFrame()
 	}
 
 	// Update bgfx index buffer...
-	bgfx::TransientIndexBuffer tib;
-	uint32_t totalIndices = bgfx::getAvailTransientIndexBuffer(m_IndexBuffer->m_Count);
-	BX_WARN(totalIndices == m_IndexBuffer->m_Count, "Not enough transient index buffer space for rendering all indices");
-	bgfx::allocTransientIndexBuffer(&tib, totalIndices);
-	bx::memCopy(tib.data, &m_IndexBuffer->m_Indices[0], sizeof(uint16_t) * totalIndices);
-
+	const bgfx::Memory* indexMem = bgfx::copy(&m_IndexBuffer->m_Indices[0], sizeof(uint16_t) * m_IndexBuffer->m_Count);
+	if (!bgfx::isValid(m_IndexBuffer->m_bgfxHandle)) {
+		m_IndexBuffer->m_bgfxHandle = bgfx::createDynamicIndexBuffer(indexMem, BGFX_BUFFER_ALLOW_RESIZE);
+	} else {
+		bgfx::updateDynamicIndexBuffer(m_IndexBuffer->m_bgfxHandle, 0, indexMem);
+	}
+	
 	float viewMtx[16];
 	float projMtx[16];
 	bx::mtxIdentity(viewMtx);
 	bx::mtxOrtho(projMtx, 0.0f, m_WinWidth, m_WinHeight, 0.0f, 0.0f, 1.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
 	bgfx::setViewTransform(m_ViewID, viewMtx, projMtx);
 
-	uint16_t prevScissorRect[4];
-	prevScissorRect[0] = 0;
-	prevScissorRect[1] = 0;
-	prevScissorRect[2] = m_WinWidth;
-	prevScissorRect[3] = m_WinHeight;
+	uint16_t prevScissorRect[4] = { 0, 0, m_WinWidth, m_WinHeight };
 	uint16_t prevScissorID = UINT16_MAX;
 
 	const uint32_t numCommands = m_NumDrawCommands;
@@ -1151,31 +1152,23 @@ void Context::endFrame()
 		bgfx::setVertexBuffer(0, vb->m_PosBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
 		bgfx::setVertexBuffer(1, vb->m_UVBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
 		bgfx::setVertexBuffer(2, vb->m_ColorBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
-		bgfx::setIndexBuffer(&tib, cmd->m_FirstIndexID, cmd->m_NumIndices);
+		bgfx::setIndexBuffer(m_IndexBuffer->m_bgfxHandle, cmd->m_FirstIndexID, cmd->m_NumIndices);
 
 		// Set scissor.
 		{
-			const uint16_t s0 = (uint16_t)cmd->m_ScissorRect[0];
-			const uint16_t s1 = (uint16_t)cmd->m_ScissorRect[1];
-			const uint16_t s2 = (uint16_t)cmd->m_ScissorRect[2];
-			const uint16_t s3 = (uint16_t)cmd->m_ScissorRect[3];
-
-			if (s0 != prevScissorRect[0] || s1 != prevScissorRect[1] || s2 != prevScissorRect[2] || s3 != prevScissorRect[3]) {
-				prevScissorID = bgfx::setScissor(s0, s1, s2, s3);
-
-				prevScissorRect[0] = s0;
-				prevScissorRect[1] = s1;
-				prevScissorRect[2] = s2;
-				prevScissorRect[3] = s3;
-			} else {
+			const uint16_t* cmdScissorRect = &cmd->m_ScissorRect[0];
+			if (!bx::memCmp(cmdScissorRect, &prevScissorRect[0], sizeof(uint16_t) * 4)) {
 				// Re-set the previous cached scissor rect (submit() below doesn't preserve state).
 				bgfx::setScissor(prevScissorID);
+			} else {
+				prevScissorID = bgfx::setScissor(cmdScissorRect[0], cmdScissorRect[1], cmdScissorRect[2], cmdScissorRect[3]);
+				bx::memCopy(prevScissorRect, cmdScissorRect, sizeof(uint16_t) * 4);
 			}
 		}
 
 		if (cmd->m_Type == DrawCommand::Type_TexturedVertexColor) {
-			BX_CHECK(isValid(cmd->m_ImageHandle), "Invalid image handle");
-			Image* tex = &m_Images[cmd->m_ImageHandle.idx];
+			BX_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid image handle");
+			Image* tex = &m_Images[cmd->m_HandleID];
 			bgfx::setTexture(0, m_TexUniform, tex->m_bgfxHandle, tex->m_Flags);
 
 			int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
@@ -1186,8 +1179,8 @@ void Context::endFrame()
 
 			bgfx::submit(m_ViewID, m_ProgramHandle[DrawCommand::Type_TexturedVertexColor], cmdDepth, false);
 		} else if (cmd->m_Type == DrawCommand::Type_ColorGradient) {
-			BX_CHECK(isValid(cmd->m_GradientHandle), "Invalid gradient handle");
-			Gradient* grad = &m_Gradients[cmd->m_GradientHandle.idx];
+			BX_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid gradient handle");
+			Gradient* grad = &m_Gradients[cmd->m_HandleID];
 
 			bgfx::setUniform(m_PaintMatUniform, grad->m_Matrix, 1);
 			bgfx::setUniform(m_ExtentRadiusFeatherUniform, grad->m_Params, 1);
@@ -1999,6 +1992,21 @@ void Context::popState()
 {
 	BX_CHECK(m_CurStateID > 0, "State stack underflow");
 	--m_CurStateID;
+
+	// If the new state has a different scissor rect than the last draw command 
+	// force creating a new command.
+	if (m_NumDrawCommands != 0) {
+		const DrawCommand* lastDrawCommand = &m_DrawCommands[m_NumDrawCommands - 1];
+		const uint16_t* lastScissor = &lastDrawCommand->m_ScissorRect[0];
+		const float* stateScissor = &m_StateStack[m_CurStateID].m_ScissorRect[0];
+		if (lastScissor[0] != (uint16_t)stateScissor[0] ||
+			lastScissor[1] != (uint16_t)stateScissor[1] ||
+			lastScissor[2] != (uint16_t)stateScissor[2] ||
+			lastScissor[3] != (uint16_t)stateScissor[3]) 
+		{
+			m_ForceNewDrawCommand = true;
+		}
+	}
 }
 
 void Context::resetScissor()
@@ -2007,6 +2015,7 @@ void Context::resetScissor()
 	state->m_ScissorRect[0] = state->m_ScissorRect[1] = 0.0f;
 	state->m_ScissorRect[2] = (float)m_WinWidth;
 	state->m_ScissorRect[3] = (float)m_WinHeight;
+	m_ForceNewDrawCommand = true;
 }
 
 void Context::setScissor(float x, float y, float w, float h)
@@ -2018,6 +2027,7 @@ void Context::setScissor(float x, float y, float w, float h)
 	state->m_ScissorRect[1] = pos.y;
 	state->m_ScissorRect[2] = size.x;
 	state->m_ScissorRect[3] = size.y;
+	m_ForceNewDrawCommand = true;
 }
 
 bool Context::intersectScissor(float x, float y, float w, float h)
@@ -2037,6 +2047,8 @@ bool Context::intersectScissor(float x, float y, float w, float h)
 	state->m_ScissorRect[1] = miny;
 	state->m_ScissorRect[2] = max2(0.0f, maxx - minx);
 	state->m_ScissorRect[3] = max2(0.0f, maxy - miny);
+
+	m_ForceNewDrawCommand = true;
 
 	// Return false in case scissor rect is too small for bgfx to handle correctly
 	// NOTE: This was originally required in NanoVG because the scissor rectangle is passed
@@ -3229,7 +3241,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 	bx::memCopy(dstColor, m_TempGeomColor, sizeof(uint32_t) * numDrawVertices);
 
 	const uint32_t startVertexID = cmd->m_NumVertices;
-	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	batchTransformDrawIndices(m_TempGeomIndex, m_TempGeomNumIndices, dstIndex, (uint16_t)startVertexID);
 
 	cmd->m_NumVertices += numDrawVertices;
@@ -3574,7 +3586,7 @@ void Context::renderPathStrokeAAThin(const Vec2* vtx, uint32_t numPathVertices, 
 	bx::memCopy(dstColor, m_TempGeomColor, sizeof(uint32_t) * numDrawVertices);
 
 	const uint32_t startVertexID = cmd->m_NumVertices;
-	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	batchTransformDrawIndices(m_TempGeomIndex, m_TempGeomNumIndices, dstIndex, (uint16_t)startVertexID);
 
 	cmd->m_NumVertices += numDrawVertices;
@@ -3979,7 +3991,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 	memset32(dstColor, numDrawVertices, &color);
 
 	const uint32_t startVertexID = cmd->m_NumVertices;
-	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	batchTransformDrawIndices(m_TempGeomIndex, m_TempGeomNumIndices, dstIndex, (uint16_t)startVertexID);
 
 	cmd->m_NumVertices += numDrawVertices;
@@ -4357,7 +4369,7 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 		Vec2* dstPos = &vb->m_Pos[vbOffset];
 		Vec2* dstUV = &vb->m_UV[vbOffset];
 		uint32_t* dstColor = &vb->m_Color[vbOffset];
-		uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+		uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 		const uint16_t startVertexID = (uint16_t)cmd->m_NumVertices;
 
@@ -4439,7 +4451,7 @@ void Context::cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* c
 {
 	BX_CHECK(cmd->m_NumVertices < 65536, "Each draw command should have max 65535 vertices");
 	BX_CHECK(cmd->m_NumIndices < 65536, "Each draw command should have max 65535 indices");
-	BX_CHECK(cmd->m_Type == DrawCommand::Type_TexturedVertexColor && cmd->m_ImageHandle.idx == m_FontImages[0].idx, "Cannot cache draw command");
+	BX_CHECK(cmd->m_Type == DrawCommand::Type_TexturedVertexColor && cmd->m_HandleID == m_FontImages[0].idx, "Cannot cache draw command");
 
 	// TODO: Currently only solid color untextured paths are cached. So all draw commands can be batched into a single VB/IB.
 	CachedDrawCommand* cachedCmd = nullptr;
@@ -4640,7 +4652,7 @@ void Context::renderTextQuads(uint32_t numQuads, Color color)
 		++q;
 	}
 
-	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	uint32_t startVertexID = cmd->m_NumVertices;
 	while (numQuads-- > 0) {
 		*dstIndex++ = (uint16_t)startVertexID;
@@ -4686,7 +4698,7 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
 	memset32(dstColor, numDrawVertices, &c);
 
-	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	const uint32_t startVertexID = cmd->m_NumVertices;
 	uint32_t secondTriVertex = startVertexID + 1;
 	while (numTris-- > 0) {
@@ -4753,7 +4765,7 @@ void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, C
 		d01 = d12;
 	}
 
-	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	const uint32_t startVertexID = cmd->m_NumVertices;
 
 	// Generate the triangle fan (original polygon)
@@ -4820,7 +4832,7 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
 	memset32(dstColor, numDrawVertices, &c);
 
-	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	const uint32_t startVertexID = cmd->m_NumVertices;
 	uint32_t secondTriVertex = startVertexID + 1;
 	while (numTris-- > 0) {
@@ -4858,7 +4870,7 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 	const uint32_t color = ColorRGBA::White;
 	memset32(dstColor, numDrawVertices, &color);
 
-	uint16_t* dstIndex = &cmd->m_IB->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	const uint32_t startVertexID = cmd->m_NumVertices;
 	uint32_t secondTriVertex = startVertexID + 1;
 	while (numTris-- > 0) {
@@ -4893,19 +4905,21 @@ DrawCommand* Context::allocDrawCommand_TexturedVertexColor(uint32_t numVertices,
 	if (ib->m_Count + numIndices > ib->m_Capacity) {
 		const uint32_t nextCapacity = ib->m_Capacity != 0 ? (ib->m_Capacity * 3) / 2 : 32;
 		ib->m_Capacity = max2(nextCapacity, ib->m_Count + numIndices);
-		ib->m_Indices = (uint16_t*)BX_REALLOC(m_Allocator, ib->m_Indices, sizeof(uint16_t) * ib->m_Capacity);
+		ib->m_Indices = (uint16_t*)BX_ALIGNED_REALLOC(m_Allocator, ib->m_Indices, sizeof(uint16_t) * ib->m_Capacity, 16);
 	}
 
 	if (!m_ForceNewDrawCommand && m_NumDrawCommands != 0) {
 		DrawCommand* prevCmd = &m_DrawCommands[m_NumDrawCommands - 1];
+
 		BX_CHECK(prevCmd->m_VertexBufferID == vbID, "Cannot merge draw commands with different vertex buffers");
-		BX_CHECK(prevCmd->m_IB == ib, "Cannot merge draw commands with different index buffers");
+		BX_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0] 
+			&& prevCmd->m_ScissorRect[1] == (uint16_t)scissor[1] 
+			&& prevCmd->m_ScissorRect[2] == (uint16_t)scissor[2] 
+			&& prevCmd->m_ScissorRect[3] == (uint16_t)scissor[3], "Invalid scissor rect");
+
 		if (prevCmd->m_Type == DrawCommand::Type_TexturedVertexColor && 
-			prevCmd->m_ImageHandle.idx == img.idx && 
-			prevCmd->m_ScissorRect[0] == scissor[0] && 
-			prevCmd->m_ScissorRect[1] == scissor[1] && 
-			prevCmd->m_ScissorRect[2] == scissor[2] && 
-			prevCmd->m_ScissorRect[3] == scissor[3]) {
+			prevCmd->m_HandleID == img.idx) 
+		{
 			vb->m_Count += numVertices;
 			ib->m_Count += numIndices;
 			return prevCmd;
@@ -4922,14 +4936,15 @@ DrawCommand* Context::allocDrawCommand_TexturedVertexColor(uint32_t numVertices,
 	DrawCommand* cmd = &m_DrawCommands[m_NumDrawCommands++];
 	cmd->m_VertexBufferID = vbID;
 	cmd->m_FirstVertexID = vb->m_Count;
-	cmd->m_IB = ib;
 	cmd->m_FirstIndexID = ib->m_Count;
 	cmd->m_NumVertices = 0;
 	cmd->m_NumIndices = 0;
 	cmd->m_Type = DrawCommand::Type_TexturedVertexColor;
-	cmd->m_ImageHandle = img;
-	cmd->m_GradientHandle = VG_INVALID_HANDLE;
-	bx::memCopy(cmd->m_ScissorRect, scissor, sizeof(float) * 4);
+	cmd->m_HandleID = img.idx;
+	cmd->m_ScissorRect[0] = (uint16_t)scissor[0];
+	cmd->m_ScissorRect[1] = (uint16_t)scissor[1];
+	cmd->m_ScissorRect[2] = (uint16_t)scissor[2];
+	cmd->m_ScissorRect[3] = (uint16_t)scissor[3];
 
 	vb->m_Count += numVertices;
 	ib->m_Count += numIndices;
@@ -4960,21 +4975,21 @@ DrawCommand* Context::allocDrawCommand_ColorGradient(uint32_t numVertices, uint3
 	if (ib->m_Count + numIndices > ib->m_Capacity) {
 		const uint32_t nextCapacity = ib->m_Capacity != 0 ? (ib->m_Capacity * 3) / 2 : 32;
 		ib->m_Capacity = max2(nextCapacity, ib->m_Count + numIndices);
-		ib->m_Indices = (uint16_t*)BX_REALLOC(m_Allocator, ib->m_Indices, sizeof(uint16_t) * ib->m_Capacity);
+		ib->m_Indices = (uint16_t*)BX_ALIGNED_REALLOC(m_Allocator, ib->m_Indices, sizeof(uint16_t) * ib->m_Capacity, 16);
 	}
 
-	if (!m_ForceNewDrawCommand) {
-		BX_CHECK(m_NumDrawCommands != 0, "Something terrible happened!");
+	if (!m_ForceNewDrawCommand && m_NumDrawCommands != 0) {
 		DrawCommand* prevCmd = &m_DrawCommands[m_NumDrawCommands - 1];
 
 		BX_CHECK(prevCmd->m_VertexBufferID == vbID, "Cannot merge draw commands with different vertex buffers");
-		BX_CHECK(prevCmd->m_IB == ib, "Cannot merge draw commands with different index buffers");
+		BX_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0] 
+			&& prevCmd->m_ScissorRect[1] == (uint16_t)scissor[1] 
+			&& prevCmd->m_ScissorRect[2] == (uint16_t)scissor[2] 
+			&& prevCmd->m_ScissorRect[3] == (uint16_t)scissor[3], "Invalid scissor rect");
+
 		if (prevCmd->m_Type == DrawCommand::Type_ColorGradient &&
-			prevCmd->m_GradientHandle.idx == gradientHandle.idx &&
-			prevCmd->m_ScissorRect[0] == scissor[0] &&
-			prevCmd->m_ScissorRect[1] == scissor[1] &&
-			prevCmd->m_ScissorRect[2] == scissor[2] &&
-			prevCmd->m_ScissorRect[3] == scissor[3]) {
+			prevCmd->m_HandleID == gradientHandle.idx) 
+		{
 			vb->m_Count += numVertices;
 			ib->m_Count += numIndices;
 			return prevCmd;
@@ -4991,14 +5006,15 @@ DrawCommand* Context::allocDrawCommand_ColorGradient(uint32_t numVertices, uint3
 	DrawCommand* cmd = &m_DrawCommands[m_NumDrawCommands++];
 	cmd->m_VertexBufferID = vbID;
 	cmd->m_FirstVertexID = vb->m_Count;
-	cmd->m_IB = ib;
 	cmd->m_FirstIndexID = ib->m_Count;
 	cmd->m_NumVertices = 0;
 	cmd->m_NumIndices = 0;
 	cmd->m_Type = DrawCommand::Type_ColorGradient;
-	cmd->m_ImageHandle = VG_INVALID_HANDLE;
-	cmd->m_GradientHandle = gradientHandle;
-	bx::memCopy(cmd->m_ScissorRect, scissor, sizeof(float) * 4);
+	cmd->m_HandleID = gradientHandle.idx;
+	cmd->m_ScissorRect[0] = (uint16_t)scissor[0];
+	cmd->m_ScissorRect[1] = (uint16_t)scissor[1];
+	cmd->m_ScissorRect[2] = (uint16_t)scissor[2];
+	cmd->m_ScissorRect[3] = (uint16_t)scissor[3];
 
 	vb->m_Count += numVertices;
 	ib->m_Count += numIndices;
