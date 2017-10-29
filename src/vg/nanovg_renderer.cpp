@@ -891,4 +891,23 @@ void NanoVGRenderer::SubmitShape(Shape* shape, GetStringByIDFunc stringCallback,
 #undef READ
 }
 #endif
+
+String* NanoVGRenderer::CreateString(const char* fontName, float fontSize, const char* text, const char* end)
+{
+	BX_UNUSED(fontName, fontSize, text, end);
+	BX_CHECK(false, "Not implemented yet");
+	return nullptr;
+}
+
+void NanoVGRenderer::DestroyString(String* str)
+{
+	BX_UNUSED(str);
+	BX_CHECK(false, "Not implemented yet");
+}
+
+void NanoVGRenderer::Text(String* str, uint32_t alignment, Color color, float x, float y)
+{
+	BX_UNUSED(str, alignment, color, x, y);
+	BX_CHECK(false, "Not implemented yet");
+}
 }

@@ -74,6 +74,10 @@ public:
 #if VG_CONFIG_SHAPE_DYNAMIC_TEXT
 	virtual void SubmitShape(Shape* shape, GetStringByIDFunc stringCallback, void* userData) = 0;
 #endif
+
+	virtual String* CreateString(const char* fontName, float fontSize, const char* text, const char* end) = 0;
+	virtual void DestroyString(String* str) = 0;
+	virtual void Text(String* str, uint32_t alignment, Color color, float x, float y) = 0;
 };
 }
 

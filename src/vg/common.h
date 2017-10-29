@@ -51,7 +51,7 @@ namespace vg
 // NOTE: This can be changed to (e.g.) a function pointer, as long as the signature remains the same.
 typedef std::function<const char* (uint32_t /*stringID*/, uint32_t& /*len*/, void* /*userData*/)> GetStringByIDFunc;
 }
-#endif
+#endif // VG_CONFIG_SHAPE_DYNAMIC_TEXT
 
 namespace vg
 {
@@ -172,6 +172,13 @@ struct Font
 {
 	FontHandle m_Handle;
 	float m_Size;
+};
+
+struct String
+{
+	char* m_Text;
+	void* m_RendererData;
+	Font m_Font;
 };
 
 // NOTE: The following 2 structs are identical to NanoVG because the rest of the code uses

@@ -193,16 +193,33 @@ struct CachedDrawCommand
 	uint16_t m_NumIndices;
 };
 
+struct CachedTextCommand
+{
+	String* m_Text;
+	uint32_t m_Alignment;
+	Color m_Color;
+	Vec2 m_Pos;
+};
+
 struct CachedShape
 {
 	CachedDrawCommand* m_DrawCommands;
+	CachedTextCommand* m_StaticTextCommands;
 	const uint8_t** m_TextCommands;
 	uint32_t m_NumDrawCommands;
 	uint32_t m_NumTextCommands;
+	uint32_t m_NumStaticTextCommands;
 	float m_InvTransformMtx[6];
 	float m_AvgScale;
 
-	CachedShape() : m_AvgScale(0.0f), m_DrawCommands(nullptr), m_NumDrawCommands(0), m_TextCommands(nullptr), m_NumTextCommands(0)
+	CachedShape() 
+		: m_AvgScale(0.0f)
+		, m_DrawCommands(nullptr)
+		, m_NumDrawCommands(0)
+		, m_TextCommands(nullptr)
+		, m_StaticTextCommands(nullptr)
+		, m_NumTextCommands(0)
+		, m_NumStaticTextCommands(0)
 	{
 		bx::memSet(m_InvTransformMtx, 0, sizeof(float) * 6);
 		m_InvTransformMtx[0] = m_InvTransformMtx[3] = 1.0f;
@@ -267,6 +284,7 @@ struct Context
 	uint32_t m_TempGeomIndexCapacity;
 
 	FONScontext* m_FontStashContext;
+	FONSstring m_TextString;
 	ImageHandle m_FontImages[MAX_FONT_IMAGES];
 	int m_FontImageID;
 	void* m_FontData[VG_CONFIG_MAX_FONTS];
@@ -413,6 +431,7 @@ struct Context
 	void cachedShapeReset(CachedShape* shape);
 	void cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* cmd);
 	void cachedShapeAddTextCommand(CachedShape* shape, const uint8_t* cmdData);
+	void cachedShapeAddTextCommand(CachedShape* shape, String* str, uint32_t alignment, Color col, float x, float y);
 	void cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* stringCallback, void* userData);
 
 	// Temporary geometry
@@ -428,6 +447,11 @@ struct Context
 	void tempGeomAddPos(const Vec2* srcPos, uint32_t n);
 	void tempGeomAddPosColor(const Vec2* srcPos, const uint32_t* srcColor, uint32_t n);
 	void tempGeomAddIndices(const uint16_t* __restrict src, uint32_t n);
+
+	// Strings
+	String* createString(const Font& font, const char* text, const char* end);
+	void destroyString(String* str);
+	void text(String* str, uint32_t alignment, Color color, float x, float y);
 };
 
 static void releaseVertexBufferDataCallback_Vec2(void* ptr, void* userData)
@@ -830,6 +854,21 @@ void BGFXVGRenderer::SubmitShape(Shape* shape, GetStringByIDFunc stringCallback,
 }
 #endif // VG_CONFIG_SHAPE_DYNAMIC_TEXT
 
+String* BGFXVGRenderer::CreateString(const char* fontName, float fontSize, const char* text, const char* end)
+{
+	return m_Context->createString(CreateFontWithSize(fontName, fontSize), text, end);
+}
+
+void BGFXVGRenderer::DestroyString(String* str)
+{
+	m_Context->destroyString(str);
+}
+
+void BGFXVGRenderer::Text(String* str, uint32_t alignment, Color color, float x, float y)
+{
+	m_Context->text(str, alignment, color, x, y);
+}
+
 //////////////////////////////////////////////////////////////////////////
 // Context
 //
@@ -898,10 +937,14 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID) :
 	bx::memSet(m_Gradients, 0, sizeof(Gradient) * VG_CONFIG_MAX_GRADIENTS);
 	bx::memSet(m_ImagePatterns, 0, sizeof(ImagePattern) * VG_CONFIG_MAX_IMAGE_PATTERNS);
 	bx::memSet(m_StateStack, 0, sizeof(State) * MAX_STATE_STACK_SIZE);
+
+	fonsInitString(&m_TextString);
 }
 
 Context::~Context()
 {
+	fonsDestroyString(&m_TextString);
+
 	for (uint32_t i = 0; i < DrawCommand::NumTypes; ++i) {
 		if (bgfx::isValid(m_ProgramHandle[i])) {
 			bgfx::destroy(m_ProgramHandle[i]);
@@ -1052,7 +1095,7 @@ bool Context::init()
 		return false;
 	}
 
-	m_FontImages[0] = createImageRGBA((uint16_t)fontParams.width, (uint16_t)fontParams.height, ImageFlags::Filter_Bilinear, nullptr);
+	m_FontImages[0] = createImageRGBA((uint16_t)fontParams.width, (uint16_t)fontParams.height, ImageFlags::Filter_Nearest, nullptr);
 	if (!isValid(m_FontImages[0])) {
 		return false;
 	}
@@ -2146,7 +2189,7 @@ void Context::text(const Font& font, uint32_t alignment, Color color, float x, f
 	}
 
 	if (!end) {
-		end = text + strlen(text);
+		end = text + bx::strLen(text);
 	}
 
 	if (end == text) {
@@ -2154,61 +2197,93 @@ void Context::text(const Font& font, uint32_t alignment, Color color, float x, f
 	}
 
 	fonsSetSize(m_FontStashContext, scaledFontSize);
-	fonsSetAlign(m_FontStashContext, alignment);
+//	fonsSetAlign(m_FontStashContext, alignment);
 	fonsSetFont(m_FontStashContext, font.m_Handle.idx);
 
-	// Assume ASCII where each byte is a codepoint. Otherwise, the number 
-	// of quads will be less than the number of chars/bytes.
-	const uint32_t maxChars = (uint32_t)(end - text);
-	if (m_TextQuadCapacity < maxChars) {
-		m_TextQuadCapacity = maxChars;
-		m_TextQuads = (FONSquad*)BX_ALIGNED_REALLOC(m_Allocator, m_TextQuads, sizeof(FONSquad) * m_TextQuadCapacity, 16);
-		m_TextVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_TextVertices, sizeof(Vec2) * m_TextQuadCapacity * 4, 16);
-	}
-	
-	FONStextIter iter;
-	fonsTextIterInit(m_FontStashContext, &iter, x * scale, y * scale, text, end);
+	fonsResetString(m_FontStashContext, &m_TextString, text, end);
 
-	FONSquad* nextQuad = m_TextQuads;
-	FONStextIter prevIter = iter;
-	while (fonsTextIterNext(m_FontStashContext, &iter, nextQuad)) {
-		if (iter.prevGlyphIndex == -1) {
-			// Draw all quads up to this point (if any) with the current atlas texture.
-			const uint32_t numQuads = (uint32_t)(nextQuad - m_TextQuads);
-			if (numQuads != 0) {
-				BX_CHECK(numQuads <= m_TextQuadCapacity, "Text command generated more quads than the temp buffer can hold");
-
-				renderTextQuads(numQuads, color);
-
-				// Reset next quad ptr.
-				nextQuad = m_TextQuads;
-			}
-
-			// Allocate a new atlas
-			if (!allocTextAtlas()) {
-				break;
-			}
-
-			// And try fitting the glyph once again.
-			iter = prevIter;
-			fonsTextIterNext(m_FontStashContext, &iter, nextQuad);
-			if (iter.prevGlyphIndex == -1) {
-				break;
-			}
+	uint32_t numBakedChars = fonsBakeString(m_FontStashContext, &m_TextString);
+	if (numBakedChars == ~0u) {
+		// Atlas full? Retry
+		if (!allocTextAtlas()) {
+			return;
 		}
 
-		++nextQuad;
-		prevIter = iter;
+		numBakedChars = fonsBakeString(m_FontStashContext, &m_TextString);
 	}
 
-	const uint32_t numQuads = (uint32_t)(nextQuad - m_TextQuads);
-	if (numQuads == 0) {
+	if (numBakedChars == ~0u || numBakedChars == 0) {
 		return;
 	}
 
-	BX_CHECK(numQuads <= m_TextQuadCapacity, "Text command generated more quads than the temp buffer can hold");
+	if (m_TextQuadCapacity < numBakedChars) {
+		m_TextQuadCapacity = numBakedChars;
+		m_TextQuads = (FONSquad*)BX_ALIGNED_REALLOC(m_Allocator, m_TextQuads, sizeof(FONSquad) * m_TextQuadCapacity, 16);
+		m_TextVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_TextVertices, sizeof(Vec2) * m_TextQuadCapacity * 4, 16);
+	}
 
-	renderTextQuads(numQuads, color);
+	bx::memCopy(m_TextQuads, m_TextString.m_Quads, sizeof(FONSquad) * numBakedChars);
+
+	float dx = 0.0f, dy = 0.0f;
+	fonsAlignString(m_FontStashContext, &m_TextString, alignment, &dx, &dy);
+
+	pushState();
+	transformTranslate(x + dx / scale, y + dy / scale);
+	renderTextQuads(numBakedChars, color);
+	popState();
+
+//	// Assume ASCII where each byte is a codepoint. Otherwise, the number 
+//	// of quads will be less than the number of chars/bytes.
+//	const uint32_t maxChars = (uint32_t)(end - text);
+//	if (m_TextQuadCapacity < maxChars) {
+//		m_TextQuadCapacity = maxChars;
+//		m_TextQuads = (FONSquad*)BX_ALIGNED_REALLOC(m_Allocator, m_TextQuads, sizeof(FONSquad) * m_TextQuadCapacity, 16);
+//		m_TextVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_TextVertices, sizeof(Vec2) * m_TextQuadCapacity * 4, 16);
+//	}
+//	
+//	FONStextIter iter;
+//	fonsTextIterInit(m_FontStashContext, &iter, x * scale, y * scale, text, end);
+//
+//	FONSquad* nextQuad = m_TextQuads;
+//	FONStextIter prevIter = iter;
+//	while (fonsTextIterNext(m_FontStashContext, &iter, nextQuad)) {
+//		if (iter.prevGlyphIndex == -1) {
+//			// Draw all quads up to this point (if any) with the current atlas texture.
+//			const uint32_t numQuads = (uint32_t)(nextQuad - m_TextQuads);
+//			if (numQuads != 0) {
+//				BX_CHECK(numQuads <= m_TextQuadCapacity, "Text command generated more quads than the temp buffer can hold");
+//
+//				renderTextQuads(numQuads, color);
+//
+//				// Reset next quad ptr.
+//				nextQuad = m_TextQuads;
+//			}
+//
+//			// Allocate a new atlas
+//			if (!allocTextAtlas()) {
+//				break;
+//			}
+//
+//			// And try fitting the glyph once again.
+//			iter = prevIter;
+//			fonsTextIterNext(m_FontStashContext, &iter, nextQuad);
+//			if (iter.prevGlyphIndex == -1) {
+//				break;
+//			}
+//		}
+//
+//		++nextQuad;
+//		prevIter = iter;
+//	}
+//
+//	const uint32_t numQuads = (uint32_t)(nextQuad - m_TextQuads);
+//	if (numQuads == 0) {
+//		return;
+//	}
+//
+//	BX_CHECK(numQuads <= m_TextQuadCapacity, "Text command generated more quads than the temp buffer can hold");
+//
+//	renderTextQuads(numQuads, color);
 }
 
 void Context::textBox(const Font& font, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* str, const char* end)
@@ -2364,7 +2439,7 @@ int Context::textBreakLines(const Font& font, uint32_t alignment, const char* te
 	}
 
 	if (end == nullptr) {
-		end = text + strlen(text);
+		end = text + bx::strLen(text);
 	}
 
 	if (text == end) {
@@ -2583,7 +2658,7 @@ int Context::textGlyphPositions(const Font& font, uint32_t alignment, float x, f
 	const float invscale = 1.0f / scale;
 
 	if (!end) {
-		end = text + strlen(text);
+		end = text + bx::strLen(text);
 	}
 
 	if (text == end) {
@@ -4298,11 +4373,11 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 		}
 		case ShapeCommand::TextStatic:
 		{
-#if VG_CONFIG_ENABLE_SHAPE_CACHING
-			if (canCache) {
-				cachedShapeAddTextCommand(cachedShape, cmdList - sizeof(ShapeCommand::Enum));
-			}
-#endif
+//#if VG_CONFIG_ENABLE_SHAPE_CACHING
+//			if (canCache) {
+//				cachedShapeAddTextCommand(cachedShape, cmdList - sizeof(ShapeCommand::Enum));
+//			}
+//#endif
 
 			Font font = CMD_READ(Font, cmdList);
 			uint32_t alignment = CMD_READ(uint32_t, cmdList);
@@ -4312,7 +4387,14 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			uint32_t len = CMD_READ(uint32_t, cmdList);
 			const char* str = (const char*)cmdList;
 			cmdList += len;
+
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
+			String* cachedString = createString(font, str, str + len);
+			cachedShapeAddTextCommand(cachedShape, cachedString, alignment, col, x, y);
+			text(cachedString, alignment, col, x, y);
+#else
 			text(font, alignment, col, x, y, str, str + len);
+#endif
 			break;
 		}
 #if VG_CONFIG_SHAPE_DYNAMIC_TEXT
@@ -4335,7 +4417,7 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			if (stringCallback) {
 				uint32_t len;
 				const char* str = (*stringCallback)(stringID, len, userData);
-				const char* end = len != ~0u ? str + len : str + strlen(str);
+				const char* end = len != ~0u ? str + len : str + bx::strLen(str);
 
 				text(font, alignment, col, x, y, str, end);
 				break;
@@ -4383,6 +4465,12 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 	}
 
 	// Render all text commands...
+	const uint32_t numStaticTextCommands = shape->m_NumStaticTextCommands;
+	for (uint32_t iStatic = 0; iStatic < numStaticTextCommands; ++iStatic) {
+		CachedTextCommand* cmd = &shape->m_StaticTextCommands[iStatic];
+		text(cmd->m_Text, cmd->m_Alignment, cmd->m_Color, cmd->m_Pos.x, cmd->m_Pos.y);
+	}
+
 	const uint32_t numTextCommands = shape->m_NumTextCommands;
 	for (uint32_t iText = 0; iText < numTextCommands; ++iText) {
 		const uint8_t* cmdData = shape->m_TextCommands[iText];
@@ -4418,7 +4506,7 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 			if (stringCallback) {
 				uint32_t len;
 				const char* str = (*stringCallback)(stringID, len, userData);
-				const char* end = len != ~0u ? str + len : str + strlen(str);
+				const char* end = len != ~0u ? str + len : str + bx::strLen(str);
 
 				text(font, alignment, col, x, y, str, end);
 				break;
@@ -4440,10 +4528,18 @@ void Context::cachedShapeReset(CachedShape* shape)
 		BX_ALIGNED_FREE(m_Allocator, shape->m_DrawCommands[i].m_Indices, 16);
 	}
 	BX_FREE(m_Allocator, shape->m_DrawCommands);
-	BX_FREE(m_Allocator, shape->m_TextCommands);
 	shape->m_DrawCommands = nullptr;
-	shape->m_TextCommands = nullptr;
 	shape->m_NumDrawCommands = 0;
+
+	for (uint32_t i = 0; i < shape->m_NumStaticTextCommands; ++i) {
+		destroyString(shape->m_StaticTextCommands[i].m_Text);
+	}
+	BX_FREE(m_Allocator, shape->m_StaticTextCommands);
+	shape->m_StaticTextCommands = nullptr;
+	shape->m_NumStaticTextCommands = 0;
+
+	BX_FREE(m_Allocator, shape->m_TextCommands);
+	shape->m_TextCommands = nullptr;
 	shape->m_NumTextCommands = 0;
 }
 
@@ -4506,6 +4602,19 @@ void Context::cachedShapeAddTextCommand(CachedShape* shape, const uint8_t* cmdDa
 	shape->m_TextCommands[shape->m_NumTextCommands - 1] = cmdData;
 }
 
+void Context::cachedShapeAddTextCommand(CachedShape* shape, String* str, uint32_t alignment, Color col, float x, float y)
+{
+	shape->m_NumStaticTextCommands++;
+	shape->m_StaticTextCommands = (CachedTextCommand*)BX_REALLOC(m_Allocator, shape->m_StaticTextCommands, sizeof(CachedTextCommand) * shape->m_NumStaticTextCommands);
+
+	CachedTextCommand* cmd = &shape->m_StaticTextCommands[shape->m_NumStaticTextCommands - 1];
+	cmd->m_Text = str;
+	cmd->m_Alignment = alignment;
+	cmd->m_Color = col;
+	cmd->m_Pos.x = x;
+	cmd->m_Pos.y = y;
+}
+
 void Context::getImageSize(ImageHandle image, int* w, int* h)
 {
 	if (!isValid(image)) {
@@ -4553,7 +4662,7 @@ bool Context::allocTextAtlas()
 			iw = ih = maxTextureSize;
 		}
 
-		m_FontImages[m_FontImageID + 1] = createImageRGBA((uint16_t)iw, (uint16_t)ih, ImageFlags::Filter_Bilinear, nullptr);
+		m_FontImages[m_FontImageID + 1] = createImageRGBA((uint16_t)iw, (uint16_t)ih, ImageFlags::Filter_Nearest, nullptr);
 	}
 
 	++m_FontImageID;
@@ -5361,6 +5470,80 @@ BX_FORCE_INLINE void Context::tempGeomAddIndices(const uint16_t* src, uint32_t n
 	bx::memCopy(&m_TempGeomIndex[m_TempGeomNumIndices], src, sizeof(uint16_t) * n);
 
 	m_TempGeomNumIndices += n;
+}
+
+String* Context::createString(const Font& font, const char* text, const char* end)
+{
+	const uint32_t textSize = (uint32_t)(end ? end - text : bx::strLen(text));
+	const uint32_t bufSize = sizeof(String) + textSize + 1 + sizeof(FONSstring);
+	uint8_t* buf = (uint8_t*)BX_ALLOC(m_Allocator, bufSize);
+
+	String* str = (String*)buf;
+	str->m_RendererData = buf + sizeof(String);
+	str->m_Text = (char*)(buf + sizeof(String) + sizeof(FONSstring));
+	str->m_Font = font;
+
+	bx::memCopy(str->m_Text, text, textSize);
+	str->m_Text[textSize] = 0;
+
+	FONSstring* fs = (FONSstring*)str->m_RendererData;
+	fonsInitString(fs);
+	fonsSetFont(m_FontStashContext, font.m_Handle.idx);
+	fonsResetString(m_FontStashContext, fs, str->m_Text, nullptr);
+
+	return str;
+}
+
+void Context::destroyString(String* str)
+{
+	fonsDestroyString((FONSstring*)str->m_RendererData);
+	BX_FREE(m_Allocator, str);
+}
+
+void Context::text(String* str, uint32_t alignment, Color color, float x, float y)
+{
+	const State* state = getState();
+	const float scale = state->m_FontScale * m_DevicePixelRatio;
+	const float scaledFontSize = str->m_Font.m_Size * scale;
+	if (scaledFontSize < 1.0f) { // TODO: Make threshold configurable.
+		return;
+	}
+
+	fonsSetSize(m_FontStashContext, scaledFontSize);
+	fonsSetFont(m_FontStashContext, str->m_Font.m_Handle.idx);
+
+	FONSstring* fs = (FONSstring*)str->m_RendererData;
+//	fonsResetString(m_FontStashContext, fs, str->m_Text, nullptr);
+
+	uint32_t numBakedChars = fonsBakeString(m_FontStashContext, fs);
+	if (numBakedChars == ~0u) {
+		// Atlas full? Retry
+		if (!allocTextAtlas()) {
+			return;
+		}
+
+		numBakedChars = fonsBakeString(m_FontStashContext, fs);
+	}
+
+	if (numBakedChars == ~0u || numBakedChars == 0) {
+		return;
+	}
+
+	if (m_TextQuadCapacity < numBakedChars) {
+		m_TextQuadCapacity = numBakedChars;
+		m_TextQuads = (FONSquad*)BX_ALIGNED_REALLOC(m_Allocator, m_TextQuads, sizeof(FONSquad) * m_TextQuadCapacity, 16);
+		m_TextVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_TextVertices, sizeof(Vec2) * m_TextQuadCapacity * 4, 16);
+	}
+
+	bx::memCopy(m_TextQuads, fs->m_Quads, sizeof(FONSquad) * numBakedChars);
+
+	float dx = 0.0f, dy = 0.0f;
+	fonsAlignString(m_FontStashContext, fs, alignment, &dx, &dy);
+
+	pushState();
+	transformTranslate(x + dx / scale, y + dy / scale);
+	renderTextQuads(numBakedChars, color);
+	popState();
 }
 
 // Concave polygon decomposition

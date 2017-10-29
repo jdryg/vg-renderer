@@ -528,6 +528,22 @@ void SVGRenderer::SubmitShape(Shape* shape, GetStringByIDFunc stringCallback, vo
 }
 #endif // VG_CONFIG_SHAPE_DYNAMIC_TEXT
 
+String* SVGRenderer::CreateString(const char* fontName, float fontSize, const char* text, const char* end)
+{
+	BX_UNUSED(fontName, fontSize, text, end);
+	return nullptr;
+}
+
+void SVGRenderer::DestroyString(String* str)
+{
+	BX_UNUSED(str);
+}
+
+void SVGRenderer::Text(String* str, uint32_t alignment, Color color, float x, float y)
+{
+	BX_UNUSED(str, alignment, color, x, y);
+}
+
 //////////////////////////////////////////////////////////////////////////
 // Context
 //
@@ -744,24 +760,28 @@ void Context::strokePath(Color col, float width, LineCap::Enum lineCap, LineJoin
 GradientHandle Context::createLinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol)
 {
 	// TODO: 
+	BX_UNUSED(sx, sy, ex, ey, icol, ocol);
 	return VG_INVALID_HANDLE;
 }
 
 GradientHandle Context::createBoxGradient(float x, float y, float w, float h, float r, float f, Color icol, Color ocol)
 {
 	// TODO: 
+	BX_UNUSED(x, y, w, h, r, f, icol, ocol);
 	return VG_INVALID_HANDLE;
 }
 
 GradientHandle Context::createRadialGradient(float cx, float cy, float inr, float outr, Color icol, Color ocol)
 {
 	// TODO: 
+	BX_UNUSED(cx, cy, inr, outr, icol, ocol);
 	return VG_INVALID_HANDLE;
 }
 
 ImagePatternHandle Context::createImagePattern(float cx, float cy, float w, float h, float angle, ImageHandle image, float alpha)
 {
 	// TODO: 
+	BX_UNUSED(cx, cy, w, h, angle, image, alpha);
 	return VG_INVALID_HANDLE;
 }
 
@@ -814,35 +834,41 @@ void Context::text(const Font& font, uint32_t alignment, Color color, float x, f
 
 void Context::textBox(const Font& font, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* text, const char* end)
 {
+	BX_UNUSED(font, alignment, color, x, y, breakWidth, text, end);
 	// TODO: 
 }
 
 float Context::calcTextBounds(const Font& font, uint32_t alignment, float x, float y, const char* text, const char* end, float* bounds)
 {
 	// TODO: 
+	BX_UNUSED(font, alignment, x, y, text, end, bounds);
 	return 0.0f;
 }
 
 void Context::calcTextBoxBounds(const Font& font, uint32_t alignment, float x, float y, float breakWidth, const char* text, const char* end, float* bounds, uint32_t flags)
 {
 	// TODO: 
+	BX_UNUSED(font, alignment, x, y, breakWidth, text, end, bounds, flags);
 }
 
 float Context::getTextLineHeight(const Font& font, uint32_t alignment)
 {
 	// TODO: 
+	BX_UNUSED(font, alignment);
 	return 0.0f;
 }
 
 int Context::textBreakLines(const Font& font, uint32_t alignment, const char* text, const char* end, float breakRowWidth, TextRow* rows, int maxRows, uint32_t flags)
 {
 	// TODO: 
+	BX_UNUSED(font, alignment, text, end, breakRowWidth, rows, maxRows, flags);
 	return 0;
 }
 
 int Context::textGlyphPositions(const Font& font, uint32_t alignment, float x, float y, const char* text, const char* end, GlyphPosition* positions, int maxPositions)
 {
 	// TODO: 
+	BX_UNUSED(font, alignment, x, y, text, end, positions, maxPositions);
 	return 0;
 }
 
@@ -980,28 +1006,33 @@ void Context::transformMult(const float* mtx, bool pre)
 
 Shape* Context::createShape(uint32_t flags)
 {
+	BX_UNUSED(flags);
 	// TODO: 
 	return nullptr;
 }
 
 void Context::destroyShape(Shape* shape)
 {
+	BX_UNUSED(shape);
 	// TODO: 
 }
 
 void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void* userData)
 {
+	BX_UNUSED(shape, stringCallback, userData);
 	// TODO: 
 }
 
 FontHandle Context::loadFontFromMemory(const char* name, const uint8_t* data, uint32_t size)
 {
+	BX_UNUSED(name, data, size);
 	// TODO: 
 	return VG_INVALID_HANDLE;
 }
 
 FontHandle Context::getFontHandleByName(const char* name)
 {
+	BX_UNUSED(name);
 	// TODO: 
 	return VG_INVALID_HANDLE;
 }

@@ -85,6 +85,10 @@ public:
 	virtual void SubmitShape(Shape* shape, GetStringByIDFunc stringCallback, void* userData);
 #endif
 
+	virtual String* CreateString(const char* fontName, float fontSize, const char* text, const char* end);
+	virtual void DestroyString(String* str);
+	virtual void Text(String* str, uint32_t alignment, Color color, float x, float y);
+
 private:
 	Context* m_Context;
 };
