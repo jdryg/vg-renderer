@@ -1095,7 +1095,7 @@ bool Context::init()
 		return false;
 	}
 
-	m_FontImages[0] = createImageRGBA((uint16_t)fontParams.width, (uint16_t)fontParams.height, ImageFlags::Filter_Nearest, nullptr);
+	m_FontImages[0] = createImageRGBA((uint16_t)fontParams.width, (uint16_t)fontParams.height, ImageFlags::Filter_Bilinear, nullptr);
 	if (!isValid(m_FontImages[0])) {
 		return false;
 	}
@@ -1580,7 +1580,10 @@ void Context::closePath()
 {
 	SubPath* path = getSubPath();
 	BX_CHECK(!path->m_IsClosed, "Path is already closed");
-	BX_CHECK(path->m_NumVertices > 2, "A closed path should have more than 2 vertices");
+//	BX_CHECK(path->m_NumVertices > 2, "A closed path should have more than 2 vertices");
+	if (path->m_NumVertices <= 2) {
+		return;
+	}
 	path->m_IsClosed = true;
 
 	const Vec2& first = m_PathVertices[path->m_FirstVertexID];
@@ -4662,7 +4665,7 @@ bool Context::allocTextAtlas()
 			iw = ih = maxTextureSize;
 		}
 
-		m_FontImages[m_FontImageID + 1] = createImageRGBA((uint16_t)iw, (uint16_t)ih, ImageFlags::Filter_Nearest, nullptr);
+		m_FontImages[m_FontImageID + 1] = createImageRGBA((uint16_t)iw, (uint16_t)ih, ImageFlags::Filter_Bilinear, nullptr);
 	}
 
 	++m_FontImageID;
@@ -5547,6 +5550,190 @@ void Context::text(String* str, uint32_t alignment, Color color, float x, float 
 }
 
 // Concave polygon decomposition
+// http://www.flipcode.com/archives/Efficient_Polygon_Triangulation.shtml
+static float Area(const Vec2* points, uint32_t numPoints)
+{
+	float A = 0.0f;
+	for (uint32_t p = numPoints - 1, q = 0; q < numPoints; p = q++) {
+		A += points[p].x * points[q].y - points[q].x * points[p].y;
+	}
+
+	return A * 0.5f;
+}
+
+inline bool InsideTriangle(const Vec2& A, const Vec2& B, const Vec2& C, const Vec2& P)
+{
+	const Vec2 a = C - B;
+	const Vec2 bp = P - B;
+	const float aCROSSbp = a.x * bp.y - a.y * bp.x;
+	if (aCROSSbp < 0.0f) {
+		return false;
+	}
+
+	const Vec2 c = B - A;
+	const Vec2 ap = P - A;
+	const float cCROSSap = c.x * ap.y - c.y * ap.x;
+	if (cCROSSap < 0.0f) {
+		return false;
+	}
+
+	const Vec2 b = A - C;
+	const Vec2 cp = P - C;
+	const float bCROSScp = b.x * cp.y - b.y * cp.x;
+	if (bCROSScp < 0.0f) {
+		return false;
+	}
+
+	return true;
+};
+
+static bool Snip(const Vec2* points, uint32_t numPoints, int u, int v, int w, int n, const int* V)
+{
+	BX_UNUSED(numPoints);
+
+	const Vec2& A = points[V[u]];
+	const Vec2& B = points[V[v]];
+	const Vec2& C = points[V[w]];
+
+	const Vec2 AB = B - A;
+	const Vec2 AC = C - A;
+	const float AB_cross_AC = AB.x * AC.y - AB.y * AC.x;
+	if (AB_cross_AC < 1e-6f) {
+		return false;
+	}
+
+	for (int p = 0; p < n; p++) {
+		if ((p == u) || (p == v) || (p == w)) {
+			continue;
+		}
+
+		const Vec2& P = points[V[p]];
+		if (InsideTriangle(A, B, C, P)) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+void Context::decomposeAndFillConcavePolygon(const Vec2* points, uint32_t numPoints, Color col, bool aa)
+{
+	// TODO: Correct AA of concave polygons requires keeping track of original polygon edges
+	// and generating AA fringes only for those edges.
+	// NOTE: On second thought, there's no need to keep track of any edge. Every edge from the original
+	// polygon is between i and i+1 vertices. So I might be able to generate AA fringes either way (they
+	// are like half strokes on the outside of the polygon).
+	BX_UNUSED(aa);
+	BX_CHECK(numPoints >= 3, "Invalid number of points in polygon");
+
+	const State* state = getState();
+	const uint32_t c = ColorRGBA::setAlpha(col, (uint8_t)(state->m_GlobalAlpha * ColorRGBA::getAlpha(col)));
+	if (ColorRGBA::getAlpha(c) == 0) {
+		return;
+	}
+
+	// allocate and initialize list of Vertices in polygon
+	// TODO: Avoid allocation
+	int* V = (int*)BX_ALLOC(m_Allocator, sizeof(int) * numPoints);
+
+	tempGeomReset();
+
+	// we want a counter-clockwise polygon in V
+	if (Area(points, numPoints) > 0.0f) {
+		for (uint32_t v = 0; v < numPoints; ++v) {
+			V[v] = v;
+		}
+	} else {
+		const uint32_t last = numPoints - 1;
+		for (uint32_t v = 0; v < numPoints; ++v) {
+			V[v] = last - v;
+		}
+	}
+
+	int n = (int)numPoints;
+	int nv = n;
+
+	// remove nv - 2 Vertices, creating 1 triangle every time
+	int count = 2 * nv;   // error detection
+	for (int v = nv - 1; nv > 2;) {
+		// if we loop, it is probably a non-simple polygon
+		if ((count--) <= 0) {
+			BX_WARN(false, "Not a simple polygon. Falling back to convex rendering.");
+			BX_FREE(m_Allocator, V);
+			renderConvexPolygonNoAA(points, numPoints, col);
+			return;
+		}
+
+		// three consecutive vertices in current polygon, <u,v,w>
+		int u = v; 
+		if (nv <= u) {
+			u = 0; // previous
+		}
+
+		v = u + 1; 
+		if (nv <= v) {
+			v = 0; // new v
+		}
+		
+		int w = v + 1; 
+		if (nv <= w) {
+			w = 0; // next
+		}
+
+		if (Snip(points, numPoints, u, v, w, nv, V)) {
+			// true names of the vertices
+			uint16_t id[3] = {
+				(uint16_t)V[u],
+				(uint16_t)V[v],
+				(uint16_t)V[w]
+			};
+
+			// output Triangle
+			tempGeomExpandIB(3);
+			tempGeomAddIndices(&id[0], 3);
+
+			// remove v from remaining polygon
+			// TODO: Check if this can be avoided (e.g.) by moving the V ptr (probably won't work but worth the check)
+			--nv;
+			for (int s = v; s < nv; ++s) {
+				V[s] = V[s + 1];
+			}
+
+			// reses error detection counter
+			count = 2 * nv;
+		}
+	}
+	
+	BX_FREE(m_Allocator, V);
+
+	// Create draw command
+	const Vec2 uv = getWhitePixelUV();
+	const uint32_t numDrawVertices = numPoints;
+	const uint32_t numDrawIndices = m_TempGeomNumIndices;
+
+	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
+
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	bx::memCopy(dstPos, points, sizeof(Vec2) * numDrawVertices);
+
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	memset64(dstUV, numDrawVertices, &uv.x);
+
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+	memset32(dstColor, numDrawVertices, &c);
+
+	const uint32_t startVertexID = cmd->m_NumVertices;
+	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	batchTransformDrawIndices(m_TempGeomIndex, m_TempGeomNumIndices, dstIndex, (uint16_t)startVertexID);
+
+	cmd->m_NumVertices += numDrawVertices;
+	cmd->m_NumIndices += numDrawIndices;
+}
+
+#if 0
 // https://mpen.ca/406/bayazit (seems to be down atm)
 inline float area(const Vec2& a, const Vec2& b, const Vec2& c)
 {
@@ -5820,6 +6007,7 @@ void Context::decomposeAndFillConcavePolygon(const Vec2* points, uint32_t numPoi
 		renderConvexPolygonNoAA(points, numPoints, col);
 	}
 }
+#endif
 
 //////////////////////////////////////////////////////////////////////////
 // SIMD functions
