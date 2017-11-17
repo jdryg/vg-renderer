@@ -1437,8 +1437,8 @@ void Context::roundedRect(float x, float y, float w, float h, float r)
 	if (r < 0.1f) {
 		rect(x, y, w, h);
 	} else {
-		float rx = min2(r, fabsf(w) * 0.5f) * sign(w);
-		float ry = min2(r, fabsf(h) * 0.5f) * sign(h);
+		const float rx = min2(r, fabsf(w) * 0.5f) * sign(w);
+		const float ry = min2(r, fabsf(h) * 0.5f) * sign(h);
 
 		r = min2(rx, ry);
 
@@ -1449,75 +1449,91 @@ void Context::roundedRect(float x, float y, float w, float h, float r)
 		const uint32_t numPointsHalfCircle = max2(2, (int)ceilf(PI / da));
 		const uint32_t numPointsQuarterCircle = (numPointsHalfCircle >> 1) + 1;
 
-		moveTo(x, y + ry);
-		lineTo(x, y + h - ry);
+		const float dtheta = -PI * 0.5f / (float)(numPointsQuarterCircle - 1);
+		const float cos_dtheta = cosf(dtheta);
+		const float sin_dtheta = sinf(dtheta);
+
+		moveTo(x, y + r);
+		lineTo(x, y + h - r);
 
 		SubPath* path = getSubPath();
 
 		// Bottom left quarter circle
 		{
-			float cx = x + rx;
-			float cy = y + h - ry;
+			float cx = x + r;
+			float cy = y + h - r;
 			Vec2* circleVertices = allocPathVertices(numPointsQuarterCircle - 1);
-			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
-				const float a = -PI - (PI * 0.5f) * ((float)i / (float)(numPointsQuarterCircle - 1));
 
-				float ca = cosf(a);
-				float sa = sinf(a);
+			float ca = -1.0f; // cosf(-PI);
+			float sa = 0.0f;  // sinf(-PI);
+			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
+				const float ns = sin_dtheta * ca + cos_dtheta * sa;
+				const float nc = cos_dtheta * ca - sin_dtheta * sa;
+				ca = nc;
+				sa = ns;
 
 				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
 			}
 			path->m_NumVertices += (numPointsQuarterCircle - 1);
 		}
 
-		lineTo(x + w - rx, y + h);
+		lineTo(x + w - r, y + h);
 
 		// Bottom right quarter circle
 		{
-			float cx = x + w - rx;
-			float cy = y + h - ry;
+			float cx = x + w - r;
+			float cy = y + h - r;
 			Vec2* circleVertices = allocPathVertices(numPointsQuarterCircle - 1);
-			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
-				const float a = -1.5f * PI - (PI * 0.5f) * ((float)i / (float)(numPointsQuarterCircle - 1));
 
-				float ca = cosf(a);
-				float sa = sinf(a);
+			float ca = 0.0f; // cosf(-1.5f * PI);
+			float sa = 1.0f; // sinf(-1.5f * PI);
+			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
+				const float ns = sin_dtheta * ca + cos_dtheta * sa;
+				const float nc = cos_dtheta * ca - sin_dtheta * sa;
+				ca = nc;
+				sa = ns;
 
 				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
 			}
 			path->m_NumVertices += (numPointsQuarterCircle - 1);
 		}
 
-		lineTo(x + w, y + ry);
+		lineTo(x + w, y + r);
 
 		// Top right quarter circle
 		{
-			float cx = x + w - rx;
-			float cy = y + ry;
+			float cx = x + w - r;
+			float cy = y + r;
 			Vec2* circleVertices = allocPathVertices(numPointsQuarterCircle - 1);
-			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
-				const float a = -(PI * 0.5f) * ((float)i / (float)(numPointsQuarterCircle - 1));
 
-				float ca = cosf(a);
-				float sa = sinf(a);
+			float ca = 1.0f; // cosf(0.0f);
+			float sa = 0.0f; // sinf(0.0f);
+			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
+				const float ns = sin_dtheta * ca + cos_dtheta * sa;
+				const float nc = cos_dtheta * ca - sin_dtheta * sa;
+				ca = nc;
+				sa = ns;
 
 				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
 			}
 			path->m_NumVertices += (numPointsQuarterCircle - 1);
 		}
 
-		lineTo(x + rx, y);
+		lineTo(x + r, y);
 
 		// Top left quarter circle
 		{
-			float cx = x + rx;
-			float cy = y + ry;
+			float cx = x + r;
+			float cy = y + r;
 			Vec2* circleVertices = allocPathVertices(numPointsQuarterCircle - 1);
-			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
-				const float a = -PI * 0.5f - (PI * 0.5f) * ((float)i / (float)(numPointsQuarterCircle - 1));
 
-				float ca = cosf(a);
-				float sa = sinf(a);
+			float ca = 0.0f; // cosf(-0.5f * PI);
+			float sa = -1.0f; // sinf(-0.5f * PI);
+			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
+				const float ns = sin_dtheta * ca + cos_dtheta * sa;
+				const float nc = cos_dtheta * ca - sin_dtheta * sa;
+				ca = nc;
+				sa = ns;
 
 				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
 			}
@@ -1543,14 +1559,23 @@ void Context::circle(float cx, float cy, float r)
 	// NOTE: Get the subpath after MoveTo() because MoveTo will handle the creation of the new subpath (if needed).
 	SubPath* path = getSubPath();
 	Vec2* circleVertices = allocPathVertices(numPoints - 1);
-	for (uint32_t i = 1; i < numPoints; ++i) {
-		const float a = (2.0f * PI) * (1.0f - (float)i / (float)numPoints);
 
-		float ca = cosf(a);
-		float sa = sinf(a);
+	// http://www.iquilezles.org/www/articles/sincos/sincos.htm
+	const float dtheta = -2.0f * PI / (float)numPoints;
+	const float cos_dtheta = cosf(dtheta);
+	const float sin_dtheta = sinf(dtheta);
+
+	float ca = 1.0f;
+	float sa = 0.0f;
+	for (uint32_t i = 1; i < numPoints; ++i) {
+		const float nextSin = sin_dtheta * ca + cos_dtheta * sa;
+		const float nextCos = cos_dtheta * ca - sin_dtheta * sa;
+		ca = nextCos;
+		sa = nextSin;
 
 		*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
 	}
+
 	path->m_NumVertices += (numPoints - 1);
 	closePath();
 }
