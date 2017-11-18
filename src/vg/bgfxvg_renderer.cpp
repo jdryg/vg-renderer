@@ -524,7 +524,7 @@ inline float quantize(float a, float d)
 
 inline float getFontScale(const float* xform)
 {
-	return min2(quantize(getAverageScale(xform), 0.01f), 4.0f);
+	return bx::fmin(quantize(getAverageScale(xform), 0.01f), 4.0f);
 }
 
 inline void vec2Normalize(Vec2* v)
@@ -1437,16 +1437,16 @@ void Context::roundedRect(float x, float y, float w, float h, float r)
 	if (r < 0.1f) {
 		rect(x, y, w, h);
 	} else {
-		const float rx = min2(r, fabsf(w) * 0.5f) * sign(w);
-		const float ry = min2(r, fabsf(h) * 0.5f) * sign(h);
+		const float rx = bx::fmin(r, fabsf(w) * 0.5f) * sign(w);
+		const float ry = bx::fmin(r, fabsf(h) * 0.5f) * sign(h);
 
-		r = min2(rx, ry);
+		r = bx::fmin(rx, ry);
 
 		const State* state = getState();
 
 		const float scale = state->m_AvgScale;
 		const float da = acos((scale * r) / ((scale * r) + m_TesselationTolerance)) * 2.0f;
-		const uint32_t numPointsHalfCircle = max2(2, (int)ceilf(PI / da));
+		const uint32_t numPointsHalfCircle = bx::uint32_max(2, (uint32_t)ceilf(PI / da));
 		const uint32_t numPointsQuarterCircle = (numPointsHalfCircle >> 1) + 1;
 
 		const float dtheta = -PI * 0.5f / (float)(numPointsQuarterCircle - 1);
@@ -1551,7 +1551,7 @@ void Context::circle(float cx, float cy, float r)
 
 	const float da = acos((scale * r) / ((scale * r) + m_TesselationTolerance)) * 2.0f;
 
-	const uint32_t numPointsHalfCircle = max2(2, (int)ceilf(PI / da));
+	const uint32_t numPointsHalfCircle = bx::uint32_max(2, (uint32_t)ceilf(PI / da));
 	const uint32_t numPoints = (numPointsHalfCircle * 2);
 
 	moveTo(cx + r, cy);
@@ -1884,7 +1884,7 @@ GradientHandle Context::createLinearGradient(float sx, float sy, float ex, float
 	grad->m_Params[0] = large;
 	grad->m_Params[1] = large + d * 0.5f;
 	grad->m_Params[2] = 0.0f;
-	grad->m_Params[3] = max2(1.0f, d);
+	grad->m_Params[3] = bx::fmax(1.0f, d);
 	grad->m_InnerColor[0] = ColorRGBA::getRed(icol) / 255.0f;
 	grad->m_InnerColor[1] = ColorRGBA::getGreen(icol) / 255.0f;
 	grad->m_InnerColor[2] = ColorRGBA::getBlue(icol) / 255.0f;
@@ -1934,7 +1934,7 @@ GradientHandle Context::createBoxGradient(float x, float y, float w, float h, fl
 	grad->m_Params[0] = w * 0.5f;
 	grad->m_Params[1] = h * 0.5f;
 	grad->m_Params[2] = r;
-	grad->m_Params[3] = max2(1.0f, f);
+	grad->m_Params[3] = bx::fmax(1.0f, f);
 	grad->m_InnerColor[0] = ColorRGBA::getRed(icol) / 255.0f;
 	grad->m_InnerColor[1] = ColorRGBA::getGreen(icol) / 255.0f;
 	grad->m_InnerColor[2] = ColorRGBA::getBlue(icol) / 255.0f;
@@ -1987,7 +1987,7 @@ GradientHandle Context::createRadialGradient(float cx, float cy, float inr, floa
 	grad->m_Params[0] = r * 0.5f;
 	grad->m_Params[1] = r * 0.5f;
 	grad->m_Params[2] = r;
-	grad->m_Params[3] = max2(1.0f, f);
+	grad->m_Params[3] = bx::fmax(1.0f, f);
 	grad->m_InnerColor[0] = ColorRGBA::getRed(icol) / 255.0f;
 	grad->m_InnerColor[1] = ColorRGBA::getGreen(icol) / 255.0f;
 	grad->m_InnerColor[2] = ColorRGBA::getBlue(icol) / 255.0f;
@@ -2109,15 +2109,15 @@ bool Context::intersectScissor(float x, float y, float w, float h)
 
 	const float* rect = state->m_ScissorRect;
 
-	float minx = max2(pos.x, rect[0]);
-	float miny = max2(pos.y, rect[1]);
-	float maxx = min2(pos.x + size.x, rect[0] + rect[2]);
-	float maxy = min2(pos.y + size.y, rect[1] + rect[3]);
+	float minx = bx::fmax(pos.x, rect[0]);
+	float miny = bx::fmax(pos.y, rect[1]);
+	float maxx = bx::fmin(pos.x + size.x, rect[0] + rect[2]);
+	float maxy = bx::fmin(pos.y + size.y, rect[1] + rect[3]);
 
 	state->m_ScissorRect[0] = minx;
 	state->m_ScissorRect[1] = miny;
-	state->m_ScissorRect[2] = max2(0.0f, maxx - minx);
-	state->m_ScissorRect[3] = max2(0.0f, maxy - miny);
+	state->m_ScissorRect[2] = bx::fmax(0.0f, maxx - minx);
+	state->m_ScissorRect[3] = bx::fmax(0.0f, maxy - miny);
 
 	m_ForceNewDrawCommand = true;
 
@@ -2413,12 +2413,12 @@ void Context::calcTextBoxBounds(const Font& font, uint32_t alignment, float x, f
 			rminx = x + row->minx + dx;
 			rmaxx = x + row->maxx + dx;
 
-			minx = min2(minx, rminx);
-			maxx = max2(maxx, rmaxx);
+			minx = bx::fmin(minx, rminx);
+			maxx = bx::fmax(maxx, rmaxx);
 
 			// Vertical bounds.
-			miny = min2(miny, y + rminy);
-			maxy = max2(maxy, y + rmaxy);
+			miny = bx::fmin(miny, y + rminy);
+			maxy = bx::fmax(maxy, y + rmaxy);
 
 			y += lineh; // Assume line height multiplier of 1.0
 		}
@@ -2712,8 +2712,8 @@ int Context::textGlyphPositions(const Font& font, uint32_t alignment, float x, f
 		prevIter = iter;
 		positions[npos].str = iter.str;
 		positions[npos].x = iter.x * invscale;
-		positions[npos].minx = min2(iter.x, q.x0) * invscale;
-		positions[npos].maxx = max2(iter.nextx, q.x1) * invscale;
+		positions[npos].minx = bx::fmin(iter.x, q.x0) * invscale;
+		positions[npos].maxx = bx::fmax(iter.nextx, q.x1) * invscale;
 		
 		npos++;
 		if (npos >= maxPositions) {
@@ -2735,7 +2735,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 	const float hsw = (strokeWidth - m_FringeWidth) * 0.5f;
 	const float hsw_aa = hsw + m_FringeWidth;
 	const float da = acos((avgScale * hsw) / ((avgScale * hsw) + m_TesselationTolerance)) * 2.0f;
-	const uint32_t numPointsHalfCircle = max2(2u, (uint32_t)ceilf(PI / da));
+	const uint32_t numPointsHalfCircle = bx::uint32_max(2u, (uint32_t)ceilf(PI / da));
 
 	tempGeomReset();
 
@@ -2933,7 +2933,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 						a12 += PI * 2.0f;
 					}
 
-					numArcPoints = max2(2u, (uint32_t)((a12 - a01) / da));
+					numArcPoints = bx::uint32_max(2u, (uint32_t)((a12 - a01) / da));
 					arcDa = ((a12 - a01) / (float)numArcPoints);
 				}
 
@@ -3089,7 +3089,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 						a12 -= PI * 2.0f;
 					}
 
-					numArcPoints = max2(2u, (uint32_t)((a01 - a12) / da));
+					numArcPoints = bx::uint32_max(2u, (uint32_t)((a01 - a12) / da));
 					arcDa = ((a12 - a01) / (float)numArcPoints);
 				}
 
@@ -3704,7 +3704,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 	const uint32_t numSegments = numPathVertices - (_Closed ? 0 : 1);
 	const float hsw = strokeWidth * 0.5f;
 	const float da = acos((avgScale * hsw) / ((avgScale * hsw) + m_TesselationTolerance)) * 2.0f;
-	const uint32_t numPointsHalfCircle = max2(2u, (uint32_t)ceilf(PI / da));
+	const uint32_t numPointsHalfCircle = bx::uint32_max(2u, (uint32_t)ceilf(PI / da));
 
 	tempGeomReset();
 
@@ -3839,7 +3839,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 						a12 += PI * 2.0f;
 					}
 
-					numArcPoints = max2(2u, (uint32_t)((a12 - a01) / da));
+					numArcPoints = bx::uint32_max(2u, (uint32_t)((a12 - a01) / da));
 					arcDa = ((a12 - a01) / (float)numArcPoints);
 				}
 
@@ -3937,7 +3937,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 						a12 -= PI * 2.0f;
 					}
 
-					numArcPoints = max2(2u, (uint32_t)((a01 - a12) / da));
+					numArcPoints = bx::uint32_max(2u, (uint32_t)((a01 - a12) / da));
 					arcDa = ((a12 - a01) / (float)numArcPoints);
 				}
 
@@ -4703,7 +4703,7 @@ bool Context::allocTextAtlas()
 inline Vec2* Context::allocPathVertices(uint32_t n)
 {
 	if (m_NumPathVertices + n > m_PathVertexCapacity) {
-		m_PathVertexCapacity = max2(m_PathVertexCapacity + n, m_PathVertexCapacity != 0 ? (m_PathVertexCapacity * 3) >> 1 : 16);
+		m_PathVertexCapacity = bx::uint32_max(m_PathVertexCapacity + n, m_PathVertexCapacity != 0 ? (m_PathVertexCapacity * 3) >> 1 : 16);
 		m_PathVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_PathVertices, sizeof(Vec2) * m_PathVertexCapacity, 16);
 		m_TransformedPathVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_TransformedPathVertices, sizeof(Vec2) * m_PathVertexCapacity, 16);
 	}
@@ -5041,7 +5041,7 @@ DrawCommand* Context::allocDrawCommand_TexturedVertexColor(uint32_t numVertices,
 	IndexBuffer* ib = getIndexBuffer();
 	if (ib->m_Count + numIndices > ib->m_Capacity) {
 		const uint32_t nextCapacity = ib->m_Capacity != 0 ? (ib->m_Capacity * 3) / 2 : 32;
-		ib->m_Capacity = max2(nextCapacity, ib->m_Count + numIndices);
+		ib->m_Capacity = bx::uint32_max(nextCapacity, ib->m_Count + numIndices);
 		ib->m_Indices = (uint16_t*)BX_ALIGNED_REALLOC(m_Allocator, ib->m_Indices, sizeof(uint16_t) * ib->m_Capacity, 16);
 	}
 
@@ -5111,7 +5111,7 @@ DrawCommand* Context::allocDrawCommand_ColorGradient(uint32_t numVertices, uint3
 	IndexBuffer* ib = getIndexBuffer();
 	if (ib->m_Count + numIndices > ib->m_Capacity) {
 		const uint32_t nextCapacity = ib->m_Capacity != 0 ? (ib->m_Capacity * 3) / 2 : 32;
-		ib->m_Capacity = max2(nextCapacity, ib->m_Count + numIndices);
+		ib->m_Capacity = bx::uint32_max(nextCapacity, ib->m_Count + numIndices);
 		ib->m_Indices = (uint16_t*)BX_ALIGNED_REALLOC(m_Allocator, ib->m_Indices, sizeof(uint16_t) * ib->m_Capacity, 16);
 	}
 
@@ -5234,7 +5234,7 @@ ImageHandle Context::allocImage()
 	if (handle.idx >= m_ImageCapacity) {
 		int oldCapacity = m_ImageCapacity;
 
-		m_ImageCapacity = max2<uint32_t>(m_ImageCapacity + 4, handle.idx + 1);
+		m_ImageCapacity = bx::uint32_max(m_ImageCapacity + 4, handle.idx + 1);
 		m_Images = (Image*)BX_REALLOC(m_Allocator, m_Images, sizeof(Image) * m_ImageCapacity);
 		if (!m_Images) {
 			return VG_INVALID_HANDLE;
