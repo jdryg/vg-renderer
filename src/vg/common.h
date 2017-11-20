@@ -40,6 +40,8 @@
 
 #define VG_COLOR32(r, g, b, a) (uint32_t)(((uint32_t)(r) << VG_COLOR_RED_SHIFT) | ((uint32_t)(g) << VG_COLOR_GREEN_SHIFT) | ((uint32_t)(b) << VG_COLOR_BLUE_SHIFT) | ((uint32_t)(a) << VG_COLOR_ALPHA_SHIFT))
 
+#define VG_EPSILON 1e-5f
+
 #if VG_CONFIG_SHAPE_DYNAMIC_TEXT
 #include <functional>
 namespace vg

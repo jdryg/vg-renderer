@@ -33,6 +33,7 @@ BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wshadow");
 
 #include "bgfxvg_renderer.h"
 #include "shape.h"
+#include "path.h"
 
 //#define FONTSTASH_IMPLEMENTATION 
 #include "../nanovg/fontstash.h"
@@ -96,13 +97,6 @@ struct State
 	float m_GlobalAlpha;
 	float m_FontScale;
 	float m_AvgScale;
-};
-
-struct SubPath
-{
-	uint32_t m_FirstVertexID;
-	uint32_t m_NumVertices;
-	bool m_IsClosed;
 };
 
 struct VertexBuffer
@@ -253,15 +247,10 @@ struct Context
 	uint32_t m_ImageCapacity;
 	bx::HandleAllocT<MAX_TEXTURES> m_ImageAlloc;
 
-	Vec2* m_PathVertices;
+	Path* m_Path;
 	Vec2* m_TransformedPathVertices;
+	uint32_t m_NumTransformedPathVertices;
 	bool m_PathVerticesTransformed;
-	uint32_t m_NumPathVertices;
-	uint32_t m_PathVertexCapacity;
-
-	SubPath* m_SubPaths;
-	uint32_t m_NumSubPaths;
-	uint32_t m_SubPathCapacity;
 
 	State m_StateStack[MAX_STATE_STACK_SIZE];
 	uint32_t m_CurStateID;
@@ -319,7 +308,6 @@ struct Context
 
 	// Helpers...
 	inline State* getState()               { return &m_StateStack[m_CurStateID]; }
-	inline SubPath* getSubPath()           { return m_NumSubPaths == 0 ? nullptr : &m_SubPaths[m_NumSubPaths - 1]; }
 	inline VertexBuffer* getVertexBuffer() { return &m_VertexBuffers[m_NumVertexBuffers - 1]; }
 	inline IndexBuffer* getIndexBuffer()   { return m_IndexBuffer; }
 	inline Vec2 getWhitePixelUV()
@@ -374,6 +362,7 @@ struct Context
 	void transformTranslate(float x, float y);
 	void transformRotate(float ang_rad);
 	void transformMult(const float* mtx, bool pre);
+	void transformPath();
 
 	// Shapes
 	Shape* createShape(uint32_t flags);
@@ -390,10 +379,6 @@ struct Context
 	// Draw commands
 	DrawCommand* allocDrawCommand_TexturedVertexColor(uint32_t numVertices, uint32_t numIndices, ImageHandle img);
 	DrawCommand* allocDrawCommand_ColorGradient(uint32_t numVertices, uint32_t numIndices, GradientHandle gradient);
-
-	// Paths
-	void addPathVertex(const Vec2& p);
-	Vec2* allocPathVertices(uint32_t n);
 
 	// Concave polygon decomposition
 	void decomposeAndFillConcavePolygon(const Vec2* points, uint32_t numPoints, Color col, bool aa);
@@ -543,7 +528,7 @@ inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
 	// assumed to be normalized.
 	Vec2 v = d01.perpCCW();
 	const float cross = d12.cross(d01);
-	if (fabsf(cross) > 1e-5f) {
+	if (bx::fabs(cross) > 1e-5f) {
 		v = (d01 - d12) * (1.0f / cross);
 	}
 
@@ -886,14 +871,10 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID) :
 	m_DrawCommandCapacity(0),
 	m_Images(nullptr),
 	m_ImageCapacity(0),
-	m_PathVertices(nullptr),
-	m_NumPathVertices(0),
-	m_PathVertexCapacity(0),
+	m_Path(nullptr),
 	m_TransformedPathVertices(nullptr),
+	m_NumTransformedPathVertices(0),
 	m_PathVerticesTransformed(false),
-	m_SubPaths(nullptr),
-	m_NumSubPaths(0),
-	m_SubPathCapacity(0),
 	m_CurStateID(0),
 	m_IndexBuffer(nullptr),
 	m_TextQuads(nullptr),
@@ -1019,13 +1000,13 @@ Context::~Context()
 		deleteImage(m_FontImages[i]);
 	}
 
-	BX_FREE(m_Allocator, m_SubPaths);
+	BX_DELETE(m_Allocator, m_Path);
+	m_Path = nullptr;
 
 	BX_FREE(m_Allocator, m_Images);
 
 	BX_ALIGNED_FREE(m_Allocator, m_TextQuads, 16);
 	BX_ALIGNED_FREE(m_Allocator, m_TextVertices, 16);
-	BX_ALIGNED_FREE(m_Allocator, m_PathVertices, 16);
 	BX_ALIGNED_FREE(m_Allocator, m_TransformedPathVertices, 16);
 	BX_ALIGNED_FREE(m_Allocator, m_TempGeomPos, 16);
 	BX_ALIGNED_FREE(m_Allocator, m_TempGeomColor, 16);
@@ -1042,9 +1023,7 @@ bool Context::init()
 	resetScissor();
 	transformIdentity();
 
-	m_SubPathCapacity = 16;
-	m_SubPaths = (SubPath*)BX_ALLOC(m_Allocator, sizeof(SubPath) * m_SubPathCapacity);
-
+	m_Path = BX_NEW(m_Allocator, Path)(m_Allocator);
 	m_IndexBuffer = BX_NEW(m_Allocator, IndexBuffer)();
 
 	m_PosVertexDecl.begin().add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float).end();
@@ -1280,359 +1259,94 @@ void Context::endFrame()
 
 void Context::beginPath()
 {
-	m_NumSubPaths = 0;
-	m_NumPathVertices = 0;
-	m_SubPaths[0].m_IsClosed = false;
-	m_SubPaths[0].m_NumVertices = 0;
-	m_SubPaths[0].m_FirstVertexID = 0;
+	const State* state = getState();
+	m_Path->reset(state->m_AvgScale, m_TesselationTolerance);
 	m_PathVerticesTransformed = false;
 }
 
 void Context::moveTo(float x, float y)
 {
-	SubPath* path = getSubPath();
-	if (!path || path->m_NumVertices > 0) {
-		BX_CHECK(!path || (path && m_NumPathVertices > 0), "");
-
-		// Move on to the next sub path.
-		if (m_NumSubPaths + 1 > m_SubPathCapacity) {
-			m_SubPathCapacity += 16;
-			m_SubPaths = (SubPath*)BX_REALLOC(m_Allocator, m_SubPaths, sizeof(SubPath) * m_SubPathCapacity);
-		}
-		m_NumSubPaths++;
-
-		path = getSubPath();
-		path->m_IsClosed = false;
-		path->m_NumVertices = 0;
-		path->m_FirstVertexID = m_NumPathVertices;
-	}
-
-	addPathVertex(Vec2(x, y));
+	BX_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
+	m_Path->moveTo(x, y);
 }
 
 void Context::lineTo(float x, float y)
 {
-	BX_CHECK(getSubPath()->m_NumVertices > 0, "MoveTo() should be called once before calling LineTo()");
-
-	addPathVertex(Vec2(x, y));
+	BX_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
+	m_Path->lineTo(x, y);
 }
 
 void Context::bezierTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
 {
-	const State* state = getState();
-	const SubPath* path = getSubPath();
-	BX_CHECK(path->m_NumVertices > 0, "MoveTo() should be called once before calling BezierTo()");
-
-	const Vec2* lastVertex = &m_PathVertices[path->m_FirstVertexID + path->m_NumVertices - 1];
-	float x1 = lastVertex->x;
-	float y1 = lastVertex->y;
-	float x2 = c1x;
-	float y2 = c1y;
-	float x3 = c2x;
-	float y3 = c2y;
-	float x4 = x;
-	float y4 = y;
-
-	const float avgScale = state->m_AvgScale;
-	const float tessTol = m_TesselationTolerance / (avgScale * avgScale);
-
-	const int MAX_LEVELS = 10;
-	float* stack = (float*)alloca(sizeof(float) * 8 * MAX_LEVELS);
-	float* stackPtr = stack;
-	while (true) {
-		float dx = x4 - x1;
-		float dy = y4 - y1;
-		float d2 = fabsf(((x2 - x4) * dy - (y2 - y4) * dx));
-		float d3 = fabsf(((x3 - x4) * dy - (y3 - y4) * dx));
-
-		if ((d2 + d3) * (d2 + d3) <= tessTol * (dx * dx + dy * dy)) {
-			addPathVertex(Vec2(x4, y4));
-
-			// Pop sibling off the stack and decrease level...
-			if (stackPtr == stack) {
-				break;
-			}
-
-			x1 = *(--stackPtr);
-			y1 = *(--stackPtr);
-			x2 = *(--stackPtr);
-			y2 = *(--stackPtr);
-			x3 = *(--stackPtr);
-			y3 = *(--stackPtr);
-			x4 = *(--stackPtr);
-			y4 = *(--stackPtr);
-		} else {
-			const ptrdiff_t curLevel = (stackPtr - stack); // 8 floats per sub-curve
-			if (curLevel < MAX_LEVELS * 8) {
-				float x12 = (x1 + x2) * 0.5f;
-				float y12 = (y1 + y2) * 0.5f;
-				float x23 = (x2 + x3) * 0.5f;
-				float y23 = (y2 + y3) * 0.5f;
-				float x34 = (x3 + x4) * 0.5f;
-				float y34 = (y3 + y4) * 0.5f;
-				float x123 = (x12 + x23) * 0.5f;
-				float y123 = (y12 + y23) * 0.5f;
-				float x234 = (x23 + x34) * 0.5f;
-				float y234 = (y23 + y34) * 0.5f;
-				float x1234 = (x123 + x234) * 0.5f;
-				float y1234 = (y123 + y234) * 0.5f;
-
-				// Push sibling on the stack...
-				*stackPtr++ = y4;
-				*stackPtr++ = x4;
-				*stackPtr++ = y34;
-				*stackPtr++ = x34;
-				*stackPtr++ = y234;
-				*stackPtr++ = x234;
-				*stackPtr++ = y1234;
-				*stackPtr++ = x1234;
-
-//				x1 = x1; // NOP
-//				y1 = y1; // NOP
-				x2 = x12;
-				y2 = y12;
-				x3 = x123;
-				y3 = y123;
-				x4 = x1234;
-				y4 = y1234;
-			} else {
-				// Pop sibling off the stack...
-				x1 = *(--stackPtr);
-				y1 = *(--stackPtr);
-				x2 = *(--stackPtr);
-				y2 = *(--stackPtr);
-				x3 = *(--stackPtr);
-				y3 = *(--stackPtr);
-				x4 = *(--stackPtr);
-				y4 = *(--stackPtr);
-			}
-		}
-	}
+	BX_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
+	m_Path->cubicTo(c1x, c1y, c2x, c2y, x, y);
 }
 
 void Context::arcTo(float x1, float y1, float x2, float y2, float radius)
 {
+	BX_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
 	BX_UNUSED(x1, y1, x2, y2, radius);
 	BX_WARN(false, "ArcTo() not implemented yet"); // NOT USED
 }
 
 void Context::rect(float x, float y, float w, float h)
 {
-	if (fabsf(w) < 1e-5f || fabsf(h) < 1e-5f) {
-		return;
-	}
-
-	// nvgRect
-	// CCW order
-	moveTo(x, y);
-	lineTo(x, y + h);
-	lineTo(x + w, y + h);
-	lineTo(x + w, y);
-	closePath();
+	BX_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
+	m_Path->rect(x, y, w, h);
 }
 
 void Context::roundedRect(float x, float y, float w, float h, float r)
 {
-	// nvgRoundedRect
-	if (r < 0.1f) {
-		rect(x, y, w, h);
-	} else {
-		const float rx = bx::fmin(r, fabsf(w) * 0.5f) * sign(w);
-		const float ry = bx::fmin(r, fabsf(h) * 0.5f) * sign(h);
-
-		r = bx::fmin(rx, ry);
-
-		const State* state = getState();
-
-		const float scale = state->m_AvgScale;
-		const float da = acos((scale * r) / ((scale * r) + m_TesselationTolerance)) * 2.0f;
-		const uint32_t numPointsHalfCircle = bx::uint32_max(2, (uint32_t)ceilf(PI / da));
-		const uint32_t numPointsQuarterCircle = (numPointsHalfCircle >> 1) + 1;
-
-		const float dtheta = -PI * 0.5f / (float)(numPointsQuarterCircle - 1);
-		const float cos_dtheta = cosf(dtheta);
-		const float sin_dtheta = sinf(dtheta);
-
-		moveTo(x, y + r);
-		lineTo(x, y + h - r);
-
-		SubPath* path = getSubPath();
-
-		// Bottom left quarter circle
-		{
-			float cx = x + r;
-			float cy = y + h - r;
-			Vec2* circleVertices = allocPathVertices(numPointsQuarterCircle - 1);
-
-			float ca = -1.0f; // cosf(-PI);
-			float sa = 0.0f;  // sinf(-PI);
-			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
-				const float ns = sin_dtheta * ca + cos_dtheta * sa;
-				const float nc = cos_dtheta * ca - sin_dtheta * sa;
-				ca = nc;
-				sa = ns;
-
-				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
-			}
-			path->m_NumVertices += (numPointsQuarterCircle - 1);
-		}
-
-		lineTo(x + w - r, y + h);
-
-		// Bottom right quarter circle
-		{
-			float cx = x + w - r;
-			float cy = y + h - r;
-			Vec2* circleVertices = allocPathVertices(numPointsQuarterCircle - 1);
-
-			float ca = 0.0f; // cosf(-1.5f * PI);
-			float sa = 1.0f; // sinf(-1.5f * PI);
-			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
-				const float ns = sin_dtheta * ca + cos_dtheta * sa;
-				const float nc = cos_dtheta * ca - sin_dtheta * sa;
-				ca = nc;
-				sa = ns;
-
-				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
-			}
-			path->m_NumVertices += (numPointsQuarterCircle - 1);
-		}
-
-		lineTo(x + w, y + r);
-
-		// Top right quarter circle
-		{
-			float cx = x + w - r;
-			float cy = y + r;
-			Vec2* circleVertices = allocPathVertices(numPointsQuarterCircle - 1);
-
-			float ca = 1.0f; // cosf(0.0f);
-			float sa = 0.0f; // sinf(0.0f);
-			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
-				const float ns = sin_dtheta * ca + cos_dtheta * sa;
-				const float nc = cos_dtheta * ca - sin_dtheta * sa;
-				ca = nc;
-				sa = ns;
-
-				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
-			}
-			path->m_NumVertices += (numPointsQuarterCircle - 1);
-		}
-
-		lineTo(x + r, y);
-
-		// Top left quarter circle
-		{
-			float cx = x + r;
-			float cy = y + r;
-			Vec2* circleVertices = allocPathVertices(numPointsQuarterCircle - 1);
-
-			float ca = 0.0f; // cosf(-0.5f * PI);
-			float sa = -1.0f; // sinf(-0.5f * PI);
-			for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
-				const float ns = sin_dtheta * ca + cos_dtheta * sa;
-				const float nc = cos_dtheta * ca - sin_dtheta * sa;
-				ca = nc;
-				sa = ns;
-
-				*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
-			}
-			path->m_NumVertices += (numPointsQuarterCircle - 1);
-		}
-
-		closePath();
-	}
+	BX_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
+	m_Path->roundedRect(x, y, w, h, r);
 }
 
 void Context::circle(float cx, float cy, float r)
 {
-	const State* state = getState();
-	const float scale = state->m_AvgScale;
-
-	const float da = acos((scale * r) / ((scale * r) + m_TesselationTolerance)) * 2.0f;
-
-	const uint32_t numPointsHalfCircle = bx::uint32_max(2, (uint32_t)ceilf(PI / da));
-	const uint32_t numPoints = (numPointsHalfCircle * 2);
-
-	moveTo(cx + r, cy);
-
-	// NOTE: Get the subpath after MoveTo() because MoveTo will handle the creation of the new subpath (if needed).
-	SubPath* path = getSubPath();
-	Vec2* circleVertices = allocPathVertices(numPoints - 1);
-
-	// http://www.iquilezles.org/www/articles/sincos/sincos.htm
-	const float dtheta = -2.0f * PI / (float)numPoints;
-	const float cos_dtheta = cosf(dtheta);
-	const float sin_dtheta = sinf(dtheta);
-
-	float ca = 1.0f;
-	float sa = 0.0f;
-	for (uint32_t i = 1; i < numPoints; ++i) {
-		const float nextSin = sin_dtheta * ca + cos_dtheta * sa;
-		const float nextCos = cos_dtheta * ca - sin_dtheta * sa;
-		ca = nextCos;
-		sa = nextSin;
-
-		*circleVertices++ = Vec2(cx + r * ca, cy + r * sa);
-	}
-
-	path->m_NumVertices += (numPoints - 1);
-	closePath();
+	BX_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
+	m_Path->circle(cx, cy, r);
 }
 
 void Context::polyline(const Vec2* coords, uint32_t numPoints)
 {
-	BX_CHECK(numPoints > 1, "Polyline() should have more than 1 vertices");
 	BX_CHECK(!m_PathVerticesTransformed, "Cannot add new vertices to the path after submitting a draw command");
-
-	SubPath* path = getSubPath();
-	BX_CHECK(!path->m_IsClosed, "Cannot add new vertices to a closed path");
-		
-	if (path->m_NumVertices > 0) {
-		Vec2 d = m_PathVertices[path->m_FirstVertexID + path->m_NumVertices - 1] - coords[0];
-		if (d.dot(d) < 1e-5f) {
-			coords++;
-			numPoints--;
-		}
-	}
-	
-	Vec2* vertices = allocPathVertices(numPoints);
-	bx::memCopy(vertices, coords, sizeof(Vec2) * numPoints);
-	path->m_NumVertices += numPoints;
+	m_Path->polyline(&coords[0].x, numPoints);
 }
 
 void Context::closePath()
 {
-	SubPath* path = getSubPath();
-	BX_CHECK(!path->m_IsClosed, "Path is already closed");
-//	BX_CHECK(path->m_NumVertices > 2, "A closed path should have more than 2 vertices");
-	if (path->m_NumVertices <= 2) {
+	BX_CHECK(!m_PathVerticesTransformed, "Cannot add new vertices to the path after submitting a draw command");
+	m_Path->close();
+}
+
+void Context::transformPath()
+{
+	if (m_PathVerticesTransformed) {
 		return;
 	}
-	path->m_IsClosed = true;
 
-	const Vec2& first = m_PathVertices[path->m_FirstVertexID];
-	const Vec2& last = m_PathVertices[path->m_FirstVertexID + path->m_NumVertices - 1];
-	Vec2 d = first - last;
-	if (d.dot(d) < 1e-5f) {
-		--path->m_NumVertices;
-		--m_NumPathVertices;
+	const uint32_t numPathVertices = m_Path->getNumVertices();
+	if (numPathVertices > m_NumTransformedPathVertices) {
+		m_TransformedPathVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_TransformedPathVertices, sizeof(Vec2) * numPathVertices, 16);
+		m_NumTransformedPathVertices = numPathVertices;
 	}
+	
+	const Vec2* pathVertices = (const Vec2*)m_Path->getVertices();
+	const State* state = getState();
+	batchTransformPositions(pathVertices, numPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
+	m_PathVerticesTransformed = true;
 }
 
 void Context::fillConvexPath(Color col, bool aa)
 {
-	if (!m_PathVerticesTransformed) {
-		const State* state = getState();
-		batchTransformPositions(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
-		m_PathVerticesTransformed = true;
-	}
+	transformPath();
 
 	const Vec2* pathVertices = m_TransformedPathVertices;
 
-	const uint32_t numPaths = m_NumSubPaths;
-	for (uint32_t iPath = 0; iPath < numPaths; ++iPath) {
-		const SubPath* path = &m_SubPaths[iPath];
+	const uint32_t numSubPaths = m_Path->getNumSubPaths();
+	const SubPath* subPaths = m_Path->getSubPaths();
+	for (uint32_t i = 0; i < numSubPaths; ++i) {
+		const SubPath* path = &subPaths[i];
 		if (path->m_NumVertices < 3) {
 			continue;
 		}
@@ -1647,20 +1361,17 @@ void Context::fillConvexPath(Color col, bool aa)
 
 void Context::fillConvexPath(GradientHandle gradient, bool aa)
 {
-	if (!m_PathVerticesTransformed) {
-		const State* state = getState();
-		batchTransformPositions(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
-		m_PathVerticesTransformed = true;
-	}
+	transformPath();
 
 	const Vec2* pathVertices = m_TransformedPathVertices;
 
 	// TODO: Anti-aliasing of gradient-filled paths
 	BX_UNUSED(aa);
 
-	const uint32_t numPaths = m_NumSubPaths;
-	for (uint32_t iPath = 0; iPath < numPaths; ++iPath) {
-		const SubPath* path = &m_SubPaths[iPath];
+	const uint32_t numSubPaths = m_Path->getNumSubPaths();
+	const SubPath* subPaths = m_Path->getSubPaths();
+	for (uint32_t i = 0; i < numSubPaths; ++i) {
+		const SubPath* path = &subPaths[i];
 		if (path->m_NumVertices < 3) {
 			continue;
 		}
@@ -1671,19 +1382,16 @@ void Context::fillConvexPath(GradientHandle gradient, bool aa)
 
 void Context::fillConvexPath(ImagePatternHandle img, bool aa)
 {
-	if (!m_PathVerticesTransformed) {
-		const State* state = getState();
-		batchTransformPositions(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
-		m_PathVerticesTransformed = true;
-	}
+	transformPath();
 
 	const Vec2* pathVertices = m_TransformedPathVertices;
 
 	// TODO: Anti-aliasing of textured paths
 	BX_UNUSED(aa);
-	const uint32_t numPaths = m_NumSubPaths;
-	for (uint32_t iPath = 0; iPath < numPaths; ++iPath) {
-		const SubPath* path = &m_SubPaths[iPath];
+	const uint32_t numSubPaths = m_Path->getNumSubPaths();
+	const SubPath* subPaths = m_Path->getSubPaths();
+	for (uint32_t i = 0; i < numSubPaths; ++i) {
+		const SubPath* path = &subPaths[i];
 		if (path->m_NumVertices < 3) {
 			continue;
 		}
@@ -1694,17 +1402,16 @@ void Context::fillConvexPath(ImagePatternHandle img, bool aa)
 
 void Context::fillConcavePath(Color col, bool aa)
 {
-	if (!m_PathVerticesTransformed) {
-		const State* state = getState();
-		batchTransformPositions(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
-		m_PathVerticesTransformed = true;
-	}
+	transformPath();
 
 	const Vec2* pathVertices = m_TransformedPathVertices;
 
-	BX_CHECK(m_NumSubPaths == 1, "Cannot decompose multiple concave paths"); // Only a single concave polygon can be decomposed at a time.
+	const uint32_t numSubPaths = m_Path->getNumSubPaths();
+	const SubPath* subPaths = m_Path->getSubPaths();
+	BX_CHECK(numSubPaths == 1, "Cannot decompose multiple concave paths"); // Only a single concave polygon can be decomposed at a time.
+	BX_UNUSED(numSubPaths);
 
-	const SubPath* path = &m_SubPaths[0];
+	const SubPath* path = &subPaths[0];
 	if (path->m_NumVertices < 3) {
 		return;
 	}
@@ -1714,11 +1421,7 @@ void Context::fillConcavePath(Color col, bool aa)
 
 void Context::strokePath(Color color, float width, bool aa, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
 {
-	if (!m_PathVerticesTransformed) {
-		const State* state = getState();
-		batchTransformPositions(m_PathVertices, m_NumPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
-		m_PathVerticesTransformed = true;
-	}
+	transformPath();
 
 	const Vec2* pathVertices = m_TransformedPathVertices;
 
@@ -1745,9 +1448,10 @@ void Context::strokePath(Color color, float width, bool aa, LineCap::Enum lineCa
 	commonID |= ((uint8_t)lineCap) << 1;
 	commonID |= ((uint8_t)lineJoin) << 3;
 
-	const uint32_t numPaths = m_NumSubPaths;
+	const uint32_t numPaths = m_Path->getNumSubPaths();
+	const SubPath* subPaths = m_Path->getSubPaths();
 	for (uint32_t iSubPath = 0; iSubPath < numPaths; ++iSubPath) {
-		SubPath* path = &m_SubPaths[iSubPath];
+		const SubPath* path = &subPaths[iSubPath];
 		if (path->m_NumVertices < 2) {
 			continue;
 		}
@@ -2010,8 +1714,8 @@ ImagePatternHandle Context::createImagePattern(float cx, float cy, float w, floa
 
 	const State* state = getState();
 
-	const float cs = cosf(angle);
-	const float sn = sinf(angle);
+	const float cs = bx::fcos(angle);
+	const float sn = bx::fsin(angle);
 
 	float mtx[6];
 	mtx[0] = cs;
@@ -2170,8 +1874,8 @@ void Context::transformTranslate(float x, float y)
 
 void Context::transformRotate(float ang_rad)
 {
-	const float c = cosf(ang_rad);
-	const float s = sinf(ang_rad);
+	const float c = bx::fcos(ang_rad);
+	const float s = bx::fsin(ang_rad);
 
 	State* state = getState();
 	float mtx[6];
@@ -2817,8 +2521,8 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 			tempGeomExpandVB(numPointsHalfCircle << 1);
 			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
 				float a = startAngle + i * PI / (float)(numPointsHalfCircle - 1);
-				float ca = cosf(a);
-				float sa = sinf(a);
+				float ca = bx::fcos(a);
+				float sa = bx::fsin(a);
 
 				Vec2 p[2] = {
 					Vec2(p0.x + ca * hsw, p0.y + sa * hsw),
@@ -2954,7 +2658,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 					};
 
 					if (_LineJoin == LineJoin::Bevel) {
-						const float cosAngle = fabsf(r01.dot(r12));
+						const float cosAngle = bx::fabs(r01.dot(r12));
 						p[0] -= d01 * (cosAngle * m_FringeWidth);
 					}
 
@@ -2965,7 +2669,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 				for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
 					float a = a01 + iArcPoint * arcDa;
 
-					const Vec2 arcPointDir(cosf(a), sinf(a));
+					const Vec2 arcPointDir(bx::fcos(a), bx::fsin(a));
 
 					Vec2 p[2] = {
 						p1 + arcPointDir * hsw,
@@ -2983,7 +2687,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 					};
 
 					if (_LineJoin == LineJoin::Bevel) {
-						const float cosAngle = fabsf(r01.dot(r12));
+						const float cosAngle = bx::fabs(r01.dot(r12));
 						p[0] += d12 * (cosAngle * m_FringeWidth);
 					}
 
@@ -3110,7 +2814,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 					};
 
 					if (_LineJoin == LineJoin::Bevel) {
-						const float cosAngle = fabsf(l01.dot(l12));
+						const float cosAngle = bx::fabs(l01.dot(l12));
 						p[0] -= d01 * (cosAngle * m_FringeWidth);
 					}
 
@@ -3121,7 +2825,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 				for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
 					float a = a01 + iArcPoint * arcDa;
 
-					const Vec2 arcPointDir(cosf(a), sinf(a));
+					const Vec2 arcPointDir(bx::fcos(a), bx::fsin(a));
 
 					Vec2 p[2] = {
 						p1 + arcPointDir * hsw,
@@ -3139,7 +2843,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 					};
 
 					if (_LineJoin == LineJoin::Bevel) {
-						const float cosAngle = fabsf(l01.dot(l12));
+						const float cosAngle = bx::fabs(l01.dot(l12));
 						p[0] += d12 * (cosAngle * m_FringeWidth);
 					}
 
@@ -3263,8 +2967,8 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 			tempGeomExpandVB(numPointsHalfCircle * 2);
 			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
 				float a = startAngle - i * PI / (float)(numPointsHalfCircle - 1);
-				float ca = cosf(a);
-				float sa = sinf(a);
+				float ca = bx::fcos(a);
+				float sa = bx::fsin(a);
 
 				Vec2 p[2] = {
 					Vec2(p1.x + ca * hsw, p1.y + sa * hsw),
@@ -3756,8 +3460,8 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 			const float startAngle = atan2f(l01.y, l01.x);
 			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
 				float a = startAngle + i * PI / (float)(numPointsHalfCircle - 1);
-				float ca = cosf(a);
-				float sa = sinf(a);
+				float ca = bx::fcos(a);
+				float sa = bx::fsin(a);
 
 				Vec2 p = Vec2(p0.x + ca * hsw, p0.y + sa * hsw);
 
@@ -3854,8 +3558,8 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 				tempGeomAddPos(&p[0], 2);
 				for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
 					float a = a01 + iArcPoint * arcDa;
-					float ca = cosf(a);
-					float sa = sinf(a);
+					float ca = bx::fcos(a);
+					float sa = bx::fsin(a);
 
 					Vec2 p = Vec2(p1.x + hsw * ca, p1.y + hsw * sa);
 
@@ -3952,8 +3656,8 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 				tempGeomAddPos(&p[0], 2);
 				for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
 					float a = a01 + iArcPoint * arcDa;
-					float ca = cosf(a);
-					float sa = sinf(a);
+					float ca = bx::fcos(a);
+					float sa = bx::fsin(a);
 
 					Vec2 p = Vec2(p1.x + hsw * ca, p1.y + hsw * sa);
 					tempGeomAddPos(&p, 1);
@@ -4042,8 +3746,8 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 			const float startAngle = atan2f(l01.y, l01.x);
 			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
 				float a = startAngle - i * PI / (float)(numPointsHalfCircle - 1);
-				float ca = cosf(a);
-				float sa = sinf(a);
+				float ca = bx::fcos(a);
+				float sa = bx::fsin(a);
 
 				Vec2 p = Vec2(p1.x + ca * hsw, p1.y + sa * hsw);
 
@@ -4698,41 +4402,6 @@ bool Context::allocTextAtlas()
 	fonsResetAtlas(m_FontStashContext, iw, ih);
 
 	return true;
-}
-
-inline Vec2* Context::allocPathVertices(uint32_t n)
-{
-	if (m_NumPathVertices + n > m_PathVertexCapacity) {
-		m_PathVertexCapacity = bx::uint32_max(m_PathVertexCapacity + n, m_PathVertexCapacity != 0 ? (m_PathVertexCapacity * 3) >> 1 : 16);
-		m_PathVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_PathVertices, sizeof(Vec2) * m_PathVertexCapacity, 16);
-		m_TransformedPathVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_TransformedPathVertices, sizeof(Vec2) * m_PathVertexCapacity, 16);
-	}
-
-	Vec2* p = &m_PathVertices[m_NumPathVertices];
-	m_NumPathVertices += n;
-	return p;
-}
-
-inline void Context::addPathVertex(const Vec2& p)
-{
-	BX_CHECK(!m_PathVerticesTransformed, "Cannot add new vertices to the path after submitting a draw command");
-
-	SubPath* path = getSubPath();
-
-	// Don't allow adding new vertices to a closed sub-path.
-	BX_CHECK(!path->m_IsClosed, "Cannot add new vertices to a closed path");
-
-	if (path->m_NumVertices != 0) {
-		Vec2 d = m_PathVertices[path->m_FirstVertexID + path->m_NumVertices - 1] - p;
-		if (d.dot(d) < 1e-5f) {
-			return;
-		}
-	}
-
-	Vec2* v = allocPathVertices(1);
-	*v = p;
-
-	path->m_NumVertices++;
 }
 
 void Context::renderTextQuads(uint32_t numQuads, Color color)
