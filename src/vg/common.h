@@ -1,6 +1,8 @@
 #ifndef VG_COMMON_H
 #define VG_COMMON_H
 
+#include <stdint.h>
+
 #ifndef VG_CONFIG_DEBUG
 #	define VG_CONFIG_DEBUG 0
 #endif
@@ -27,6 +29,10 @@
 
 #ifndef VG_CONFIG_ENABLE_SIMD
 #	define VG_CONFIG_ENABLE_SIMD 1
+#endif
+
+#ifndef VG_CONFIG_FORCE_AA_OFF
+#	define VG_CONFIG_FORCE_AA_OFF 0
 #endif
 
 #define VG_HANDLE(_name) struct _name { uint16_t idx; }

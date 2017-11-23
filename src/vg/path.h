@@ -42,6 +42,7 @@ private:
 	bx::AllocatorI* m_Allocator;
 	float* m_Vertices;
 	SubPath* m_SubPaths;
+	SubPath* m_CurSubPath;
 	uint32_t m_NumVertices;
 	uint32_t m_VertexCapacity;
 	uint32_t m_NumSubPaths;

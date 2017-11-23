@@ -15,6 +15,7 @@ Path::Path(bx::AllocatorI* allocator)
 	, m_SubPaths(nullptr)
 	, m_NumSubPaths(0)
 	, m_SubPathCapacity(0)
+	, m_CurSubPath(nullptr)
 {
 }
 
@@ -46,24 +47,22 @@ void Path::reset(float scale, float tesselationTolerance)
 	m_SubPaths[0].m_IsClosed = false;
 	m_SubPaths[0].m_NumVertices = 0;
 	m_SubPaths[0].m_FirstVertexID = 0;
+	m_CurSubPath = nullptr;
 }
 
 void Path::moveTo(float x, float y)
 {
-	SubPath* path = (m_NumSubPaths == 0) ? nullptr : &m_SubPaths[m_NumSubPaths - 1];;
-	if (!path || path->m_NumVertices > 0) {
-		BX_CHECK(!path || (path && m_NumVertices > 0), "");
-
+	if (!m_CurSubPath || m_CurSubPath->m_NumVertices != 0) {
 		// Move on to the next sub path.
 		if (m_NumSubPaths + 1 > m_SubPathCapacity) {
 			m_SubPathCapacity += 16;
 			m_SubPaths = (SubPath*)BX_REALLOC(m_Allocator, m_SubPaths, sizeof(SubPath) * m_SubPathCapacity);
 		}
 
-		path = &m_SubPaths[m_NumSubPaths++];
-		path->m_IsClosed = false;
-		path->m_NumVertices = 0;
-		path->m_FirstVertexID = m_NumVertices;
+		m_CurSubPath = &m_SubPaths[m_NumSubPaths++];
+		m_CurSubPath->m_IsClosed = false;
+		m_CurSubPath->m_NumVertices = 0;
+		m_CurSubPath->m_FirstVertexID = m_NumVertices;
 	}
 
 	addVertex(x, y);
@@ -71,19 +70,21 @@ void Path::moveTo(float x, float y)
 
 void Path::lineTo(float x, float y)
 {
-	const SubPath* path = (m_NumSubPaths == 0) ? nullptr : &m_SubPaths[m_NumSubPaths - 1];
-	BX_CHECK(path->m_NumVertices > 0, "MoveTo() should be called once before calling LineTo()");
-	BX_UNUSED(path);
+	BX_CHECK(m_CurSubPath && m_CurSubPath->m_NumVertices != 0, "moveTo() should be called once before calling lineTo()");
 
 	addVertex(x, y);
 }
 
 void Path::cubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
 {
-	const SubPath* path = (m_NumSubPaths == 0) ? nullptr : &m_SubPaths[m_NumSubPaths - 1];
-	BX_CHECK(path->m_NumVertices > 0, "MoveTo() should be called once before calling BezierTo()");
+	BX_CHECK(m_CurSubPath && m_CurSubPath->m_NumVertices != 0, "moveTo() should be called once before calling cubicTo()")
 
-	const float* lastVertex = &m_Vertices[(path->m_FirstVertexID + path->m_NumVertices - 1) * 2];
+	const int MAX_LEVELS = 10;
+	static float stack[MAX_LEVELS * 8];
+
+	const uint32_t lastVertexID = m_CurSubPath->m_FirstVertexID + (m_CurSubPath->m_NumVertices - 1);
+	const float* lastVertex = &m_Vertices[lastVertexID << 1];
+
 	float x1 = lastVertex[0];
 	float y1 = lastVertex[1];
 	float x2 = c1x;
@@ -95,8 +96,6 @@ void Path::cubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
 
 	const float tessTol = m_TesselationTolerance / (m_Scale * m_Scale);
 
-	const int MAX_LEVELS = 10;
-	float* stack = (float*)alloca(sizeof(float) * 8 * MAX_LEVELS);
 	float* stackPtr = stack;
 	bool done = false;
 	while (!done) {
@@ -104,8 +103,9 @@ void Path::cubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
 		const float dy = y4 - y1;
 		const float d2 = bx::fabs(((x2 - x4) * dy - (y2 - y4) * dx));
 		const float d3 = bx::fabs(((x3 - x4) * dy - (y3 - y4) * dx));
+		const float d23 = d2 + d3;
 
-		if ((d2 + d3) * (d2 + d3) <= tessTol * (dx * dx + dy * dy)) {
+		if (d23 * d23 <= tessTol * (dx * dx + dy * dy)) {
 			addVertex(x4, y4);
 
 			// Pop sibling off the stack and decrease level...
@@ -202,14 +202,12 @@ void Path::roundedRect(float x, float y, float w, float h, float r)
 	const uint32_t numPointsHalfCircle = bx::uint32_max(2, (uint32_t)bx::fceil(bx::kPi / da));
 	const uint32_t numPointsQuarterCircle = (numPointsHalfCircle >> 1) + 1;
 
-	const float dtheta = -bx::kPi * 0.5f / (float)(numPointsQuarterCircle - 1);
+	const float dtheta = -bx::kPiHalf / (float)(numPointsQuarterCircle - 1);
 	const float cos_dtheta = bx::fcos(dtheta);
 	const float sin_dtheta = bx::fsin(dtheta);
 
 	moveTo(x, y + r);
 	lineTo(x, y + h - r);
-
-	SubPath* path = &m_SubPaths[m_NumSubPaths - 1];
 
 	// Bottom left quarter circle
 	{
@@ -229,7 +227,7 @@ void Path::roundedRect(float x, float y, float w, float h, float r)
 			circleVertices[1] = cy + r * sa;
 			circleVertices += 2;
 		}
-		path->m_NumVertices += (numPointsQuarterCircle - 1);
+		m_CurSubPath->m_NumVertices += (numPointsQuarterCircle - 1);
 	}
 
 	lineTo(x + w - r, y + h);
@@ -252,7 +250,7 @@ void Path::roundedRect(float x, float y, float w, float h, float r)
 			circleVertices[1] = cy + r * sa;
 			circleVertices += 2;
 		}
-		path->m_NumVertices += (numPointsQuarterCircle - 1);
+		m_CurSubPath->m_NumVertices += (numPointsQuarterCircle - 1);
 	}
 
 	lineTo(x + w, y + r);
@@ -275,7 +273,7 @@ void Path::roundedRect(float x, float y, float w, float h, float r)
 			circleVertices[1] = cy + r * sa;
 			circleVertices += 2;
 		}
-		path->m_NumVertices += (numPointsQuarterCircle - 1);
+		m_CurSubPath->m_NumVertices += (numPointsQuarterCircle - 1);
 	}
 
 	lineTo(x + r, y);
@@ -298,7 +296,7 @@ void Path::roundedRect(float x, float y, float w, float h, float r)
 			circleVertices[1] = cy + r * sa;
 			circleVertices += 2;
 		}
-		path->m_NumVertices += (numPointsQuarterCircle - 1);
+		m_CurSubPath->m_NumVertices += (numPointsQuarterCircle - 1);
 	}
 
 	close();
@@ -313,12 +311,10 @@ void Path::circle(float cx, float cy, float r)
 
 	moveTo(cx + r, cy);
 
-	// NOTE: Get the subpath after MoveTo() because MoveTo will handle the creation of the new subpath (if needed).
-	SubPath* path = &m_SubPaths[m_NumSubPaths - 1];
 	float* circleVertices = allocVertices(numPoints - 1);
 
 	// http://www.iquilezles.org/www/articles/sincos/sincos.htm
-	const float dtheta = -2.0f * bx::kPi / (float)numPoints;
+	const float dtheta = -bx::kPi2 / (float)numPoints;
 	const float cos_dtheta = bx::fcos(dtheta);
 	const float sin_dtheta = bx::fsin(dtheta);
 
@@ -335,21 +331,22 @@ void Path::circle(float cx, float cy, float r)
 		circleVertices += 2;
 	}
 
-	path->m_NumVertices += (numPoints - 1);
+	m_CurSubPath->m_NumVertices += (numPoints - 1);
 
 	close();
 }
 
 void Path::polyline(const float* coords, uint32_t numPoints)
 {
-	SubPath* path = m_NumSubPaths == 0 ? nullptr : &m_SubPaths[m_NumSubPaths - 1];
-	BX_CHECK(!path->m_IsClosed, "Cannot add new vertices to a closed path");
+	BX_CHECK(m_CurSubPath && m_CurSubPath->m_NumVertices != 0, "moveTo() should be called once before calling polyline()");
+	BX_CHECK(!m_CurSubPath->m_IsClosed, "Cannot add new vertices to a closed path");
 
-	if (path->m_NumVertices > 0) {
-		const uint32_t lastVertexID = path->m_FirstVertexID + path->m_NumVertices - 1;
-		const float dx = m_Vertices[lastVertexID * 2 + 0] - coords[0];
-		const float dy = m_Vertices[lastVertexID * 2 + 1] - coords[1];
+	if (m_CurSubPath->m_NumVertices > 0) {
+		const uint32_t lastVertexID = m_CurSubPath->m_FirstVertexID + (m_CurSubPath->m_NumVertices - 1);
+		const float* lastVertex = &m_Vertices[lastVertexID << 1];
 
+		const float dx = lastVertex[0] - coords[0];
+		const float dy = lastVertex[1] - coords[1];
 		const float distSqr = dx * dx + dy * dy;
 		if (distSqr < VG_EPSILON) {
 			coords += 2;
@@ -359,28 +356,26 @@ void Path::polyline(const float* coords, uint32_t numPoints)
 
 	float* vertices = allocVertices(numPoints);
 	bx::memCopy(vertices, coords, sizeof(float) * 2 * numPoints);
-	path->m_NumVertices += numPoints;
+	m_CurSubPath->m_NumVertices += numPoints;
 }
 
 void Path::close()
 {
-	BX_CHECK(m_NumSubPaths != 0, "No path started");
-
-	SubPath* path = &m_SubPaths[m_NumSubPaths - 1];
-	if (path->m_IsClosed || path->m_NumVertices <= 2) {
+	BX_CHECK(m_CurSubPath && m_CurSubPath->m_NumVertices != 0, "Cannot close empty path");
+	if (m_CurSubPath->m_IsClosed || m_CurSubPath->m_NumVertices <= 2) {
 		return;
 	}
 
-	path->m_IsClosed = true;
+	m_CurSubPath->m_IsClosed = true;
 
-	const float* firstVertex = &m_Vertices[path->m_FirstVertexID * 2];
-	const float* lastVertex = &m_Vertices[(path->m_FirstVertexID + path->m_NumVertices - 1) * 2];
+	const float* firstVertex = &m_Vertices[m_CurSubPath->m_FirstVertexID << 1];
+	const float* lastVertex = &m_Vertices[(m_CurSubPath->m_FirstVertexID + (m_CurSubPath->m_NumVertices - 1)) << 1];
 
 	const float dx = lastVertex[0] - firstVertex[0];
 	const float dy = lastVertex[1] - firstVertex[1];
 	const float distSqr = dx * dx + dy * dy;
 	if (distSqr < VG_EPSILON) {
-		--path->m_NumVertices;
+		--m_CurSubPath->m_NumVertices;
 		--m_NumVertices;
 	}
 }
@@ -392,25 +387,24 @@ float* Path::allocVertices(uint32_t n)
 		m_Vertices = (float*)BX_ALIGNED_REALLOC(m_Allocator, m_Vertices, sizeof(float) * 2 * m_VertexCapacity, 16);
 	}
 
-	float* p = &m_Vertices[m_NumVertices * 2];
+	float* p = &m_Vertices[m_NumVertices << 1];
 	m_NumVertices += n;
+
 	return p;
 }
 
 void Path::addVertex(float x, float y)
 {
-	BX_CHECK(m_NumSubPaths != 0, "No path started");
-	
-	SubPath* path = &m_SubPaths[m_NumSubPaths - 1];
-
 	// Don't allow adding new vertices to a closed sub-path.
-	BX_CHECK(!path->m_IsClosed, "Cannot add new vertices to a closed path");
+	BX_CHECK(m_CurSubPath, "No path");
+	BX_CHECK(!m_CurSubPath->m_IsClosed, "Cannot add new vertices to a closed path");
 
-	if (path->m_NumVertices != 0) {
-		const float* lastVertex = &m_Vertices[(path->m_FirstVertexID + path->m_NumVertices - 1) * 2];
+	if (m_CurSubPath->m_NumVertices != 0) {
+		const uint32_t lastVertexID = m_CurSubPath->m_FirstVertexID + (m_CurSubPath->m_NumVertices - 1);
+		const float* lastVertex = &m_Vertices[lastVertexID << 1];
+
 		const float dx = lastVertex[0] - x;
 		const float dy = lastVertex[1] - y;
-
 		const float distSqr = dx * dx + dy * dy;
 		if (distSqr < VG_EPSILON) {
 			return;
@@ -421,6 +415,6 @@ void Path::addVertex(float x, float y)
 	v[0] = x;
 	v[1] = y;
 
-	path->m_NumVertices++;
+	m_CurSubPath->m_NumVertices++;
 }
 }

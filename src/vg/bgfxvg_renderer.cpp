@@ -47,6 +47,7 @@ BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wshadow");
 #include <memory.h>
 #include <math.h>
 #include <float.h>
+#include "util.h"
 
 // Shaders
 #include "vs_solid_color.bin.h"
@@ -539,9 +540,6 @@ void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restr
 void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx);
 void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint16_t* __restrict dst, uint16_t delta);
 void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, Vec2* __restrict transformedVertices);
-void memset32(void* __restrict dst, uint32_t n32, const void* __restrict src);
-void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src);
-void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src);
 
 //////////////////////////////////////////////////////////////////////////
 // BGFXVGRenderer
@@ -635,26 +633,46 @@ void BGFXVGRenderer::ClosePath()
 
 void BGFXVGRenderer::FillConvexPath(Color col, bool aa)
 {
+#if VG_CONFIG_FORCE_AA_OFF
+	aa = false;
+#endif
+
 	m_Context->fillConvexPath(col, aa);
 }
 
 void BGFXVGRenderer::FillConvexPath(GradientHandle gradient, bool aa)
 {
+#if VG_CONFIG_FORCE_AA_OFF
+	aa = false;
+#endif
+
 	m_Context->fillConvexPath(gradient, aa);
 }
 
 void BGFXVGRenderer::FillConvexPath(ImagePatternHandle img, bool aa)
 {
+#if VG_CONFIG_FORCE_AA_OFF
+	aa = false;
+#endif
+
 	m_Context->fillConvexPath(img, aa);
 }
 
 void BGFXVGRenderer::FillConcavePath(Color col, bool aa)
 {
+#if VG_CONFIG_FORCE_AA_OFF
+	aa = false;
+#endif
+	
 	m_Context->fillConcavePath(col, aa);
 }
 
 void BGFXVGRenderer::StrokePath(Color col, float width, bool aa, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
 {
+#if VG_CONFIG_FORCE_AA_OFF
+	aa = false;
+#endif
+
 	m_Context->strokePath(col, width, aa, lineCap, lineJoin);
 }
 
@@ -2438,8 +2456,8 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 	const uint32_t c0_c_c_c0[4] = { c0, color, color, c0 };
 	const float hsw = (strokeWidth - m_FringeWidth) * 0.5f;
 	const float hsw_aa = hsw + m_FringeWidth;
-	const float da = acos((avgScale * hsw) / ((avgScale * hsw) + m_TesselationTolerance)) * 2.0f;
-	const uint32_t numPointsHalfCircle = bx::uint32_max(2u, (uint32_t)ceilf(PI / da));
+	const float da = bx::facos((avgScale * hsw) / ((avgScale * hsw) + m_TesselationTolerance)) * 2.0f;
+	const uint32_t numPointsHalfCircle = bx::uint32_max(2u, (uint32_t)bx::fceil(bx::kPi / da));
 
 	tempGeomReset();
 
@@ -2520,7 +2538,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 			const float startAngle = atan2f(l01.y, l01.x);
 			tempGeomExpandVB(numPointsHalfCircle << 1);
 			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
-				float a = startAngle + i * PI / (float)(numPointsHalfCircle - 1);
+				float a = startAngle + i * bx::kPi / (float)(numPointsHalfCircle - 1);
 				float ca = bx::fcos(a);
 				float sa = bx::fsin(a);
 
@@ -2634,7 +2652,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 					a01 = atan2f(r01.y, r01.x);
 					a12 = atan2f(r12.y, r12.x);
 					if (a12 < a01) {
-						a12 += PI * 2.0f;
+						a12 += bx::kPi2;
 					}
 
 					numArcPoints = bx::uint32_max(2u, (uint32_t)((a12 - a01) / da));
@@ -2790,7 +2808,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 					a01 = atan2f(l01.y, l01.x);
 					a12 = atan2f(l12.y, l12.x);
 					if (a12 > a01) {
-						a12 -= PI * 2.0f;
+						a12 -= bx::kPi2;
 					}
 
 					numArcPoints = bx::uint32_max(2u, (uint32_t)((a01 - a12) / da));
@@ -2966,7 +2984,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 
 			tempGeomExpandVB(numPointsHalfCircle * 2);
 			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
-				float a = startAngle - i * PI / (float)(numPointsHalfCircle - 1);
+				float a = startAngle - i * bx::kPi / (float)(numPointsHalfCircle - 1);
 				float ca = bx::fcos(a);
 				float sa = bx::fsin(a);
 
@@ -3407,8 +3425,8 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 	const float avgScale = getState()->m_AvgScale;
 	const uint32_t numSegments = numPathVertices - (_Closed ? 0 : 1);
 	const float hsw = strokeWidth * 0.5f;
-	const float da = acos((avgScale * hsw) / ((avgScale * hsw) + m_TesselationTolerance)) * 2.0f;
-	const uint32_t numPointsHalfCircle = bx::uint32_max(2u, (uint32_t)ceilf(PI / da));
+	const float da = bx::facos((avgScale * hsw) / ((avgScale * hsw) + m_TesselationTolerance)) * 2.0f;
+	const uint32_t numPointsHalfCircle = bx::uint32_max(2u, (uint32_t)bx::fceil(bx::kPi / da));
 
 	tempGeomReset();
 
@@ -3459,7 +3477,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 
 			const float startAngle = atan2f(l01.y, l01.x);
 			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
-				float a = startAngle + i * PI / (float)(numPointsHalfCircle - 1);
+				float a = startAngle + i * bx::kPi / (float)(numPointsHalfCircle - 1);
 				float ca = bx::fcos(a);
 				float sa = bx::fsin(a);
 
@@ -3540,7 +3558,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 					a01 = atan2f(r01.y, r01.x);
 					a12 = atan2f(r12.y, r12.x);
 					if (a12 < a01) {
-						a12 += PI * 2.0f;
+						a12 += bx::kPi2;
 					}
 
 					numArcPoints = bx::uint32_max(2u, (uint32_t)((a12 - a01) / da));
@@ -3638,7 +3656,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 					a01 = atan2f(l01.y, l01.x);
 					a12 = atan2f(l12.y, l12.x);
 					if (a12 > a01) {
-						a12 -= PI * 2.0f;
+						a12 -= bx::kPi2;
 					}
 
 					numArcPoints = bx::uint32_max(2u, (uint32_t)((a01 - a12) / da));
@@ -3745,7 +3763,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 			const uint16_t curSegmentLeftID = (uint16_t)m_TempGeomNumVertices;
 			const float startAngle = atan2f(l01.y, l01.x);
 			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
-				float a = startAngle - i * PI / (float)(numPointsHalfCircle - 1);
+				float a = startAngle - i * bx::kPi / (float)(numPointsHalfCircle - 1);
 				float ca = bx::fcos(a);
 				float sa = bx::fsin(a);
 
@@ -5427,422 +5445,9 @@ void Context::decomposeAndFillConcavePolygon(const Vec2* points, uint32_t numPoi
 	cmd->m_NumIndices += numDrawIndices;
 }
 
-#if 0
-// https://mpen.ca/406/bayazit (seems to be down atm)
-inline float area(const Vec2& a, const Vec2& b, const Vec2& c)
-{
-	return (((b.x - a.x) * (c.y - a.y)) - ((c.x - a.x) * (b.y - a.y)));
-}
-
-inline bool right(const Vec2& a, const Vec2& b, const Vec2& c)
-{
-	return area(a, b, c) > 0;
-}
-
-inline bool rightOn(const Vec2& a, const Vec2& b, const Vec2& c)
-{
-	return area(a, b, c) >= 0;
-}
-
-inline bool left(const Vec2& a, const Vec2& b, const Vec2& c)
-{
-	return area(a, b, c) < 0;
-}
-
-inline bool leftOn(const Vec2& a, const Vec2& b, const Vec2& c)
-{
-	return area(a, b, c) <= 0;
-}
-
-inline bool isReflex(const Vec2* points, uint32_t n, uint32_t i)
-{
-	if (i == 0) {
-		return right(points[n - 1], points[0], points[1]);
-	} else if (i == n - 1) {
-		return right(points[n - 2], points[n - 1], points[0]);
-	}
-
-	return right(points[i - 1], points[i], points[i + 1]);
-}
-
-inline float sqdist(const Vec2& a, const Vec2& b)
-{
-	float dx = b.x - a.x;
-	float dy = b.y - a.y;
-	return dx * dx + dy * dy;
-}
-
-inline Vec2 intersection(const Vec2& p1, const Vec2& p2, const Vec2& q1, const Vec2& q2)
-{
-	Vec2 i;
-	float a1, b1, c1, a2, b2, c2, det;
-	a1 = p2.y - p1.y;
-	b1 = p1.x - p2.x;
-	c1 = a1 * p1.x + b1 * p1.y;
-	a2 = q2.y - q1.y;
-	b2 = q1.x - q2.x;
-	c2 = a2 * q1.x + b2 * q1.y;
-	det = a1 * b2 - a2 * b1;
-	if (det != 0.0f) { // lines are not parallel
-		i.x = (b2 * c1 - b1 * c2) / det;
-		i.y = (a1 * c2 - a2 * c1) / det;
-	}
-	return i;
-}
-
-Vec2* Context::allocTempPoints(uint32_t n)
-{
-	// TODO: Pool?
-	return (Vec2*)BX_ALLOC(m_Allocator, sizeof(Vec2) * n);
-}
-
-void Context::freeTempPoints(Vec2* ptr)
-{
-	BX_FREE(m_Allocator, ptr);
-}
-
-void Context::decomposeAndFillConcavePolygon(const Vec2* points, uint32_t numPoints, Color col, bool aa)
-{
-	BX_CHECK(numPoints >= 3, "Cannot decompose a polygon with less than 3 vertices");
-
-	Vec2 upperInt, lowerInt, p, closestVert;
-	float upperDist, lowerDist, d, closestDist;
-	uint32_t upperIndex = ~0u, lowerIndex = ~0u, closestIndex = ~0u;
-
-	for (uint32_t i = 0; i < numPoints; ++i) {
-		uint32_t prevPoint = i == 0 ? numPoints - 1 : i - 1;
-		uint32_t nextPoint = i == numPoints - 1 ? 0 : i + 1;
-
-		if (isReflex(points, numPoints, i)) {
-			upperDist = lowerDist = FLT_MAX;
-
-			for (uint32_t j = 0; j < numPoints; ++j) {
-				uint32_t prevJ = j == 0 ? numPoints - 1 : j - 1;
-				uint32_t nextJ = j == numPoints - 1 ? 0 : j + 1;
-
-				// if line intersects with an edge
-				if (left(points[prevPoint], points[i], points[j]) && rightOn(points[prevPoint], points[i], points[prevJ])) {
-					// find the point of intersection
-					p = intersection(points[prevPoint], points[i], points[j], points[prevJ]);
-
-					// make sure it's inside the poly
-					if (right(points[nextPoint], points[i], p)) {
-						d = sqdist(points[i], p);
-
-						if (d < lowerDist) { 
-							// keep only the closest intersection
-							lowerDist = d;
-							lowerInt = p;
-							lowerIndex = j;
-						}
-					}
-				}
-
-				if (left(points[nextPoint], points[i], points[nextJ]) && rightOn(points[nextPoint], points[i], points[j])) {
-					p = intersection(points[nextPoint], points[i], points[j], points[nextJ]);
-
-					if (left(points[prevPoint], points[i], p)) {
-						d = sqdist(points[i], p);
-
-						if (d < upperDist) {
-							upperDist = d;
-							upperInt = p;
-							upperIndex = j;
-						}
-					}
-				}
-			}
-
-			// if there are no vertices to connect to, choose a point in the middle
-			BX_CHECK(lowerIndex != ~0u, "Concave polygon decomposition error");
-			BX_CHECK(upperIndex != ~0u, "Concave polygon decomposition error");
-
-			Vec2* lowerPoints = nullptr;
-			Vec2* upperPoints = nullptr;
-			uint32_t numLowerPoints = 0;
-			uint32_t numUpperPoints = 0;
-
-			if (lowerIndex == (upperIndex + 1) % numPoints) {
-				p.x = (lowerInt.x + upperInt.x) * 0.5f;
-				p.y = (lowerInt.y + upperInt.y) * 0.5f;
-
-				if (i < upperIndex) {
-					numLowerPoints = upperIndex + 1 - i;
-					numUpperPoints = 1 + (lowerIndex != 0 ? (numPoints - lowerIndex) : 0) + (i + 1);
-
-					lowerPoints = allocTempPoints(numLowerPoints + numUpperPoints);
-					upperPoints = &lowerPoints[numLowerPoints];
-
-					// Copy lower points...
-					{
-						uint32_t n = (upperIndex + 1 - i);
-						bx::memCopy(lowerPoints, &points[i], sizeof(Vec2) * n);
-						lowerPoints[n] = p;
-					}
-
-					// Copy upper points
-					{
-						Vec2* writePtr = upperPoints;
-						*writePtr++ = p;
-						if (lowerIndex != 0) {
-							uint32_t n = numPoints - lowerIndex;
-							bx::memCopy(writePtr, &points[lowerIndex], sizeof(Vec2) * n);
-							writePtr += n;
-						}
-						bx::memCopy(writePtr, &points[0], sizeof(Vec2) * (i + 1));
-					}
-				} else {
-					numLowerPoints = ((i != 0) ? (numPoints - i) : 0) + (upperIndex + 1) + 1;
-					numUpperPoints = 1 + (i + 1 - lowerIndex);
-
-					lowerPoints = allocTempPoints(numLowerPoints + numUpperPoints);
-					upperPoints = &lowerPoints[numLowerPoints];
-
-					// Copy lower points
-					{
-						Vec2* writePtr = lowerPoints;
-						if (i != 0) {
-							uint32_t n = numPoints - i;
-							bx::memCopy(writePtr, &points[i], sizeof(Vec2) * n);
-							writePtr += n;
-						}
-
-						bx::memCopy(writePtr, &points[0], sizeof(Vec2) * (upperIndex + 1));
-						writePtr[upperIndex + 1] = p;
-					}
-
-					// Copy upper points
-					{
-						upperPoints[0] = p;
-						bx::memCopy(&upperPoints[1], &points[lowerIndex], sizeof(Vec2) * (i + 1 - lowerIndex));
-					}
-				}
-			} else {
-				// connect to the closest point within the triangle
-				if (lowerIndex > upperIndex) {
-					upperIndex += numPoints;
-				}
-
-				closestDist = FLT_MAX;
-				for (uint32_t j = lowerIndex; j <= upperIndex; ++j) {
-					if (leftOn(points[prevPoint], points[i], points[j]) && rightOn(points[nextPoint], points[i], points[j])) {
-						d = sqdist(points[i], points[j]);
-
-						if (d < closestDist) {
-							closestDist = d;
-							closestVert = points[j];
-							closestIndex = j % numPoints;
-						}
-					}
-				}
-
-				BX_CHECK(closestIndex != ~0u, "Concave polygon decomposition error");
-				if (i < closestIndex) {
-					numLowerPoints = closestIndex + 1 - i;
-					numUpperPoints = (closestIndex != 0 ? (numPoints - closestIndex) : 0) + (i + 1);
-
-					lowerPoints = allocTempPoints(numLowerPoints + numUpperPoints);
-					upperPoints = &lowerPoints[numLowerPoints];
-
-					// Copy lower points
-					bx::memCopy(lowerPoints, &points[i], sizeof(Vec2) * (closestIndex + 1 - i));
-
-					// Copy upper points
-					{
-						Vec2* writePtr = upperPoints;
-						if (closestIndex != 0) {
-							bx::memCopy(writePtr, &points[closestIndex], sizeof(Vec2) * (numPoints - closestIndex));
-							writePtr += (numPoints - closestIndex);
-						}
-
-						bx::memCopy(writePtr, &points[0], sizeof(Vec2) * (i + 1));
-					}
-				} else {
-					numLowerPoints = (i != 0 ? (numPoints - i) : 0) + (closestIndex + 1);
-					numUpperPoints = i + 1 - closestIndex;
-
-					lowerPoints = allocTempPoints(numLowerPoints + numUpperPoints);
-					upperPoints = &lowerPoints[numLowerPoints];
-
-					// Copy lower points
-					{
-						Vec2* writePtr = lowerPoints;
-						if (i != 0) {
-							bx::memCopy(writePtr, &points[i], sizeof(Vec2) * (numPoints - i));
-							writePtr += (numPoints - i);
-						}
-
-						bx::memCopy(writePtr, &points[0], sizeof(Vec2) * (closestIndex + 1));
-					}
-
-					// Copy upper points
-					bx::memCopy(upperPoints, &points[closestIndex], sizeof(Vec2) * (i + 1 - closestIndex));
-				}
-			}
-
-			// solve smallest poly first
-			if (numLowerPoints < numUpperPoints) {
-				decomposeAndFillConcavePolygon(lowerPoints, numLowerPoints, col, aa);
-				decomposeAndFillConcavePolygon(upperPoints, numUpperPoints, col, aa);
-			} else {
-				decomposeAndFillConcavePolygon(upperPoints, numUpperPoints, col, aa);
-				decomposeAndFillConcavePolygon(lowerPoints, numLowerPoints, col, aa);
-			}
-
-			freeTempPoints(lowerPoints);
-
-			return;
-		}
-	}
-
-	if (aa) {
-		renderConvexPolygonAA(points, numPoints, col);
-	} else {
-		renderConvexPolygonNoAA(points, numPoints, col);
-	}
-}
-#endif
-
 //////////////////////////////////////////////////////////////////////////
 // SIMD functions
 //
-void memset32(void* __restrict dst, uint32_t n, const void* __restrict src)
-{
-#if !VG_CONFIG_ENABLE_SIMD
-	const uint32_t s = *(const uint32_t*)src;
-	uint32_t* d = (uint32_t*)dst;
-	while (n-- > 0) {
-		*d++ = s;
-	}
-#else
-	const __m128 s128 = _mm_load1_ps((const float*)src);
-	float* d = (float*)dst;
-
-	uint32_t iter = n >> 4;
-	while (iter-- > 0) {
-		_mm_storeu_ps(d + 0, s128);
-		_mm_storeu_ps(d + 4, s128);
-		_mm_storeu_ps(d + 8, s128);
-		_mm_storeu_ps(d + 12, s128);
-		d += 16;
-	}
-
-	uint32_t rem = n & 15;
-	if (rem >= 8) {
-		_mm_storeu_ps(d + 0, s128);
-		_mm_storeu_ps(d + 4, s128);
-		d += 8;
-		rem -= 8;
-	}
-
-	if (rem >= 4) {
-		_mm_storeu_ps(d, s128);
-		d += 4;
-		rem -= 4;
-	}
-
-	switch (rem) {
-	case 3:
-		*d++ = *(const float*)src;
-	case 2:
-		*d++ = *(const float*)src;
-	case 1:
-		*d++ = *(const float*)src;
-	}
-#endif
-}
-
-void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src)
-{
-#if !VG_CONFIG_ENABLE_SIMD
-	const uint32_t s0 = *((const uint32_t*)src + 0);
-	const uint32_t s1 = *((const uint32_t*)src + 1);
-	uint32_t* d = (uint32_t*)dst;
-	while (n64-- > 0) {
-		d[0] = s0;
-		d[1] = s1;
-		d += 2;
-	}
-#else
-	const float* s = (const float*)src;
-	const __m128 s0 = _mm_load_ss(&s[0]);
-	const __m128 s1 = _mm_load_ss(&s[1]);
-	const __m128 s0011 = _mm_shuffle_ps(s0, s1, 0);
-	const __m128 s128 = _mm_shuffle_ps(s0011, s0011, _MM_SHUFFLE(2, 0, 2, 0));
-	float* d = (float*)dst;
-
-	uint32_t iter = n64 >> 3; // 8 64-bit values per iteration (== 16 floats / iter)
-	while (iter-- > 0) {
-		_mm_storeu_ps(d + 0, s128);
-		_mm_storeu_ps(d + 4, s128);
-		_mm_storeu_ps(d + 8, s128);
-		_mm_storeu_ps(d + 12, s128);
-		d += 16;
-	}
-
-	uint32_t rem = n64 & 7;
-	if (rem >= 4) {
-		_mm_storeu_ps(d + 0, s128);
-		_mm_storeu_ps(d + 4, s128);
-		d += 8;
-		rem -= 4;
-	}
-
-	if (rem >= 2) {
-		_mm_storeu_ps(d, s128);
-		d += 4;
-		rem -= 2;
-	}
-
-	if (rem) {
-		d[0] = s[0];
-		d[1] = s[1];
-	}
-#endif
-}
-
-void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src)
-{
-#if !VG_CONFIG_ENABLE_SIMD
-	const uint32_t s0 = *((const uint32_t*)src + 0);
-	const uint32_t s1 = *((const uint32_t*)src + 1);
-	const uint32_t s2 = *((const uint32_t*)src + 2);
-	const uint32_t s3 = *((const uint32_t*)src + 3);
-	uint32_t* d = (uint32_t*)dst;
-	while (n128-- > 0) {
-		d[0] = s0;
-		d[1] = s1;
-		d[2] = s2;
-		d[3] = s3;
-		d += 4;
-	}
-#else
-	const __m128 s128 = _mm_loadu_ps((const float*)src);
-	float* d = (float*)dst;
-
-	uint32_t iter = n128 >> 2; // 4 128-bit values per iteration (== 16 floats / iter)
-	while (iter-- > 0) {
-		_mm_storeu_ps(d + 0, s128);
-		_mm_storeu_ps(d + 4, s128);
-		_mm_storeu_ps(d + 8, s128);
-		_mm_storeu_ps(d + 12, s128);
-		d += 16;
-	}
-
-	uint32_t rem = n128 & 3;
-	if (rem >= 2) {
-		_mm_storeu_ps(d + 0, s128);
-		_mm_storeu_ps(d + 4, s128);
-		d += 8;
-		rem -= 2;
-	}
-
-	if (rem) {
-		_mm_storeu_ps(d, s128);
-	}
-#endif
-}
-
 void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, Vec2* __restrict transformedVertices)
 {
 #if VG_CONFIG_ENABLE_SIMD
