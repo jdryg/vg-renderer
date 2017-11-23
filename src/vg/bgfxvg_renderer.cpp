@@ -380,6 +380,7 @@ struct Context
 	// Draw commands
 	DrawCommand* allocDrawCommand_TexturedVertexColor(uint32_t numVertices, uint32_t numIndices, ImageHandle img);
 	DrawCommand* allocDrawCommand_ColorGradient(uint32_t numVertices, uint32_t numIndices, GradientHandle gradient);
+	void createDrawCommand_TexturedVertexColor(const Vec2* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
 
 	// Concave polygon decomposition
 	void decomposeAndFillConcavePolygon(const Vec2* points, uint32_t numPoints, Color col, bool aa);
@@ -1947,7 +1948,6 @@ void Context::text(const Font& font, uint32_t alignment, Color color, float x, f
 	}
 
 	fonsSetSize(m_FontStashContext, scaledFontSize);
-//	fonsSetAlign(m_FontStashContext, alignment);
 	fonsSetFont(m_FontStashContext, font.m_Handle.idx);
 
 	fonsResetString(m_FontStashContext, &m_TextString, text, end);
@@ -1981,59 +1981,6 @@ void Context::text(const Font& font, uint32_t alignment, Color color, float x, f
 	transformTranslate(x + dx / scale, y + dy / scale);
 	renderTextQuads(numBakedChars, color);
 	popState();
-
-//	// Assume ASCII where each byte is a codepoint. Otherwise, the number 
-//	// of quads will be less than the number of chars/bytes.
-//	const uint32_t maxChars = (uint32_t)(end - text);
-//	if (m_TextQuadCapacity < maxChars) {
-//		m_TextQuadCapacity = maxChars;
-//		m_TextQuads = (FONSquad*)BX_ALIGNED_REALLOC(m_Allocator, m_TextQuads, sizeof(FONSquad) * m_TextQuadCapacity, 16);
-//		m_TextVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_TextVertices, sizeof(Vec2) * m_TextQuadCapacity * 4, 16);
-//	}
-//	
-//	FONStextIter iter;
-//	fonsTextIterInit(m_FontStashContext, &iter, x * scale, y * scale, text, end);
-//
-//	FONSquad* nextQuad = m_TextQuads;
-//	FONStextIter prevIter = iter;
-//	while (fonsTextIterNext(m_FontStashContext, &iter, nextQuad)) {
-//		if (iter.prevGlyphIndex == -1) {
-//			// Draw all quads up to this point (if any) with the current atlas texture.
-//			const uint32_t numQuads = (uint32_t)(nextQuad - m_TextQuads);
-//			if (numQuads != 0) {
-//				BX_CHECK(numQuads <= m_TextQuadCapacity, "Text command generated more quads than the temp buffer can hold");
-//
-//				renderTextQuads(numQuads, color);
-//
-//				// Reset next quad ptr.
-//				nextQuad = m_TextQuads;
-//			}
-//
-//			// Allocate a new atlas
-//			if (!allocTextAtlas()) {
-//				break;
-//			}
-//
-//			// And try fitting the glyph once again.
-//			iter = prevIter;
-//			fonsTextIterNext(m_FontStashContext, &iter, nextQuad);
-//			if (iter.prevGlyphIndex == -1) {
-//				break;
-//			}
-//		}
-//
-//		++nextQuad;
-//		prevIter = iter;
-//	}
-//
-//	const uint32_t numQuads = (uint32_t)(nextQuad - m_TextQuads);
-//	if (numQuads == 0) {
-//		return;
-//	}
-//
-//	BX_CHECK(numQuads <= m_TextQuadCapacity, "Text command generated more quads than the temp buffer can hold");
-//
-//	renderTextQuads(numQuads, color);
 }
 
 void Context::textBox(const Font& font, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* str, const char* end)
@@ -3048,29 +2995,7 @@ void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, floa
 	}
 
 	// Create a new draw command and copy the data to it.
-	// TODO: Turn this into a function.
-	const uint32_t numDrawVertices = m_TempGeomNumVertices;
-	const uint32_t numDrawIndices = m_TempGeomNumIndices;
-	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
-
-	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
-	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
-
-	Vec2* dstPos = &vb->m_Pos[vbOffset];
-	bx::memCopy(dstPos, m_TempGeomPos, sizeof(Vec2) * numDrawVertices);
-
-	Vec2* dstUV = &vb->m_UV[vbOffset];
-	memset64(dstUV, numDrawVertices, &uv.x);
-
-	uint32_t* dstColor = &vb->m_Color[vbOffset];
-	bx::memCopy(dstColor, m_TempGeomColor, sizeof(uint32_t) * numDrawVertices);
-
-	const uint32_t startVertexID = cmd->m_NumVertices;
-	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
-	batchTransformDrawIndices(m_TempGeomIndex, m_TempGeomNumIndices, dstIndex, (uint16_t)startVertexID);
-
-	cmd->m_NumVertices += numDrawVertices;
-	cmd->m_NumIndices += numDrawIndices;
+	createDrawCommand_TexturedVertexColor(m_TempGeomPos, m_TempGeomNumVertices, m_TempGeomColor, m_TempGeomNumVertices, m_TempGeomIndex, m_TempGeomNumIndices);
 }
 
 template<LineCap::Enum _LineCap, LineJoin::Enum _LineJoin>
@@ -3393,29 +3318,7 @@ void Context::renderPathStrokeAAThin(const Vec2* vtx, uint32_t numPathVertices, 
 	}
 
 	// Create a new draw command and copy the data to it.
-	// TODO: Turn this into a function.
-	const uint32_t numDrawVertices = m_TempGeomNumVertices;
-	const uint32_t numDrawIndices = m_TempGeomNumIndices;
-	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
-
-	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
-	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
-
-	Vec2* dstPos = &vb->m_Pos[vbOffset];
-	bx::memCopy(dstPos, m_TempGeomPos, sizeof(Vec2) * numDrawVertices);
-
-	Vec2* dstUV = &vb->m_UV[vbOffset];
-	memset64(dstUV, numDrawVertices, &uv.x);
-
-	uint32_t* dstColor = &vb->m_Color[vbOffset];
-	bx::memCopy(dstColor, m_TempGeomColor, sizeof(uint32_t) * numDrawVertices);
-
-	const uint32_t startVertexID = cmd->m_NumVertices;
-	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
-	batchTransformDrawIndices(m_TempGeomIndex, m_TempGeomNumIndices, dstIndex, (uint16_t)startVertexID);
-
-	cmd->m_NumVertices += numDrawVertices;
-	cmd->m_NumIndices += numDrawIndices;
+	createDrawCommand_TexturedVertexColor(m_TempGeomPos, m_TempGeomNumVertices, m_TempGeomColor, m_TempGeomNumVertices, m_TempGeomIndex, m_TempGeomNumIndices);
 }
 
 template<bool _Closed, LineCap::Enum _LineCap, LineJoin::Enum _LineJoin>
@@ -3799,28 +3702,7 @@ void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, fl
 	}
 
 	// Create a new draw command and copy the data to it.
-	const uint32_t numDrawVertices = m_TempGeomNumVertices;
-	const uint32_t numDrawIndices = m_TempGeomNumIndices;
-	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
-
-	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
-	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
-
-	Vec2* dstPos = &vb->m_Pos[vbOffset];
-	bx::memCopy(dstPos, m_TempGeomPos, sizeof(Vec2) * numDrawVertices);
-
-	Vec2* dstUV = &vb->m_UV[vbOffset];
-	memset64(dstUV, numDrawVertices, &uv.x);
-
-	uint32_t* dstColor = &vb->m_Color[vbOffset];
-	memset32(dstColor, numDrawVertices, &color);
-
-	const uint32_t startVertexID = cmd->m_NumVertices;
-	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
-	batchTransformDrawIndices(m_TempGeomIndex, m_TempGeomNumIndices, dstIndex, (uint16_t)startVertexID);
-
-	cmd->m_NumVertices += numDrawVertices;
-	cmd->m_NumIndices += numDrawIndices;
+	createDrawCommand_TexturedVertexColor(m_TempGeomPos, m_TempGeomNumVertices, &color, 1, m_TempGeomIndex, m_TempGeomNumIndices);
 }
 
 Shape* Context::createShape(uint32_t flags)
@@ -5228,7 +5110,6 @@ void Context::text(String* str, uint32_t alignment, Color color, float x, float 
 	fonsSetFont(m_FontStashContext, str->m_Font.m_Handle.idx);
 
 	FONSstring* fs = (FONSstring*)str->m_RendererData;
-//	fonsResetString(m_FontStashContext, fs, str->m_Text, nullptr);
 
 	uint32_t numBakedChars = fonsBakeString(m_FontStashContext, fs);
 	if (numBakedChars == ~0u) {
@@ -5419,30 +5300,40 @@ void Context::decomposeAndFillConcavePolygon(const Vec2* points, uint32_t numPoi
 	BX_FREE(m_Allocator, V);
 
 	// Create draw command
+	createDrawCommand_TexturedVertexColor(points, numPoints, &c, 1, m_TempGeomIndex, m_TempGeomNumIndices);
+}
+
+void Context::createDrawCommand_TexturedVertexColor(const Vec2* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
+{
 	const Vec2 uv = getWhitePixelUV();
-	const uint32_t numDrawVertices = numPoints;
-	const uint32_t numDrawIndices = m_TempGeomNumIndices;
 
-	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
+	// Allocate the draw command
+	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numVertices, numIndices, m_FontImages[0]);
 
+	// Vertex buffer
 	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 
 	Vec2* dstPos = &vb->m_Pos[vbOffset];
-	bx::memCopy(dstPos, points, sizeof(Vec2) * numDrawVertices);
+	bx::memCopy(dstPos, vtx, sizeof(Vec2) * numVertices);
 
 	Vec2* dstUV = &vb->m_UV[vbOffset];
-	memset64(dstUV, numDrawVertices, &uv.x);
+	memset64(dstUV, numVertices, &uv.x);
 
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
-	memset32(dstColor, numDrawVertices, &c);
+	if (numColors == numVertices) {
+		bx::memCopy(dstColor, colors, sizeof(uint32_t) * numVertices);
+	} else {
+		BX_CHECK(numColors == 1, "!!!");
+		memset32(dstColor, numVertices, colors);
+	}
 
-	const uint32_t startVertexID = cmd->m_NumVertices;
+	// Index buffer
 	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
-	batchTransformDrawIndices(m_TempGeomIndex, m_TempGeomNumIndices, dstIndex, (uint16_t)startVertexID);
+	batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);
 
-	cmd->m_NumVertices += numDrawVertices;
-	cmd->m_NumIndices += numDrawIndices;
+	cmd->m_NumVertices += numVertices;
+	cmd->m_NumIndices += numIndices;
 }
 
 //////////////////////////////////////////////////////////////////////////
