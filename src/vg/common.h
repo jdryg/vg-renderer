@@ -35,6 +35,14 @@
 #	define VG_CONFIG_FORCE_AA_OFF 0
 #endif
 
+#ifndef VG_CONFIG_USE_LIBTESS2
+#	define VG_CONFIG_USE_LIBTESS2 0
+#endif
+
+#ifndef VG_CONFIG_LIBTESS2_SCRATCH_BUFFER
+#	define VG_CONFIG_LIBTESS2_SCRATCH_BUFFER (4 * 1024 * 1024) // Set to 0 to let libtess2 use malloc/free
+#endif
+
 #define VG_HANDLE(_name) struct _name { uint16_t idx; }
 #define VG_INVALID_HANDLE { UINT16_MAX }
 
@@ -187,6 +195,15 @@ struct String
 	char* m_Text;
 	void* m_RendererData;
 	Font m_Font;
+};
+
+struct Mesh
+{
+	const float* m_PosBuffer;
+	const uint32_t* m_ColorBuffer;
+	const uint16_t* m_IndexBuffer;
+	uint32_t m_NumVertices;
+	uint32_t m_NumIndices;
 };
 
 // NOTE: The following 2 structs are identical to NanoVG because the rest of the code uses

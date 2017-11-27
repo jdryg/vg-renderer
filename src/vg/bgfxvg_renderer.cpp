@@ -34,6 +34,7 @@ BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wshadow");
 #include "bgfxvg_renderer.h"
 #include "shape.h"
 #include "path.h"
+#include "stroker.h"
 
 //#define FONTSTASH_IMPLEMENTATION 
 #include "../nanovg/fontstash.h"
@@ -249,6 +250,7 @@ struct Context
 	bx::HandleAllocT<MAX_TEXTURES> m_ImageAlloc;
 
 	Path* m_Path;
+	Stroker* m_Stroker;
 	Vec2* m_TransformedPathVertices;
 	uint32_t m_NumTransformedPathVertices;
 	bool m_PathVerticesTransformed;
@@ -261,17 +263,6 @@ struct Context
 	FONSquad* m_TextQuads;
 	Vec2* m_TextVertices;
 	uint32_t m_TextQuadCapacity;
-
-	// Temporary geometry used when generating strokes with round joints.
-	// This is needed because the number of vertices for each rounded corner depends
-	// on the angle between the 2 connected line segments
-	Vec2* m_TempGeomPos;
-	uint32_t* m_TempGeomColor;
-	uint16_t* m_TempGeomIndex;
-	uint32_t m_TempGeomNumVertices;
-	uint32_t m_TempGeomVertexCapacity;
-	uint32_t m_TempGeomNumIndices;
-	uint32_t m_TempGeomIndexCapacity;
 
 	FONScontext* m_FontStashContext;
 	FONSstring m_TextString;
@@ -380,12 +371,9 @@ struct Context
 	// Draw commands
 	DrawCommand* allocDrawCommand_TexturedVertexColor(uint32_t numVertices, uint32_t numIndices, ImageHandle img);
 	DrawCommand* allocDrawCommand_ColorGradient(uint32_t numVertices, uint32_t numIndices, GradientHandle gradient);
-	void createDrawCommand_TexturedVertexColor(const Vec2* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
-
-	// Concave polygon decomposition
-	void decomposeAndFillConcavePolygon(const Vec2* points, uint32_t numPoints, Color col, bool aa);
-	Vec2* allocTempPoints(uint32_t n);
-	void freeTempPoints(Vec2* ptr);
+	void createDrawCommand_VertexColor(const Vec2* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
+	void createDrawCommand_Textured(const Vec2* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, ImageHandle imgHandle, const float* uvMatrix, const uint16_t* indices, uint32_t numIndices);
+	void createDrawCommand_Gradient(const Vec2* vtx, uint32_t numVertices, GradientHandle gradientHandle, const uint16_t* indices, uint32_t numIndices);
 
 	// Textures
 	ImageHandle allocImage();
@@ -401,13 +389,6 @@ struct Context
 	void flushTextAtlasTexture();
 
 	// Rendering
-	template<bool _Closed, LineCap::Enum lineCap, LineJoin::Enum lineJoin>
-	void renderPathStrokeAA(const Vec2* vtx, uint32_t numVertices, float strokeWidth, Color color);
-	template<LineCap::Enum lineCap, LineJoin::Enum lineJoin>
-	void renderPathStrokeAAThin(const Vec2* vtx, uint32_t numVertices, Color color, bool closed);
-	template<bool _Closed, LineCap::Enum lineCap, LineJoin::Enum lineJoin>
-	void renderPathStrokeNoAA(const Vec2* vtx, uint32_t numVertices, float strokeWidth, Color color);
-
 	void renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numVertices, Color color);
 	void renderConvexPolygonAA(const Vec2* vtx, uint32_t numVertices, Color color);
 	void renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numVertices, ImagePatternHandle img);
@@ -420,20 +401,6 @@ struct Context
 	void cachedShapeAddTextCommand(CachedShape* shape, const uint8_t* cmdData);
 	void cachedShapeAddTextCommand(CachedShape* shape, String* str, uint32_t alignment, Color col, float x, float y);
 	void cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* stringCallback, void* userData);
-
-	// Temporary geometry
-	void tempGeomReset();
-	void tempGeomExpandVB(uint32_t n);
-	void tempGeomExpandIB(uint32_t n);
-	// NOTE: The only reason there's a separate function for the actual reallocation is because MSVC 
-	// doesn't inline the conditional if the reallocation happens inside tempGeomExpandXX() funcs. Since
-	// temp pos/color buffers are reused all the time, reallocations will be rare. So it should be better
-	// to have the conditional inlined.
-	void tempGeomReallocVB(uint32_t n);
-	void tempGeomReallocIB(uint32_t n);
-	void tempGeomAddPos(const Vec2* srcPos, uint32_t n);
-	void tempGeomAddPosColor(const Vec2* srcPos, const uint32_t* srcColor, uint32_t n);
-	void tempGeomAddIndices(const uint16_t* __restrict src, uint32_t n);
 
 	// Strings
 	String* createString(const Font& font, const char* text, const char* end);
@@ -499,8 +466,8 @@ inline void multiplyMatrix3(const float* __restrict a, const float* __restrict b
 inline float getAverageScale(const float* t)
 {
 	// nvg__getAverageScale
-	float sx = sqrtf(t[0] * t[0] + t[2] * t[2]);
-	float sy = sqrtf(t[1] * t[1] + t[3] * t[3]);
+	float sx = bx::fsqrt(t[0] * t[0] + t[2] * t[2]);
+	float sy = bx::fsqrt(t[1] * t[1] + t[3] * t[3]);
 	return (sx + sy) * 0.5f;
 }
 
@@ -512,29 +479,6 @@ inline float quantize(float a, float d)
 inline float getFontScale(const float* xform)
 {
 	return bx::fmin(quantize(getAverageScale(xform), 0.01f), 4.0f);
-}
-
-inline void vec2Normalize(Vec2* v)
-{
-	float lenSqr = v->x * v->x + v->y * v->y;
-	float invLen = lenSqr < 1e-5f ? 0.0f : (1.0f / sqrtf(lenSqr));
-
-	v->x *= invLen;
-	v->y *= invLen;
-}
-
-inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
-{
-	// v is the vector from the path point to the outline point, assuming a stroke width of 1.0.
-	// Equation obtained by solving the intersection of the 2 line segments. d01 and d12 are 
-	// assumed to be normalized.
-	Vec2 v = d01.perpCCW();
-	const float cross = d12.cross(d01);
-	if (bx::fabs(cross) > 1e-5f) {
-		v = (d01 - d12) * (1.0f / cross);
-	}
-
-	return v;
 }
 
 void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx);
@@ -891,6 +835,7 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID) :
 	m_Images(nullptr),
 	m_ImageCapacity(0),
 	m_Path(nullptr),
+	m_Stroker(nullptr),
 	m_TransformedPathVertices(nullptr),
 	m_NumTransformedPathVertices(0),
 	m_PathVerticesTransformed(false),
@@ -909,13 +854,6 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID) :
 	m_ViewID(viewID),
 	m_ForceNewDrawCommand(false),
 	m_NextFontID(0),
-	m_TempGeomPos(nullptr),
-	m_TempGeomColor(nullptr),
-	m_TempGeomIndex(nullptr),
-	m_TempGeomNumVertices(0),
-	m_TempGeomVertexCapacity(0),
-	m_TempGeomNumIndices(0),
-	m_TempGeomIndexCapacity(0),
 	m_NextGradientID(0),
 	m_NextImagePatternID(0)
 {
@@ -1022,14 +960,14 @@ Context::~Context()
 	BX_DELETE(m_Allocator, m_Path);
 	m_Path = nullptr;
 
+	BX_DELETE(m_Allocator, m_Stroker);
+	m_Stroker = nullptr;
+
 	BX_FREE(m_Allocator, m_Images);
 
 	BX_ALIGNED_FREE(m_Allocator, m_TextQuads, 16);
 	BX_ALIGNED_FREE(m_Allocator, m_TextVertices, 16);
 	BX_ALIGNED_FREE(m_Allocator, m_TransformedPathVertices, 16);
-	BX_ALIGNED_FREE(m_Allocator, m_TempGeomPos, 16);
-	BX_ALIGNED_FREE(m_Allocator, m_TempGeomColor, 16);
-	BX_ALIGNED_FREE(m_Allocator, m_TempGeomIndex, 16);
 }
 
 bool Context::init()
@@ -1043,6 +981,7 @@ bool Context::init()
 	transformIdentity();
 
 	m_Path = BX_NEW(m_Allocator, Path)(m_Allocator);
+	m_Stroker = BX_NEW(m_Allocator, Stroker)(m_Allocator);
 	m_IndexBuffer = BX_NEW(m_Allocator, IndexBuffer)();
 
 	m_PosVertexDecl.begin().add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float).end();
@@ -1280,6 +1219,7 @@ void Context::beginPath()
 {
 	const State* state = getState();
 	m_Path->reset(state->m_AvgScale, m_TesselationTolerance);
+	m_Stroker->reset(state->m_AvgScale, m_TesselationTolerance, m_FringeWidth);
 	m_PathVerticesTransformed = false;
 }
 
@@ -1427,7 +1367,7 @@ void Context::fillConcavePath(Color col, bool aa)
 
 	const uint32_t numSubPaths = m_Path->getNumSubPaths();
 	const SubPath* subPaths = m_Path->getSubPaths();
-	BX_CHECK(numSubPaths == 1, "Cannot decompose multiple concave paths"); // Only a single concave polygon can be decomposed at a time.
+	BX_CHECK(numSubPaths == 1, "Cannot decompose multiple concave paths");
 	BX_UNUSED(numSubPaths);
 
 	const SubPath* path = &subPaths[0];
@@ -1435,7 +1375,15 @@ void Context::fillConcavePath(Color col, bool aa)
 		return;
 	}
 
-	decomposeAndFillConcavePolygon(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, col, aa);
+	// TODO: AA
+	BX_UNUSED(aa);
+
+	Mesh mesh;
+	if (m_Stroker->concaveFill(&mesh, &pathVertices[path->m_FirstVertexID].x, path->m_NumVertices)) {
+		createDrawCommand_VertexColor((const Vec2*)mesh.m_PosBuffer, mesh.m_NumVertices, &col, 1, mesh.m_IndexBuffer, mesh.m_NumIndices);
+	} else {
+		BX_WARN(false, "Failed to triangulate concave polygon");
+	}
 }
 
 void Context::strokePath(Color color, float width, bool aa, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
@@ -1463,10 +1411,6 @@ void Context::strokePath(Color color, float width, bool aa, LineCap::Enum lineCa
 
 	const uint32_t c = ColorRGBA::setAlpha(color, newAlpha);
 
-	uint8_t commonID = 0;
-	commonID |= ((uint8_t)lineCap) << 1;
-	commonID |= ((uint8_t)lineJoin) << 3;
-
 	const uint32_t numPaths = m_Path->getNumSubPaths();
 	const SubPath* subPaths = m_Path->getSubPaths();
 	for (uint32_t iSubPath = 0; iSubPath < numPaths; ++iSubPath) {
@@ -1474,86 +1418,24 @@ void Context::strokePath(Color color, float width, bool aa, LineCap::Enum lineCa
 		if (path->m_NumVertices < 2) {
 			continue;
 		}
-		
+
 		const Vec2* vtx = &pathVertices[path->m_FirstVertexID];
 		const uint32_t numPathVertices = path->m_NumVertices;
 		const bool isClosed = path->m_IsClosed;
 
-		const uint8_t id = commonID | (isClosed ? 0x01 : 0x00);
-
+		Mesh mesh;
 		if (aa) {
 			if (isThin) {
-				const uint8_t combo = id >> 1;
-				switch (combo) {
-				case  0: renderPathStrokeAAThin<LineCap::Butt, LineJoin::Miter>(vtx, numPathVertices, c, isClosed);   break;
-				case  1: renderPathStrokeAAThin<LineCap::Square, LineJoin::Miter>(vtx, numPathVertices, c, isClosed);   break;
-				case  2: renderPathStrokeAAThin<LineCap::Square, LineJoin::Miter>(vtx, numPathVertices, c, isClosed);   break;
-				case  4: renderPathStrokeAAThin<LineCap::Butt, LineJoin::Bevel>(vtx, numPathVertices, c, isClosed);   break;
-				case  5: renderPathStrokeAAThin<LineCap::Square, LineJoin::Bevel>(vtx, numPathVertices, c, isClosed);   break;
-				case  6: renderPathStrokeAAThin<LineCap::Square, LineJoin::Bevel>(vtx, numPathVertices, c, isClosed);   break;
-				case  8: renderPathStrokeAAThin<LineCap::Butt, LineJoin::Bevel>(vtx, numPathVertices, c, isClosed);   break;
-				case  9: renderPathStrokeAAThin<LineCap::Square, LineJoin::Bevel>(vtx, numPathVertices, c, isClosed);   break;
-				case 10: renderPathStrokeAAThin<LineCap::Square, LineJoin::Bevel>(vtx, numPathVertices, c, isClosed);   break;
-				default:
-					BX_WARN(false, "Invalid stroke configuration");
-					break;
-				}
+				m_Stroker->polylineStrokeAAThin(&mesh, &vtx[0].x, numPathVertices, isClosed, c, lineCap, lineJoin);
 			} else {
-				switch (id) {
-				case  0: renderPathStrokeAA<false, LineCap::Butt, LineJoin::Miter>(vtx, numPathVertices, strokeWidth, c);   break;
-				case  1: renderPathStrokeAA<true, LineCap::Butt, LineJoin::Miter>(vtx, numPathVertices, strokeWidth, c);    break;
-				case  2: renderPathStrokeAA<false, LineCap::Round, LineJoin::Miter>(vtx, numPathVertices, strokeWidth, c);  break;
-				case  3: renderPathStrokeAA<true, LineCap::Butt, LineJoin::Miter>(vtx, numPathVertices, strokeWidth, c);    break;
-				case  4: renderPathStrokeAA<false, LineCap::Square, LineJoin::Miter>(vtx, numPathVertices, strokeWidth, c); break;
-				case  5: renderPathStrokeAA<true, LineCap::Butt, LineJoin::Miter>(vtx, numPathVertices, strokeWidth, c);    break;
-				// 6 to 7 == invalid line cap type
-				case  8: renderPathStrokeAA<false, LineCap::Butt, LineJoin::Round>(vtx, numPathVertices, strokeWidth, c);   break;
-				case  9: renderPathStrokeAA<true, LineCap::Butt, LineJoin::Round>(vtx, numPathVertices, strokeWidth, c);    break;
-				case 10: renderPathStrokeAA<false, LineCap::Round, LineJoin::Round>(vtx, numPathVertices, strokeWidth, c);  break;
-				case 11: renderPathStrokeAA<true, LineCap::Butt, LineJoin::Round>(vtx, numPathVertices, strokeWidth, c);    break;
-				case 12: renderPathStrokeAA<false, LineCap::Square, LineJoin::Round>(vtx, numPathVertices, strokeWidth, c); break;
-				case 13: renderPathStrokeAA<true, LineCap::Butt, LineJoin::Round>(vtx, numPathVertices, strokeWidth, c);    break;
-				// 14 to 15 == invalid line cap type
-				case 16: renderPathStrokeAA<false, LineCap::Butt, LineJoin::Bevel>(vtx, numPathVertices, strokeWidth, c);   break;
-				case 17: renderPathStrokeAA<true, LineCap::Butt, LineJoin::Bevel>(vtx, numPathVertices, strokeWidth, c);    break;
-				case 18: renderPathStrokeAA<false, LineCap::Round, LineJoin::Bevel>(vtx, numPathVertices, strokeWidth, c);  break;
-				case 19: renderPathStrokeAA<true, LineCap::Butt, LineJoin::Bevel>(vtx, numPathVertices, strokeWidth, c);    break;
-				case 20: renderPathStrokeAA<false, LineCap::Square, LineJoin::Bevel>(vtx, numPathVertices, strokeWidth, c); break;
-				case 21: renderPathStrokeAA<true, LineCap::Butt, LineJoin::Bevel>(vtx, numPathVertices, strokeWidth, c);    break;
-				// 22 to 32 == invalid line join type
-				default:
-					BX_WARN(false, "Invalid stroke configuration");
-					break;
-				}
+				m_Stroker->polylineStrokeAA(&mesh, &vtx[0].x, numPathVertices, isClosed, c, strokeWidth, lineCap, lineJoin);
 			}
 		} else {
-			switch (id) {
-			case  0: renderPathStrokeNoAA<false, LineCap::Butt, LineJoin::Miter>(vtx, numPathVertices, strokeWidth, c);   break;
-			case  1: renderPathStrokeNoAA<true, LineCap::Butt, LineJoin::Miter>(vtx, numPathVertices, strokeWidth, c);    break;
-			case  2: renderPathStrokeNoAA<false, LineCap::Round, LineJoin::Miter>(vtx, numPathVertices, strokeWidth, c);  break;
-			case  3: renderPathStrokeNoAA<true, LineCap::Butt, LineJoin::Miter>(vtx, numPathVertices, strokeWidth, c);    break;
-			case  4: renderPathStrokeNoAA<false, LineCap::Square, LineJoin::Miter>(vtx, numPathVertices, strokeWidth, c); break;
-			case  5: renderPathStrokeNoAA<true, LineCap::Butt, LineJoin::Miter>(vtx, numPathVertices, strokeWidth, c);    break;
-			// 6 to 7 == invalid line cap type
-			case  8: renderPathStrokeNoAA<false, LineCap::Butt, LineJoin::Round>(vtx, numPathVertices, strokeWidth, c);   break;
-			case  9: renderPathStrokeNoAA<true, LineCap::Butt, LineJoin::Round>(vtx, numPathVertices, strokeWidth, c);    break;
-			case 10: renderPathStrokeNoAA<false, LineCap::Round, LineJoin::Round>(vtx, numPathVertices, strokeWidth, c);  break;
-			case 11: renderPathStrokeNoAA<true, LineCap::Butt, LineJoin::Round>(vtx, numPathVertices, strokeWidth, c);    break;
-			case 12: renderPathStrokeNoAA<false, LineCap::Square, LineJoin::Round>(vtx, numPathVertices, strokeWidth, c); break;
-			case 13: renderPathStrokeNoAA<true, LineCap::Butt, LineJoin::Round>(vtx, numPathVertices, strokeWidth, c);    break;
-			// 14 to 15 == invalid line cap type
-			case 16: renderPathStrokeNoAA<false, LineCap::Butt, LineJoin::Bevel>(vtx, numPathVertices, strokeWidth, c);   break;
-			case 17: renderPathStrokeNoAA<true, LineCap::Butt, LineJoin::Bevel>(vtx, numPathVertices, strokeWidth, c);    break;
-			case 18: renderPathStrokeNoAA<false, LineCap::Round, LineJoin::Bevel>(vtx, numPathVertices, strokeWidth, c);  break;
-			case 19: renderPathStrokeNoAA<true, LineCap::Butt, LineJoin::Bevel>(vtx, numPathVertices, strokeWidth, c);    break;
-			case 20: renderPathStrokeNoAA<false, LineCap::Square, LineJoin::Bevel>(vtx, numPathVertices, strokeWidth, c); break;
-			case 21: renderPathStrokeNoAA<true, LineCap::Butt, LineJoin::Bevel>(vtx, numPathVertices, strokeWidth, c);    break;
-			// 22 to 32 == invalid line join type
-			default:
-				BX_WARN(false, "Invalid stroke configuration");
-				break;
-			}
+			m_Stroker->polylineStroke(&mesh, &vtx[0].x, numPathVertices, isClosed, strokeWidth, lineCap, lineJoin);
 		}
+
+		const bool hasColors = mesh.m_ColorBuffer != nullptr;
+		createDrawCommand_VertexColor((const Vec2*)mesh.m_PosBuffer, mesh.m_NumVertices, hasColors ? mesh.m_ColorBuffer : &c, hasColors ? mesh.m_NumVertices : 1, mesh.m_IndexBuffer, mesh.m_NumIndices);
 	}
 }
 
@@ -1571,7 +1453,7 @@ GradientHandle Context::createLinearGradient(float sx, float sy, float ex, float
 	const float large = 1e5;
 	float dx = ex - sx;
 	float dy = ey - sy;
-	float d = sqrtf(dx * dx + dy * dy);
+	float d = bx::fsqrt(dx * dx + dy * dy);
 	if (d > 0.0001f) {
 		dx /= d;
 		dy /= d;
@@ -2393,1318 +2275,6 @@ int Context::textGlyphPositions(const Font& font, uint32_t alignment, float x, f
 	return npos;
 }
 
-template<bool _Closed, LineCap::Enum _LineCap, LineJoin::Enum _LineJoin>
-void Context::renderPathStrokeAA(const Vec2* vtx, uint32_t numPathVertices, float strokeWidth, Color color)
-{
-	const Vec2 uv = getWhitePixelUV();
-	const float avgScale = getState()->m_AvgScale;
-	const uint32_t numSegments = numPathVertices - (_Closed ? 0 : 1);
-	const uint32_t c0 = ColorRGBA::setAlpha(color, 0);
-	const uint32_t c0_c_c_c0[4] = { c0, color, color, c0 };
-	const float hsw = (strokeWidth - m_FringeWidth) * 0.5f;
-	const float hsw_aa = hsw + m_FringeWidth;
-	const float da = bx::facos((avgScale * hsw) / ((avgScale * hsw) + m_TesselationTolerance)) * 2.0f;
-	const uint32_t numPointsHalfCircle = bx::uint32_max(2u, (uint32_t)bx::fceil(bx::kPi / da));
-
-	tempGeomReset();
-
-	Vec2 d01;
-	uint16_t prevSegmentLeftID = 0xFFFF;
-	uint16_t prevSegmentLeftAAID = 0xFFFF;
-	uint16_t prevSegmentRightID = 0xFFFF;
-	uint16_t prevSegmentRightAAID = 0xFFFF;
-	uint16_t firstSegmentLeftID = 0xFFFF;
-	uint16_t firstSegmentLeftAAID = 0xFFFF;
-	uint16_t firstSegmentRightID = 0xFFFF;
-	uint16_t firstSegmentRightAAID = 0xFFFF;
-
-	if (!_Closed) {
-		// First segment of an open path
-		const Vec2& p0 = vtx[0];
-		const Vec2& p1 = vtx[1];
-
-		d01 = p1 - p0;
-		vec2Normalize(&d01);
-
-		const Vec2 l01 = d01.perpCCW();
-
-		if (_LineCap == LineCap::Butt) {
-			const Vec2 l01_hsw = l01 * hsw;
-			const Vec2 l01_hsw_aa = l01 * hsw_aa;
-			const Vec2 d01_aa = d01 * m_FringeWidth;
-
-			Vec2 p[4] = {
-				p0 + l01_hsw_aa - d01_aa,
-				p0 + l01_hsw,
-				p0 - l01_hsw,
-				p0 - l01_hsw_aa - d01_aa
-			};
-
-			tempGeomExpandVB(4);
-			tempGeomAddPosColor(&p[0], &c0_c_c_c0[0], 4);
-
-			uint16_t id[6] = {
-				0, 2, 1,
-				0, 3, 2
-			};
-			tempGeomExpandIB(6);
-			tempGeomAddIndices(&id[0], 6);
-
-			prevSegmentLeftAAID = 0;
-			prevSegmentLeftID = 1;
-			prevSegmentRightID = 2;
-			prevSegmentRightAAID = 3;
-		} else if (_LineCap == LineCap::Square) {
-			const Vec2 l01_hsw = l01 * hsw;
-			const Vec2 d01_hsw = d01 * hsw;
-			const Vec2 l01_hsw_aa = l01 * hsw_aa;
-			const Vec2 d01_hsw_aa = d01 * hsw_aa;
-
-			Vec2 p[4] = {
-				p0 + l01_hsw_aa - d01_hsw_aa,
-				p0 + l01_hsw - d01_hsw,
-				p0 - l01_hsw - d01_hsw,
-				p0 - l01_hsw_aa - d01_hsw_aa
-			};
-
-			tempGeomExpandVB(4);
-			tempGeomAddPosColor(&p[0], &c0_c_c_c0[0], 4);
-
-			uint16_t id[6] = {
-				0, 2, 1,
-				0, 3, 2
-			};
-			tempGeomExpandIB(6);
-			tempGeomAddIndices(&id[0], 6);
-
-			prevSegmentLeftAAID = 0;
-			prevSegmentLeftID = 1;
-			prevSegmentRightID = 2;
-			prevSegmentRightAAID = 3;
-		} else if (_LineCap == LineCap::Round) {
-			const float startAngle = atan2f(l01.y, l01.x);
-			tempGeomExpandVB(numPointsHalfCircle << 1);
-			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
-				float a = startAngle + i * bx::kPi / (float)(numPointsHalfCircle - 1);
-				float ca = bx::fcos(a);
-				float sa = bx::fsin(a);
-
-				Vec2 p[2] = {
-					Vec2(p0.x + ca * hsw, p0.y + sa * hsw),
-					Vec2(p0.x + ca * hsw_aa, p0.y + sa * hsw_aa)
-				};
-
-				tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
-			}
-
-			// Generate indices for the triangle fan
-			tempGeomExpandIB(numPointsHalfCircle * 9 - 12);
-			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
-				uint16_t id[3] = {
-					0,
-					(uint16_t)((i << 1) + 2),
-					(uint16_t)((i << 1) + 4)
-				};
-				tempGeomAddIndices(&id[0], 3);
-			}
-
-			// Generate indices for the AA quads
-			for (uint32_t i = 0; i < numPointsHalfCircle - 1; ++i) {
-				const uint16_t idBase = (uint16_t)(i << 1);
-				uint16_t id[6] = {
-					idBase, (uint16_t)(idBase + 1), (uint16_t)(idBase + 3),
-					idBase, (uint16_t)(idBase + 3), (uint16_t)(idBase + 2)
-				};
-				tempGeomAddIndices(&id[0], 6);
-			}
-
-			prevSegmentLeftAAID = 1;
-			prevSegmentLeftID = 0;
-			prevSegmentRightID = (uint16_t)((numPointsHalfCircle - 1) * 2);
-			prevSegmentRightAAID = (uint16_t)((numPointsHalfCircle - 1) * 2 + 1);
-		} else {
-			BX_CHECK(false, "Unknown line cap type");
-		}
-	} else {
-		d01 = vtx[0] - vtx[numPathVertices - 1];
-		vec2Normalize(&d01);
-	}
-
-	const uint32_t firstSegmentID = _Closed ? 0 : 1;
-	for (uint32_t iSegment = firstSegmentID; iSegment < numSegments; ++iSegment) {
-		const Vec2& p1 = vtx[iSegment];
-		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
-
-		Vec2 d12 = p2 - p1;
-		vec2Normalize(&d12);
-
-		const Vec2 v = calcExtrusionVector(d01, d12);
-		const Vec2 v_hsw_aa = v * hsw_aa;
-
-		// Check which one of the points is the inner corner.
-		float leftPointAAProjDist = d12.x * v_hsw_aa.x + d12.y * v_hsw_aa.y;
-		if (leftPointAAProjDist >= 0.0f) {
-			// The left point is the inner corner.
-			const Vec2 v_hsw = v * hsw;
-			const Vec2 innerCornerAA = p1 + v_hsw_aa;
-			const Vec2 innerCorner = p1 + v_hsw;
-
-			if (_LineJoin == LineJoin::Miter) {
-				const uint16_t firstVertexID = (uint16_t)m_TempGeomNumVertices;
-
-				Vec2 p[4] = {
-					innerCornerAA,
-					innerCorner,
-					p1 - v_hsw,
-					p1 - v_hsw_aa
-				};
-
-				tempGeomExpandVB(4);
-				tempGeomAddPosColor(&p[0], &c0_c_c_c0[0], 4);
-
-				if (prevSegmentLeftAAID != 0xFFFF) {
-					BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
-
-					uint16_t id[18] = {
-						prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(firstVertexID + 1),
-						prevSegmentLeftAAID, (uint16_t)(firstVertexID + 1), firstVertexID,
-						prevSegmentLeftID, prevSegmentRightID, (uint16_t)(firstVertexID + 2),
-						prevSegmentLeftID, (uint16_t)(firstVertexID + 2), (uint16_t)(firstVertexID + 1),
-						prevSegmentRightID, prevSegmentRightAAID, (uint16_t)(firstVertexID + 3),
-						prevSegmentRightID, (uint16_t)(firstVertexID + 3), (uint16_t)(firstVertexID + 2)
-					};
-
-					tempGeomExpandIB(18);
-					tempGeomAddIndices(&id[0], 18);
-				} else {
-					BX_CHECK(_Closed, "Invalid previous segment");
-					firstSegmentLeftAAID = firstVertexID; // 0
-					firstSegmentLeftID = firstVertexID + 1; // 1
-					firstSegmentRightID = firstVertexID + 2; // 2
-					firstSegmentRightAAID = firstVertexID + 3; // 3
-				}
-
-				prevSegmentLeftAAID = firstVertexID;
-				prevSegmentLeftID = firstVertexID + 1;
-				prevSegmentRightID = firstVertexID + 2;
-				prevSegmentRightAAID = firstVertexID + 3;
-			} else {
-				const Vec2 r01 = d01.perpCW();
-				const Vec2 r12 = d12.perpCW();
-
-				// Assume _LineJoin == LineJoin::Bevel
-				float a01 = 0.0f, a12 = 0.0f, arcDa = 0.0f;
-				uint32_t numArcPoints = 1;
-				if (_LineJoin == LineJoin::Round) {
-					a01 = atan2f(r01.y, r01.x);
-					a12 = atan2f(r12.y, r12.x);
-					if (a12 < a01) {
-						a12 += bx::kPi2;
-					}
-
-					numArcPoints = bx::uint32_max(2u, (uint32_t)((a12 - a01) / da));
-					arcDa = ((a12 - a01) / (float)numArcPoints);
-				}
-
-				const uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
-				tempGeomExpandVB(numArcPoints * 2 + 4);
-
-				Vec2 p[2] = {
-					innerCornerAA,
-					innerCorner
-				};
-				tempGeomAddPosColor(&p[0], &c0_c_c_c0[0], 2);
-
-				// First arc vertex
-				{
-					Vec2 p[2] = {
-						p1 + r01 * hsw, 
-						p1 + r01 * hsw_aa
-					};
-
-					if (_LineJoin == LineJoin::Bevel) {
-						const float cosAngle = bx::fabs(r01.dot(r12));
-						p[0] -= d01 * (cosAngle * m_FringeWidth);
-					}
-
-					tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
-				}
-
-				// Middle arc vertices
-				for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
-					float a = a01 + iArcPoint * arcDa;
-
-					const Vec2 arcPointDir(bx::fcos(a), bx::fsin(a));
-
-					Vec2 p[2] = {
-						p1 + arcPointDir * hsw,
-						p1 + arcPointDir * hsw_aa
-					};
-
-					tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
-				}
-
-				// Last arc vertex
-				{
-					Vec2 p[2] = {
-						p1 + r12 * hsw,
-						p1 + r12 * hsw_aa
-					};
-
-					if (_LineJoin == LineJoin::Bevel) {
-						const float cosAngle = bx::fabs(r01.dot(r12));
-						p[0] += d12 * (cosAngle * m_FringeWidth);
-					}
-
-					tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
-				}
-
-				if (prevSegmentLeftAAID != 0xFFFF) {
-					BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
-
-					uint16_t id[18] = {
-						prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(firstFanVertexID + 1),
-						prevSegmentLeftAAID, (uint16_t)(firstFanVertexID + 1), firstFanVertexID,
-						prevSegmentLeftID, prevSegmentRightID, (uint16_t)(firstFanVertexID + 2),
-						prevSegmentLeftID, (uint16_t)(firstFanVertexID + 2), (uint16_t)(firstFanVertexID + 1),
-						prevSegmentRightID, prevSegmentRightAAID, (uint16_t)(firstFanVertexID + 3),
-						prevSegmentRightID, (uint16_t)(firstFanVertexID + 3), (uint16_t)(firstFanVertexID + 2)
-					};
-
-					tempGeomExpandIB(18);
-					tempGeomAddIndices(&id[0], 18);
-				} else {
-					BX_CHECK(_Closed, "Invalid previous segment");
-					firstSegmentLeftAAID = firstFanVertexID; // 0
-					firstSegmentLeftID = firstFanVertexID + 1; // 1
-					firstSegmentRightID = firstFanVertexID + 2; // 2
-					firstSegmentRightAAID = firstFanVertexID + 3; // 3
-				}
-
-				// Generate the slice.
-				uint16_t arcID = firstFanVertexID + 2;
-				tempGeomExpandIB(numArcPoints * 9);
-				for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
-					uint16_t id[9] = {
-						(uint16_t)(firstFanVertexID + 1), arcID, (uint16_t)(arcID + 2),
-						arcID, (uint16_t)(arcID + 1), (uint16_t)(arcID + 3),
-						arcID, (uint16_t)(arcID + 3), (uint16_t)(arcID + 2)
-					};
-					tempGeomAddIndices(&id[0], 9);
-
-					arcID += 2;
-				}
-
-				prevSegmentLeftAAID = firstFanVertexID;
-				prevSegmentLeftID = firstFanVertexID + 1;
-				prevSegmentRightID = arcID;
-				prevSegmentRightAAID = arcID + 1;
-			}
-		} else {
-			// The right point is the inner corner.
-			const Vec2 v_hsw = v * hsw;
-			const Vec2 innerCornerAA = p1 - v_hsw_aa;
-			const Vec2 innerCorner = p1 - v_hsw;
-
-			if (_LineJoin == LineJoin::Miter) {
-				const uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
-
-				Vec2 p[4] = {
-					innerCornerAA,
-					innerCorner,
-					p1 + v_hsw,
-					p1 + v_hsw_aa
-				};
-
-				tempGeomExpandVB(4);
-				tempGeomAddPosColor(&p[0], &c0_c_c_c0[0], 4);
-
-				if (prevSegmentLeftAAID != 0xFFFF) {
-					BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
-
-					uint16_t id[18] = {
-						prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(firstFanVertexID + 2),
-						prevSegmentLeftAAID, (uint16_t)(firstFanVertexID + 2), (uint16_t)(firstFanVertexID + 3),
-						prevSegmentLeftID, prevSegmentRightID, (uint16_t)(firstFanVertexID + 1),
-						prevSegmentLeftID, (uint16_t)(firstFanVertexID + 1), (uint16_t)(firstFanVertexID + 2),
-						prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID,
-						prevSegmentRightID, firstFanVertexID, (uint16_t)(firstFanVertexID + 1)
-					};
-
-					tempGeomExpandIB(18);
-					tempGeomAddIndices(&id[0], 18);
-				} else {
-					firstSegmentLeftAAID = firstFanVertexID + 3; // 3
-					firstSegmentLeftID = firstFanVertexID + 2; // 2
-					firstSegmentRightID = firstFanVertexID + 1; // 1
-					firstSegmentRightAAID = firstFanVertexID + 0; // 0
-				}
-
-				prevSegmentLeftAAID = firstFanVertexID + 3;
-				prevSegmentLeftID = firstFanVertexID + 2;
-				prevSegmentRightID = firstFanVertexID + 1;
-				prevSegmentRightAAID = firstFanVertexID;
-			} else {
-				const Vec2 l01 = d01.perpCCW();
-				const Vec2 l12 = d12.perpCCW();
-
-				// Assume _LineJoin == LineJoin::Bevel
-				float a01 = 0.0f, a12 = 0.0f, arcDa = 0.0f;
-				uint32_t numArcPoints = 1;
-				if (_LineJoin == LineJoin::Round) {
-					a01 = atan2f(l01.y, l01.x);
-					a12 = atan2f(l12.y, l12.x);
-					if (a12 > a01) {
-						a12 -= bx::kPi2;
-					}
-
-					numArcPoints = bx::uint32_max(2u, (uint32_t)((a01 - a12) / da));
-					arcDa = ((a12 - a01) / (float)numArcPoints);
-				}
-
-				const uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
-				tempGeomExpandVB(numArcPoints * 2 + 4);
-
-				Vec2 p[2] = {
-					innerCornerAA,
-					innerCorner
-				};
-				tempGeomAddPosColor(&p[0], &c0_c_c_c0[0], 2);
-
-				// First arc vertex
-				{
-					Vec2 p[2] = {
-						p1 + l01 * hsw,
-						p1 + l01 * hsw_aa
-					};
-
-					if (_LineJoin == LineJoin::Bevel) {
-						const float cosAngle = bx::fabs(l01.dot(l12));
-						p[0] -= d01 * (cosAngle * m_FringeWidth);
-					}
-
-					tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
-				}
-
-				// Middle arc vertices
-				for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
-					float a = a01 + iArcPoint * arcDa;
-
-					const Vec2 arcPointDir(bx::fcos(a), bx::fsin(a));
-
-					Vec2 p[2] = {
-						p1 + arcPointDir * hsw,
-						p1 + arcPointDir * hsw_aa
-					};
-
-					tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
-				}
-
-				// Last arc vertex
-				{
-					Vec2 p[2] = {
-						p1 + l12 * hsw,
-						p1 + l12 * hsw_aa
-					};
-
-					if (_LineJoin == LineJoin::Bevel) {
-						const float cosAngle = bx::fabs(l01.dot(l12));
-						p[0] += d12 * (cosAngle * m_FringeWidth);
-					}
-
-					tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
-				}
-
-				if (prevSegmentLeftAAID != 0xFFFF) {
-					BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
-
-					uint16_t id[18] = {
-						prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(firstFanVertexID + 2),
-						prevSegmentLeftAAID, (uint16_t)(firstFanVertexID + 2), (uint16_t)(firstFanVertexID + 3),
-						prevSegmentLeftID, prevSegmentRightID, (uint16_t)(firstFanVertexID + 1),
-						prevSegmentLeftID, (uint16_t)(firstFanVertexID + 1), (uint16_t)(firstFanVertexID + 2),
-						prevSegmentRightID, prevSegmentRightAAID, firstFanVertexID,
-						prevSegmentRightID, firstFanVertexID, (uint16_t)(firstFanVertexID + 1)
-					};
-
-					tempGeomExpandIB(18);
-					tempGeomAddIndices(&id[0], 18);
-				} else {
-					firstSegmentLeftAAID = firstFanVertexID + 3; // 3
-					firstSegmentLeftID = firstFanVertexID + 2; // 2
-					firstSegmentRightID = firstFanVertexID + 1; // 1
-					firstSegmentRightAAID = firstFanVertexID + 0; // 0
-				}
-
-				// Generate the slice.
-				uint16_t arcID = firstFanVertexID + 2;
-				tempGeomExpandIB(numArcPoints * 9);
-				for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
-					uint16_t id[9] = {
-						(uint16_t)(firstFanVertexID + 1), (uint16_t)(arcID + 2), arcID,
-						arcID, (uint16_t)(arcID + 3), (uint16_t)(arcID + 1),
-						arcID, (uint16_t)(arcID + 2), (uint16_t)(arcID + 3)
-					};
-					tempGeomAddIndices(&id[0], 9);
-
-					arcID += 2;
-				}
-
-				prevSegmentLeftAAID = arcID + 1;
-				prevSegmentLeftID = arcID;
-				prevSegmentRightID = firstFanVertexID + 1;
-				prevSegmentRightAAID = firstFanVertexID;
-			}
-		}
-
-		d01 = d12;
-	}
-
-	if (!_Closed) {
-		// Last segment of an open path
-		const Vec2& p1 = vtx[numPathVertices - 1];
-
-		const Vec2 l01 = d01.perpCCW();
-
-		if (_LineCap == LineCap::Butt) {
-			const uint16_t curSegmentLeftAAID = (uint16_t)m_TempGeomNumVertices;
-			const Vec2 l01_hsw = l01 * hsw;
-			const Vec2 l01_hsw_aa = l01 * hsw_aa;
-			const Vec2 d01_aa = d01 * m_FringeWidth;
-
-			Vec2 p[4] = {
-				p1 + l01_hsw_aa + d01_aa,
-				p1 + l01_hsw,
-				p1 - l01_hsw,
-				p1 - l01_hsw_aa + d01_aa
-			};
-
-			tempGeomExpandVB(4);
-			tempGeomAddPosColor(&p[0], &c0_c_c_c0[0], 4);
-
-			uint16_t id[24] = {
-				prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(curSegmentLeftAAID + 1),
-				prevSegmentLeftAAID, (uint16_t)(curSegmentLeftAAID + 1), curSegmentLeftAAID,
-				prevSegmentLeftID, prevSegmentRightID, (uint16_t)(curSegmentLeftAAID + 2),
-				prevSegmentLeftID, (uint16_t)(curSegmentLeftAAID + 2), (uint16_t)(curSegmentLeftAAID + 1),
-				prevSegmentRightID, prevSegmentRightAAID, (uint16_t)(curSegmentLeftAAID + 3),
-				prevSegmentRightID, (uint16_t)(curSegmentLeftAAID + 3), (uint16_t)(curSegmentLeftAAID + 2),
-				curSegmentLeftAAID, (uint16_t)(curSegmentLeftAAID + 1), (uint16_t)(curSegmentLeftAAID + 2),
-				curSegmentLeftAAID, (uint16_t)(curSegmentLeftAAID + 2), (uint16_t)(curSegmentLeftAAID + 3)
-			};
-
-			tempGeomExpandIB(24);
-			tempGeomAddIndices(&id[0], 24);
-		} else if (_LineCap == LineCap::Square) {
-			const uint16_t curSegmentLeftAAID = (uint16_t)m_TempGeomNumVertices;
-			const Vec2 l01_hsw = l01 * hsw;
-			const Vec2 d01_hsw = d01 * hsw;
-			const Vec2 l01_hsw_aa = l01 * hsw_aa;
-			const Vec2 d01_hsw_aa = d01 * hsw_aa;
-
-			Vec2 p[4] = {
-				p1 + l01_hsw_aa + d01_hsw_aa,
-				p1 + l01_hsw + d01_hsw,
-				p1 - l01_hsw + d01_hsw,
-				p1 - l01_hsw_aa + d01_hsw_aa
-			};
-
-			tempGeomExpandVB(4);
-			tempGeomAddPosColor(&p[0], &c0_c_c_c0[0], 4);
-
-			uint16_t id[24] = {
-				prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(curSegmentLeftAAID + 1),
-				prevSegmentLeftAAID, (uint16_t)(curSegmentLeftAAID + 1), curSegmentLeftAAID,
-				prevSegmentLeftID, prevSegmentRightID, (uint16_t)(curSegmentLeftAAID + 2),
-				prevSegmentLeftID, (uint16_t)(curSegmentLeftAAID + 2), (uint16_t)(curSegmentLeftAAID + 1),
-				prevSegmentRightID, prevSegmentRightAAID, (uint16_t)(curSegmentLeftAAID + 3),
-				prevSegmentRightID, (uint16_t)(curSegmentLeftAAID + 3), (uint16_t)(curSegmentLeftAAID + 2),
-				curSegmentLeftAAID, (uint16_t)(curSegmentLeftAAID + 1), (uint16_t)(curSegmentLeftAAID + 2),
-				curSegmentLeftAAID, (uint16_t)(curSegmentLeftAAID + 2), (uint16_t)(curSegmentLeftAAID + 3)
-			};
-
-			tempGeomExpandIB(24);
-			tempGeomAddIndices(&id[0], 24);
-		} else if (_LineCap == LineCap::Round) {
-			const uint16_t curSegmentLeftID = (uint16_t)m_TempGeomNumVertices;
-			const float startAngle = atan2f(l01.y, l01.x);
-
-			tempGeomExpandVB(numPointsHalfCircle * 2);
-			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
-				float a = startAngle - i * bx::kPi / (float)(numPointsHalfCircle - 1);
-				float ca = bx::fcos(a);
-				float sa = bx::fsin(a);
-
-				Vec2 p[2] = {
-					Vec2(p1.x + ca * hsw, p1.y + sa * hsw),
-					Vec2(p1.x + ca * hsw_aa, p1.y + sa * hsw_aa)
-				};
-
-				tempGeomAddPosColor(&p[0], &c0_c_c_c0[2], 2);
-			}
-
-			uint16_t id[18] = {
-				prevSegmentLeftAAID, prevSegmentLeftID, curSegmentLeftID,
-				prevSegmentLeftAAID, curSegmentLeftID, (uint16_t)(curSegmentLeftID + 1),
-				prevSegmentLeftID, prevSegmentRightID, (uint16_t)(curSegmentLeftID + (numPointsHalfCircle - 1) * 2),
-				prevSegmentLeftID, (uint16_t)(curSegmentLeftID + (numPointsHalfCircle - 1) * 2), curSegmentLeftID,
-				prevSegmentRightID, prevSegmentRightAAID, (uint16_t)(curSegmentLeftID + (numPointsHalfCircle - 1) * 2 + 1),
-				prevSegmentRightID, (uint16_t)(curSegmentLeftID + (numPointsHalfCircle - 1) * 2 + 1), (uint16_t)(curSegmentLeftID + (numPointsHalfCircle - 1) * 2)
-			};
-
-			tempGeomExpandIB(18);
-			tempGeomAddIndices(&id[0], 18);
-
-			// Generate indices for the triangle fan
-			tempGeomExpandIB((numPointsHalfCircle - 2) * 3);
-			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
-				const uint16_t idBase = curSegmentLeftID + (uint16_t)(i << 1);
-				uint16_t id[3] = {
-					curSegmentLeftID,
-					(uint16_t)(idBase + 4),
-					(uint16_t)(idBase + 2)
-				};
-				tempGeomAddIndices(&id[0], 3);
-			}
-
-			// Generate indices for the AA quads
-			tempGeomExpandIB((numPointsHalfCircle - 1) * 6);
-			for (uint32_t i = 0; i < numPointsHalfCircle - 1; ++i) {
-				const uint16_t idBase = curSegmentLeftID + (uint16_t)(i << 1);
-				uint16_t id[6] = {
-					idBase, (uint16_t)(idBase + 3), (uint16_t)(idBase + 1),
-					idBase, (uint16_t)(idBase + 2), (uint16_t)(idBase + 3)
-				};
-				tempGeomAddIndices(&id[0], 6);
-			}
-		}
-	} else {
-		BX_CHECK(firstSegmentLeftAAID != 0xFFFF && firstSegmentLeftID != 0xFFFF && firstSegmentRightID != 0xFFFF && firstSegmentRightAAID != 0xFFFF, "Invalid first segment");
-
-		uint16_t id[18] = {
-			prevSegmentLeftAAID, prevSegmentLeftID, firstSegmentLeftID,
-			prevSegmentLeftAAID, firstSegmentLeftID, firstSegmentLeftAAID,
-			prevSegmentLeftID, prevSegmentRightID, firstSegmentRightID,
-			prevSegmentLeftID, firstSegmentRightID, firstSegmentLeftID,
-			prevSegmentRightID, prevSegmentRightAAID, firstSegmentRightAAID,
-			prevSegmentRightID, firstSegmentRightAAID, firstSegmentRightID
-		};
-
-		tempGeomExpandIB(18);
-		tempGeomAddIndices(&id[0], 18);
-	}
-
-	// Create a new draw command and copy the data to it.
-	createDrawCommand_TexturedVertexColor(m_TempGeomPos, m_TempGeomNumVertices, m_TempGeomColor, m_TempGeomNumVertices, m_TempGeomIndex, m_TempGeomNumIndices);
-}
-
-template<LineCap::Enum _LineCap, LineJoin::Enum _LineJoin>
-void Context::renderPathStrokeAAThin(const Vec2* vtx, uint32_t numPathVertices, Color color, bool closed)
-{
-	const Vec2 uv = getWhitePixelUV();
-	const uint32_t numSegments = numPathVertices - (closed ? 0 : 1);
-	const uint32_t c0 = ColorRGBA::setAlpha(color, 0);
-	const uint32_t c0_c_c0_c0[4] = { c0, color, c0, c0 };
-	const float hsw_aa = m_FringeWidth;
-
-	tempGeomReset();
-
-	Vec2 d01;
-	uint16_t prevSegmentLeftAAID = 0xFFFF;
-	uint16_t prevSegmentMiddleID = 0xFFFF;
-	uint16_t prevSegmentRightAAID = 0xFFFF;
-
-	uint16_t firstSegmentLeftAAID = 0xFFFF;
-	uint16_t firstSegmentMiddleID = 0xFFFF;
-	uint16_t firstSegmentRightAAID = 0xFFFF;
-
-	if (!closed) {
-		// First segment of an open path
-		const Vec2& p0 = vtx[0];
-		const Vec2& p1 = vtx[1];
-
-		d01 = p1 - p0;
-		vec2Normalize(&d01);
-
-		const Vec2 l01 = d01.perpCCW();
-
-		if (_LineCap == LineCap::Butt) {
-			const Vec2 l01_hsw_aa = l01 * hsw_aa;
-
-			Vec2 p[3] = {
-				p0 + l01_hsw_aa,
-				p0,
-				p0 - l01_hsw_aa
-			};
-
-			tempGeomExpandVB(3);
-			tempGeomAddPosColor(&p[0], &c0_c_c0_c0[0], 3);
-
-			prevSegmentLeftAAID = 0;
-			prevSegmentMiddleID = 1;
-			prevSegmentRightAAID = 2;
-		} else if (_LineCap == LineCap::Square) {
-			const Vec2 d01_hsw_aa = d01 * hsw_aa;
-			const Vec2 l01_hsw_aa = l01 * hsw_aa;
-
-			Vec2 p[4] = {
-				p0 + l01_hsw_aa - d01_hsw_aa,
-				p0,
-				p0 - l01_hsw_aa - d01_hsw_aa
-			};
-
-			tempGeomExpandVB(3);
-			tempGeomAddPosColor(&p[0], &c0_c_c0_c0[0], 3);
-
-			prevSegmentLeftAAID = 0;
-			prevSegmentMiddleID = 1;
-			prevSegmentRightAAID = 2;
-		} else if (_LineCap == LineCap::Round) {
-			BX_CHECK(false, "Round caps not implemented for thin strokes.");
-		} else {
-			BX_CHECK(false, "Unknown line cap type");
-		}
-	} else {
-		d01 = vtx[0] - vtx[numPathVertices - 1];
-		vec2Normalize(&d01);
-	}
-
-	const uint32_t firstSegmentID = closed ? 0 : 1;
-	for (uint32_t iSegment = firstSegmentID; iSegment < numSegments; ++iSegment) {
-		const Vec2& p1 = vtx[iSegment];
-		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
-
-		Vec2 d12 = p2 - p1;
-		vec2Normalize(&d12);
-
-		const Vec2 v = calcExtrusionVector(d01, d12);
-		const Vec2 v_hsw_aa = v * hsw_aa;
-
-		// Check which one of the points is the inner corner.
-		float leftPointAAProjDist = d12.x * v_hsw_aa.x + d12.y * v_hsw_aa.y;
-		if (leftPointAAProjDist >= 0.0f) {
-			// The left point is the inner corner.
-			const Vec2 innerCorner = p1 + v_hsw_aa;
-
-			if (_LineJoin == LineJoin::Miter) {
-				const uint16_t firstVertexID = (uint16_t)m_TempGeomNumVertices;
-
-				Vec2 p[3] = {
-					innerCorner,
-					p1,
-					p1 - v_hsw_aa
-				};
-
-				tempGeomExpandVB(3);
-				tempGeomAddPosColor(&p[0], &c0_c_c0_c0[0], 3);
-
-				if (prevSegmentLeftAAID != 0xFFFF) {
-					BX_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
-
-					uint16_t id[12] = {
-						prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(firstVertexID + 1),
-						prevSegmentLeftAAID, (uint16_t)(firstVertexID + 1), firstVertexID,
-						prevSegmentMiddleID, prevSegmentRightAAID, (uint16_t)(firstVertexID + 2),
-						prevSegmentMiddleID, (uint16_t)(firstVertexID + 2), (uint16_t)(firstVertexID + 1)
-					};
-
-					tempGeomExpandIB(12);
-					tempGeomAddIndices(&id[0], 12);
-				} else {
-					BX_CHECK(closed, "Invalid previous segment");
-					firstSegmentLeftAAID = firstVertexID; // 0
-					firstSegmentMiddleID = firstVertexID + 1; // 1
-					firstSegmentRightAAID = firstVertexID + 2; // 3
-				}
-
-				prevSegmentLeftAAID = firstVertexID;
-				prevSegmentMiddleID = firstVertexID + 1;
-				prevSegmentRightAAID = firstVertexID + 2;
-			} else {
-				BX_CHECK(_LineJoin != LineJoin::Round, "Round joins not implemented for thin strokes.");
-				const Vec2 r01 = d01.perpCW();
-				const Vec2 r12 = d12.perpCW();
-
-				Vec2 p[4] = {
-					innerCorner,
-					p1,
-					p1 + r01 * hsw_aa,
-					p1 + r12 * hsw_aa
-				};
-
-				const uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
-				tempGeomExpandVB(4);
-				tempGeomAddPosColor(&p[0], &c0_c_c0_c0[0], 4);
-
-				if (prevSegmentLeftAAID != 0xFFFF) {
-					BX_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
-
-					uint16_t id[12] = {
-						prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(firstFanVertexID + 1),
-						prevSegmentLeftAAID, (uint16_t)(firstFanVertexID + 1), firstFanVertexID,
-						prevSegmentMiddleID, prevSegmentRightAAID, (uint16_t)(firstFanVertexID + 2),
-						prevSegmentMiddleID, (uint16_t)(firstFanVertexID + 2), (uint16_t)(firstFanVertexID + 1)
-					};
-
-					tempGeomExpandIB(12);
-					tempGeomAddIndices(&id[0], 12);
-				} else {
-					BX_CHECK(closed, "Invalid previous segment");
-					firstSegmentLeftAAID = firstFanVertexID;
-					firstSegmentMiddleID = firstFanVertexID + 1;
-					firstSegmentRightAAID = firstFanVertexID + 2;
-				}
-
-				uint16_t id[3] = {
-					(uint16_t)(firstFanVertexID + 1), (uint16_t)(firstFanVertexID + 2), (uint16_t)(firstFanVertexID + 3)
-				};
-				tempGeomExpandIB(3);
-				tempGeomAddIndices(&id[0], 3);
-
-				prevSegmentLeftAAID = firstFanVertexID;
-				prevSegmentMiddleID = firstFanVertexID + 1;
-				prevSegmentRightAAID = firstFanVertexID + 3;
-			}
-		} else {
-			// The right point is the inner corner.
-			const Vec2 innerCorner = p1 - v_hsw_aa;
-
-			if (_LineJoin == LineJoin::Miter) {
-				const uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
-
-				Vec2 p[3] = {
-					innerCorner,
-					p1,
-					p1 + v_hsw_aa
-				};
-
-				tempGeomExpandVB(3);
-				tempGeomAddPosColor(&p[0], &c0_c_c0_c0[0], 3);
-
-				if (prevSegmentLeftAAID != 0xFFFF) {
-					BX_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
-
-					uint16_t id[12] = {
-						prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(firstFanVertexID + 1),
-						prevSegmentLeftAAID, (uint16_t)(firstFanVertexID + 1), (uint16_t)(firstFanVertexID + 2),
-						prevSegmentMiddleID, prevSegmentRightAAID, firstFanVertexID,
-						prevSegmentMiddleID, firstFanVertexID, (uint16_t)(firstFanVertexID + 1)
-					};
-
-					tempGeomExpandIB(12);
-					tempGeomAddIndices(&id[0], 12);
-				} else {
-					firstSegmentLeftAAID = firstFanVertexID + 2;
-					firstSegmentMiddleID = firstFanVertexID + 1;
-					firstSegmentRightAAID = firstFanVertexID + 0;
-				}
-
-				prevSegmentLeftAAID = firstFanVertexID + 2;
-				prevSegmentMiddleID = firstFanVertexID + 1;
-				prevSegmentRightAAID = firstFanVertexID;
-			} else {
-				const Vec2 l01 = d01.perpCCW();
-				const Vec2 l12 = d12.perpCCW();
-
-				Vec2 p[4] = {
-					innerCorner,
-					p1,
-					p1 + l01 * hsw_aa,
-					p1 + l12 * hsw_aa
-				};
-
-				const uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
-				tempGeomExpandVB(4);
-				tempGeomAddPosColor(&p[0], &c0_c_c0_c0[0], 4);
-
-				if (prevSegmentLeftAAID != 0xFFFF) {
-					BX_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
-
-					uint16_t id[12] = {
-						prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(firstFanVertexID + 1),
-						prevSegmentLeftAAID, (uint16_t)(firstFanVertexID + 1), (uint16_t)(firstFanVertexID + 2),
-						prevSegmentMiddleID, prevSegmentRightAAID, firstFanVertexID ,
-						prevSegmentMiddleID, firstFanVertexID, (uint16_t)(firstFanVertexID + 1)
-					};
-
-					tempGeomExpandIB(12);
-					tempGeomAddIndices(&id[0], 12);
-				} else {
-					firstSegmentLeftAAID = firstFanVertexID + 2;
-					firstSegmentMiddleID = firstFanVertexID + 1;
-					firstSegmentRightAAID = firstFanVertexID + 0;
-				}
-
-				uint16_t id[3] = {
-					(uint16_t)(firstFanVertexID + 1), (uint16_t)(firstFanVertexID + 3), (uint16_t)(firstFanVertexID + 2)
-				};
-				tempGeomAddIndices(&id[0], 3);
-
-				prevSegmentLeftAAID = firstFanVertexID + 3;
-				prevSegmentMiddleID = firstFanVertexID + 1;
-				prevSegmentRightAAID = firstFanVertexID;
-			}
-		}
-
-		d01 = d12;
-	}
-
-	if (!closed) {
-		// Last segment of an open path
-		const Vec2& p1 = vtx[numPathVertices - 1];
-
-		const Vec2 l01 = d01.perpCCW();
-
-		if (_LineCap == LineCap::Butt) {
-			const uint16_t curSegmentLeftAAID = (uint16_t)m_TempGeomNumVertices;
-			const Vec2 l01_hsw_aa = l01 * hsw_aa;
-
-			Vec2 p[3] = {
-				p1 + l01_hsw_aa,
-				p1,
-				p1 - l01_hsw_aa
-			};
-
-			tempGeomExpandVB(3);
-			tempGeomAddPosColor(&p[0], &c0_c_c0_c0[0], 3);
-
-			uint16_t id[12] = {
-				prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(curSegmentLeftAAID + 1),
-				prevSegmentLeftAAID, (uint16_t)(curSegmentLeftAAID + 1), curSegmentLeftAAID,
-				prevSegmentMiddleID, prevSegmentRightAAID, (uint16_t)(curSegmentLeftAAID + 2),
-				prevSegmentMiddleID, (uint16_t)(curSegmentLeftAAID + 2), (uint16_t)(curSegmentLeftAAID + 1)
-			};
-
-			tempGeomExpandIB(12);
-			tempGeomAddIndices(&id[0], 12);
-		} else if (_LineCap == LineCap::Square) {
-			const uint16_t curSegmentLeftAAID = (uint16_t)m_TempGeomNumVertices;
-			const Vec2 d01_hsw = d01 * hsw_aa;
-			const Vec2 l01_hsw_aa = l01 * hsw_aa;
-
-			Vec2 p[3] = {
-				p1 + l01_hsw_aa + d01_hsw,
-				p1,
-				p1 - l01_hsw_aa + d01_hsw
-			};
-
-			tempGeomExpandVB(3);
-			tempGeomAddPosColor(&p[0], &c0_c_c0_c0[0], 3);
-
-			uint16_t id[12] = {
-				prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(curSegmentLeftAAID + 1),
-				prevSegmentLeftAAID, (uint16_t)(curSegmentLeftAAID + 1), curSegmentLeftAAID,
-				prevSegmentMiddleID, prevSegmentRightAAID, (uint16_t)(curSegmentLeftAAID + 2),
-				prevSegmentMiddleID, (uint16_t)(curSegmentLeftAAID + 2), (uint16_t)(curSegmentLeftAAID + 1)
-			};
-
-			tempGeomExpandIB(12);
-			tempGeomAddIndices(&id[0], 12);
-		} else if (_LineCap == LineCap::Round) {
-			BX_CHECK(false, "Round caps not implemented for thin strokes.");
-		}
-	} else {
-		BX_CHECK(firstSegmentLeftAAID != 0xFFFF && firstSegmentMiddleID != 0xFFFF && firstSegmentRightAAID != 0xFFFF, "Invalid first segment");
-
-		uint16_t id[12] = {
-			prevSegmentLeftAAID, prevSegmentMiddleID, firstSegmentMiddleID,
-			prevSegmentLeftAAID, firstSegmentMiddleID, firstSegmentLeftAAID,
-			prevSegmentMiddleID, prevSegmentRightAAID, firstSegmentRightAAID,
-			prevSegmentMiddleID, firstSegmentRightAAID, firstSegmentMiddleID
-		};
-
-		tempGeomExpandIB(12);
-		tempGeomAddIndices(&id[0], 12);
-	}
-
-	// Create a new draw command and copy the data to it.
-	createDrawCommand_TexturedVertexColor(m_TempGeomPos, m_TempGeomNumVertices, m_TempGeomColor, m_TempGeomNumVertices, m_TempGeomIndex, m_TempGeomNumIndices);
-}
-
-template<bool _Closed, LineCap::Enum _LineCap, LineJoin::Enum _LineJoin>
-void Context::renderPathStrokeNoAA(const Vec2* vtx, uint32_t numPathVertices, float strokeWidth, Color color)
-{
-	const Vec2 uv = getWhitePixelUV();
-	const float avgScale = getState()->m_AvgScale;
-	const uint32_t numSegments = numPathVertices - (_Closed ? 0 : 1);
-	const float hsw = strokeWidth * 0.5f;
-	const float da = bx::facos((avgScale * hsw) / ((avgScale * hsw) + m_TesselationTolerance)) * 2.0f;
-	const uint32_t numPointsHalfCircle = bx::uint32_max(2u, (uint32_t)bx::fceil(bx::kPi / da));
-
-	tempGeomReset();
-
-	Vec2 d01;
-	uint16_t prevSegmentLeftID = 0xFFFF;
-	uint16_t prevSegmentRightID = 0xFFFF;
-	uint16_t firstSegmentLeftID = 0xFFFF;
-	uint16_t firstSegmentRightID = 0xFFFF;
-	if (!_Closed) {
-		// First segment of an open path
-		const Vec2& p0 = vtx[0];
-		const Vec2& p1 = vtx[1];
-
-		d01 = p1 - p0;
-		vec2Normalize(&d01);
-
-		const Vec2 l01 = d01.perpCCW();
-
-		if (_LineCap == LineCap::Butt) {
-			const Vec2 l01_hsw = l01 * hsw;
-
-			Vec2 p[2] = {
-				p0 + l01_hsw,
-				p0 - l01_hsw
-			};
-
-			tempGeomExpandVB(2);
-			tempGeomAddPos(&p[0], 2);
-
-			prevSegmentLeftID = 0;
-			prevSegmentRightID = 1;
-		} else if (_LineCap == LineCap::Square) {
-			const Vec2 l01_hsw = l01 * hsw;
-			const Vec2 d01_hsw = d01 * hsw;
-
-			Vec2 p[2] = {
-				p0 + l01_hsw - d01_hsw,
-				p0 - l01_hsw - d01_hsw
-			};
-
-			tempGeomExpandVB(2);
-			tempGeomAddPos(&p[0], 2);
-
-			prevSegmentLeftID = 0;
-			prevSegmentRightID = 1;
-		} else if (_LineCap == LineCap::Round) {
-			tempGeomExpandVB(numPointsHalfCircle);
-
-			const float startAngle = atan2f(l01.y, l01.x);
-			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
-				float a = startAngle + i * bx::kPi / (float)(numPointsHalfCircle - 1);
-				float ca = bx::fcos(a);
-				float sa = bx::fsin(a);
-
-				Vec2 p = Vec2(p0.x + ca * hsw, p0.y + sa * hsw);
-
-				tempGeomAddPos(&p, 1);
-			}
-
-			tempGeomExpandIB((numPointsHalfCircle - 2) * 3);
-			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
-				uint16_t id[3] = { 0, (uint16_t)(i + 1), (uint16_t)(i + 2) };
-				tempGeomAddIndices(&id[0], 3);
-			}
-
-			prevSegmentLeftID = 0;
-			prevSegmentRightID = (uint16_t)(numPointsHalfCircle - 1);
-		} else {
-			BX_CHECK(false, "Unknown line cap type");
-		}
-	} else {
-		d01 = vtx[0] - vtx[numPathVertices - 1];
-		vec2Normalize(&d01);
-	}
-
-	const uint32_t firstSegmentID = _Closed ? 0 : 1;
-	for (uint32_t iSegment = firstSegmentID; iSegment < numSegments; ++iSegment) {
-		const Vec2& p1 = vtx[iSegment];
-		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
-
-		Vec2 d12 = p2 - p1;
-		vec2Normalize(&d12);
-
-		const Vec2 v = calcExtrusionVector(d01, d12);
-		const Vec2 v_hsw = v * hsw;
-
-		// Check which one of the points is the inner corner.
-		float leftPointProjDist = d12.x * v_hsw.x + d12.y * v_hsw.y;
-		if (leftPointProjDist >= 0.0f) {
-			// The left point is the inner corner.
-			const Vec2 innerCorner = p1 + v_hsw;
-
-			if (_LineJoin == LineJoin::Miter) {
-				const uint16_t firstVertexID = (uint16_t)m_TempGeomNumVertices;
-
-				Vec2 p[2] = {
-					innerCorner,
-					p1 - v_hsw
-				};
-
-				tempGeomExpandVB(2);
-				tempGeomAddPos(&p[0], 2);
-
-				if (prevSegmentLeftID != 0xFFFF) {
-					BX_CHECK(prevSegmentRightID != 0xFFFF, "Invalid previous segment");
-
-					uint16_t id[6] = {
-						prevSegmentLeftID, prevSegmentRightID, (uint16_t)(firstVertexID + 1),
-						prevSegmentLeftID, (uint16_t)(firstVertexID + 1), firstVertexID
-					};
-
-					tempGeomExpandIB(6);
-					tempGeomAddIndices(&id[0], 6);
-				} else {
-					firstSegmentLeftID = firstVertexID; // 0
-					firstSegmentRightID = firstVertexID + 1; // 1
-				}
-
-				prevSegmentLeftID = firstVertexID;
-				prevSegmentRightID = firstVertexID + 1;
-			} else {
-				const Vec2 r01 = d01.perpCW();
-				const Vec2 r12 = d12.perpCW();
-
-				// Assume _LineJoin == LineJoin::Bevel
-				float a01 = 0.0f, a12 = 0.0f, arcDa = 0.0f;
-				uint32_t numArcPoints = 1;
-				if (_LineJoin == LineJoin::Round) {
-					a01 = atan2f(r01.y, r01.x);
-					a12 = atan2f(r12.y, r12.x);
-					if (a12 < a01) {
-						a12 += bx::kPi2;
-					}
-
-					numArcPoints = bx::uint32_max(2u, (uint32_t)((a12 - a01) / da));
-					arcDa = ((a12 - a01) / (float)numArcPoints);
-				}
-
-				Vec2 p[3] = {
-					innerCorner,
-					p1 + r01 * hsw,
-					p1 + r12 * hsw
-				};
-
-				uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
-				tempGeomExpandVB(numArcPoints + 2);
-				tempGeomAddPos(&p[0], 2);
-				for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
-					float a = a01 + iArcPoint * arcDa;
-					float ca = bx::fcos(a);
-					float sa = bx::fsin(a);
-
-					Vec2 p = Vec2(p1.x + hsw * ca, p1.y + hsw * sa);
-
-					tempGeomAddPos(&p, 1);
-				}
-				tempGeomAddPos(&p[2], 1);
-
-				if (prevSegmentLeftID != 0xFFFF) {
-					BX_CHECK(prevSegmentRightID != 0xFFFF, "Invalid previous segment");
-
-					uint16_t id[6] = {
-						prevSegmentLeftID, prevSegmentRightID, (uint16_t)(firstFanVertexID + 1),
-						prevSegmentLeftID, (uint16_t)(firstFanVertexID + 1), firstFanVertexID
-					};
-
-					tempGeomExpandIB(6);
-					tempGeomAddIndices(&id[0], 6);
-				} else {
-					firstSegmentLeftID = firstFanVertexID; // 0
-					firstSegmentRightID = firstFanVertexID + 1; // 1
-				}
-
-				// Generate the triangle fan.
-				tempGeomExpandIB(numArcPoints * 3);
-				for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
-					const uint16_t idBase = firstFanVertexID + (uint16_t)iArcPoint;
-					uint16_t id[3] = {
-						firstFanVertexID, (uint16_t)(idBase + 1), (uint16_t)(idBase + 2)
-					};
-					tempGeomAddIndices(&id[0], 3);
-				}
-
-				prevSegmentLeftID = firstFanVertexID;
-				prevSegmentRightID = firstFanVertexID + (uint16_t)numArcPoints + 1;
-			}
-		} else {
-			// The right point is the inner corner.
-			const Vec2 innerCorner = p1 - v_hsw;
-
-			if (_LineJoin == LineJoin::Miter) {
-				const uint16_t firstVertexID = (uint16_t)m_TempGeomNumVertices;
-
-				Vec2 p[2] = {
-					innerCorner,
-					p1 + v_hsw,
-				};
-
-				tempGeomExpandVB(2);
-				tempGeomAddPos(&p[0], 2);
-
-				if (prevSegmentLeftID != 0xFFFF) {
-					BX_CHECK(prevSegmentRightID != 0xFFFF, "Invalid previous segment");
-
-					uint16_t id[6] = {
-						prevSegmentLeftID, prevSegmentRightID, firstVertexID,
-						prevSegmentLeftID, firstVertexID, (uint16_t)(firstVertexID + 1)
-					};
-
-					tempGeomExpandIB(6);
-					tempGeomAddIndices(&id[0], 6);
-				} else {
-					firstSegmentLeftID = firstVertexID + 1; // 1
-					firstSegmentRightID = firstVertexID; // 0
-				}
-
-				prevSegmentLeftID = firstVertexID + 1;
-				prevSegmentRightID = firstVertexID;
-			} else {
-				const Vec2 l01 = d01.perpCCW();
-				const Vec2 l12 = d12.perpCCW();
-
-				// Assume _LineJoin == LineJoin::Bevel
-				float a01 = 0.0f, a12 = 0.0f, arcDa = 0.0f;
-				uint32_t numArcPoints = 1;
-				if (_LineJoin == LineJoin::Round) {
-					a01 = atan2f(l01.y, l01.x);
-					a12 = atan2f(l12.y, l12.x);
-					if (a12 > a01) {
-						a12 -= bx::kPi2;
-					}
-
-					numArcPoints = bx::uint32_max(2u, (uint32_t)((a01 - a12) / da));
-					arcDa = ((a12 - a01) / (float)numArcPoints);
-				}
-
-				Vec2 p[3] = {
-					innerCorner,
-					p1 + l01 * hsw,
-					p1 + l12 * hsw
-				};
-
-				uint16_t firstFanVertexID = (uint16_t)m_TempGeomNumVertices;
-				tempGeomExpandVB(numArcPoints + 2);
-				tempGeomAddPos(&p[0], 2);
-				for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
-					float a = a01 + iArcPoint * arcDa;
-					float ca = bx::fcos(a);
-					float sa = bx::fsin(a);
-
-					Vec2 p = Vec2(p1.x + hsw * ca, p1.y + hsw * sa);
-					tempGeomAddPos(&p, 1);
-				}
-				tempGeomAddPos(&p[2], 1);
-
-				if (prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF) {
-					uint16_t id[6] = {
-						prevSegmentLeftID, prevSegmentRightID, firstFanVertexID,
-						prevSegmentLeftID, firstFanVertexID, (uint16_t)(firstFanVertexID + 1)
-					};
-
-					tempGeomExpandIB(6);
-					tempGeomAddIndices(&id[0], 6);
-				} else {
-					firstSegmentLeftID = firstFanVertexID + 1; // 1
-					firstSegmentRightID = firstFanVertexID; // 0
-				}
-
-				tempGeomExpandIB(numArcPoints * 3);
-				for (uint32_t iArcPoint = 0; iArcPoint < numArcPoints; ++iArcPoint) {
-					const uint16_t idBase = firstFanVertexID + (uint16_t)iArcPoint;
-					uint16_t id[3] = {
-						firstFanVertexID, (uint16_t)(idBase + 2), (uint16_t)(idBase + 1)
-					};
-					tempGeomAddIndices(&id[0], 3);
-				}
-
-				prevSegmentLeftID = firstFanVertexID + (uint16_t)numArcPoints + 1;
-				prevSegmentRightID = firstFanVertexID;
-			}
-		}
-
-		d01 = d12;
-	}
-
-	if (!_Closed) {
-		// Last segment of an open path
-		const Vec2& p1 = vtx[numPathVertices - 1];
-
-		const Vec2 l01 = d01.perpCCW();
-
-		if (_LineCap == LineCap::Butt) {
-			const uint16_t curSegmentLeftID = (uint16_t)m_TempGeomNumVertices;
-			const Vec2 l01_hsw = l01 * hsw;
-
-			Vec2 p[2] = {
-				p1 + l01_hsw,
-				p1 - l01_hsw
-			};
-
-			tempGeomExpandVB(2);
-			tempGeomAddPos(&p[0], 2);
-
-			uint16_t id[6] = {
-				prevSegmentLeftID, prevSegmentRightID, (uint16_t)(curSegmentLeftID + 1),
-				prevSegmentLeftID, (uint16_t)(curSegmentLeftID + 1), curSegmentLeftID
-			};
-
-			tempGeomExpandIB(6);
-			tempGeomAddIndices(&id[0], 6);
-		} else if (_LineCap == LineCap::Square) {
-			const uint16_t curSegmentLeftID = (uint16_t)m_TempGeomNumVertices;
-			const Vec2 l01_hsw = l01 * hsw;
-			const Vec2 d01_hsw = d01 * hsw;
-
-			Vec2 p[2] = {
-				p1 + l01_hsw + d01_hsw,
-				p1 - l01_hsw + d01_hsw
-			};
-
-			tempGeomExpandVB(2);
-			tempGeomAddPos(&p[0], 2);
-
-			uint16_t id[6] = {
-				prevSegmentLeftID, prevSegmentRightID, (uint16_t)(curSegmentLeftID + 1),
-				prevSegmentLeftID, (uint16_t)(curSegmentLeftID + 1), curSegmentLeftID
-			};
-
-			tempGeomExpandIB(6);
-			tempGeomAddIndices(&id[0], 6);
-		} else if (_LineCap == LineCap::Round) {
-			tempGeomExpandVB(numPointsHalfCircle);
-
-			const uint16_t curSegmentLeftID = (uint16_t)m_TempGeomNumVertices;
-			const float startAngle = atan2f(l01.y, l01.x);
-			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
-				float a = startAngle - i * bx::kPi / (float)(numPointsHalfCircle - 1);
-				float ca = bx::fcos(a);
-				float sa = bx::fsin(a);
-
-				Vec2 p = Vec2(p1.x + ca * hsw, p1.y + sa * hsw);
-
-				tempGeomAddPos(&p, 1);
-			}
-
-			uint16_t id[6] = {
-				prevSegmentLeftID, prevSegmentRightID, (uint16_t)(curSegmentLeftID + (numPointsHalfCircle - 1)),
-				prevSegmentLeftID, (uint16_t)(curSegmentLeftID + (numPointsHalfCircle - 1)), curSegmentLeftID
-			};
-
-			tempGeomExpandIB(6 + (numPointsHalfCircle - 2) * 3);
-			tempGeomAddIndices(&id[0], 6);
-			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
-				const uint16_t idBase = curSegmentLeftID + (uint16_t)i;
-				uint16_t id[3] = {
-					curSegmentLeftID, (uint16_t)(idBase + 2), (uint16_t)(idBase + 1)
-				};
-				tempGeomAddIndices(&id[0], 3);
-			}
-		}
-	} else {
-		// Generate the first segment quad. 
-		uint16_t id[6] = {
-			prevSegmentLeftID, prevSegmentRightID, firstSegmentRightID,
-			prevSegmentLeftID, firstSegmentRightID, firstSegmentLeftID
-		};
-
-		tempGeomExpandIB(6);
-		tempGeomAddIndices(&id[0], 6);
-	}
-
-	// Create a new draw command and copy the data to it.
-	createDrawCommand_TexturedVertexColor(m_TempGeomPos, m_TempGeomNumVertices, &color, 1, m_TempGeomIndex, m_TempGeomNumIndices);
-}
-
 Shape* Context::createShape(uint32_t flags)
 {
 	bx::MemoryBlock* memBlock = BX_NEW(m_Allocator, bx::MemoryBlock)(m_Allocator);
@@ -4378,216 +2948,56 @@ void Context::renderTextQuads(uint32_t numQuads, Color color)
 void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices, Color color)
 {
 	const State* state = getState();
-
 	const uint32_t c = ColorRGBA::setAlpha(color, (uint8_t)(state->m_GlobalAlpha * ColorRGBA::getAlpha(color)));
 	if (ColorRGBA::getAlpha(c) == 0) {
 		return;
 	}
 
-	const Vec2 uv = getWhitePixelUV();
+	Mesh mesh;
+	m_Stroker->convexFill(&mesh, &vtx[0].x, numPathVertices);
 
-	uint32_t numTris = numPathVertices - 2;
-	const uint32_t numDrawVertices = numPathVertices;
-	const uint32_t numDrawIndices = numTris * 3; // N - 2 triangles in a N pt fan, 3 indices per triangle
-
-	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
-
-	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
-	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
-
-	Vec2* dstPos = &vb->m_Pos[vbOffset];
-	bx::memCopy(dstPos, vtx, sizeof(Vec2) * numDrawVertices);
-
-	Vec2* dstUV = &vb->m_UV[vbOffset];
-	memset64(dstUV, numDrawVertices, &uv.x);
-
-	uint32_t* dstColor = &vb->m_Color[vbOffset];
-	memset32(dstColor, numDrawVertices, &c);
-
-	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
-	const uint32_t startVertexID = cmd->m_NumVertices;
-	uint32_t secondTriVertex = startVertexID + 1;
-	while (numTris-- > 0) {
-		*dstIndex++ = (uint16_t)startVertexID;
-		*dstIndex++ = (uint16_t)secondTriVertex;
-		*dstIndex++ = (uint16_t)(secondTriVertex + 1);
-		++secondTriVertex;
-	}
-
-	cmd->m_NumVertices += numDrawVertices;
-	cmd->m_NumIndices += numDrawIndices;
+	createDrawCommand_VertexColor((const Vec2*)mesh.m_PosBuffer, mesh.m_NumVertices, &c, 1, mesh.m_IndexBuffer, mesh.m_NumIndices);
 }
 
 void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, Color color)
 {
 	const State* state = getState();
-	const float aa = m_FringeWidth * 0.5f;
-
 	const uint32_t c = ColorRGBA::setAlpha(color, (uint8_t)(state->m_GlobalAlpha * ColorRGBA::getAlpha(color)));
 	if (ColorRGBA::getAlpha(c) == 0) {
 		return;
 	}
 
-	const uint32_t c0 = ColorRGBA::setAlpha(color, 0);
-	const Vec2 uv = getWhitePixelUV();
+	Mesh mesh;
+	m_Stroker->convexFillAA(&mesh, &vtx[0].x, numPathVertices, c);
 
-	const uint32_t numTris = 
-		(numPathVertices - 2) + // Triangle fan
-		(numPathVertices * 2); // AA fringes
-	const uint32_t numDrawVertices = numPathVertices * 2; // original polygon point + AA fringe point.
-	const uint32_t numDrawIndices = numTris * 3;
-
-	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, m_FontImages[0]);
-
-	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
-	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
-
-	Vec2* dstUV = &vb->m_UV[vbOffset];
-	memset64(dstUV, numDrawVertices, &uv.x);
-
-	const uint32_t colors[2] = { c, c0 };
-	uint32_t* dstColor = &vb->m_Color[vbOffset];
-	memset64(dstColor, numDrawVertices >> 1, &colors[0]);
-
-	// TODO: Assumes CCW order (otherwise fringes are generated on the wrong side of the polygon)
-	Vec2* dstPos = &vb->m_Pos[vbOffset];
-	Vec2 d01 = vtx[0] - vtx[numPathVertices - 1];
-	vec2Normalize(&d01);
-
-	for (uint32_t iSegment = 0; iSegment < numPathVertices; ++iSegment) {
-		const Vec2& p1 = vtx[iSegment];
-		const Vec2& p2 = vtx[iSegment == numPathVertices - 1 ? 0 : iSegment + 1];
-
-		Vec2 d12 = p2 - p1;
-		vec2Normalize(&d12);
-
-		const Vec2 v = calcExtrusionVector(d01, d12);
-		const Vec2 v_aa = v * aa;
-
-		dstPos[0] = p1 - v_aa;
-		dstPos[1] = p1 + v_aa;
-		dstPos += 2;
-
-		d01 = d12;
-	}
-
-	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
-	const uint32_t startVertexID = cmd->m_NumVertices;
-
-	// Generate the triangle fan (original polygon)
-	const uint32_t numFanTris = numPathVertices - 2;
-	uint32_t secondTriVertex = startVertexID + 2;
-	for (uint32_t i = 0; i < numFanTris; ++i) {
-		*dstIndex++ = (uint16_t)startVertexID;
-		*dstIndex++ = (uint16_t)secondTriVertex;
-		*dstIndex++ = (uint16_t)(secondTriVertex + 2);
-		secondTriVertex += 2;
-	}
-
-	// Generate the AA fringes
-	uint32_t firstVertexID = startVertexID;
-	for (uint32_t i = 0; i < numPathVertices - 1; ++i) {
-		*dstIndex++ = (uint16_t)firstVertexID;
-		*dstIndex++ = (uint16_t)(firstVertexID + 1);
-		*dstIndex++ = (uint16_t)(firstVertexID + 3);
-		*dstIndex++ = (uint16_t)firstVertexID;
-		*dstIndex++ = (uint16_t)(firstVertexID + 3);
-		*dstIndex++ = (uint16_t)(firstVertexID + 2);
-		firstVertexID += 2;
-	}
-	
-	// Last segment
-	*dstIndex++ = (uint16_t)firstVertexID;
-	*dstIndex++ = (uint16_t)(firstVertexID + 1);
-	*dstIndex++ = (uint16_t)(startVertexID + 1);
-	*dstIndex++ = (uint16_t)(firstVertexID);
-	*dstIndex++ = (uint16_t)(startVertexID + 1);
-	*dstIndex++ = (uint16_t)startVertexID;
-
-	cmd->m_NumVertices += numDrawVertices;
-	cmd->m_NumIndices += numDrawIndices;
+	createDrawCommand_VertexColor((const Vec2*)mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_ColorBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
 }
 
 void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices, ImagePatternHandle handle)
 {
 	BX_CHECK(isValid(handle), "Invalid image pattern handle");
 
+	const State* state = getState();
 	ImagePattern* img = &m_ImagePatterns[handle.idx];
-	uint32_t c = ColorRGBA::fromFloat(1.0f, 1.0f, 1.0f, img->m_Alpha);
+	uint32_t c = ColorRGBA::fromFloat(1.0f, 1.0f, 1.0f, img->m_Alpha * state->m_GlobalAlpha);
 	if (ColorRGBA::getAlpha(c) == 0) {
 		return;
 	}
 
-	const float* mtx = img->m_Matrix;
+	Mesh mesh;
+	m_Stroker->convexFill(&mesh, &vtx[0].x, numPathVertices);
 
-	uint32_t numTris = numPathVertices - 2;
-	uint32_t numDrawVertices = numPathVertices;
-	uint32_t numDrawIndices = numTris * 3; // N - 2 triangles in a N pt fan, 3 indices per triangle
-
-	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numDrawVertices, numDrawIndices, img->m_ImageHandle);
-
-	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
-	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
-
-	Vec2* dstPos = &vb->m_Pos[vbOffset];
-	bx::memCopy(dstPos, vtx, sizeof(Vec2) * numDrawVertices);
-
-	Vec2* dstUV = &vb->m_UV[vbOffset];
-	batchTransformPositions_Unaligned(vtx, numDrawVertices, dstUV, mtx);
-
-	uint32_t* dstColor = &vb->m_Color[vbOffset];
-	memset32(dstColor, numDrawVertices, &c);
-
-	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
-	const uint32_t startVertexID = cmd->m_NumVertices;
-	uint32_t secondTriVertex = startVertexID + 1;
-	while (numTris-- > 0) {
-		*dstIndex++ = (uint16_t)startVertexID;
-		*dstIndex++ = (uint16_t)secondTriVertex;
-		*dstIndex++ = (uint16_t)(secondTriVertex + 1);
-		++secondTriVertex;
-	}
-
-	cmd->m_NumVertices += numDrawVertices;
-	cmd->m_NumIndices += numDrawIndices;
+	createDrawCommand_Textured((const Vec2*)mesh.m_PosBuffer, mesh.m_NumVertices, &c, 1, img->m_ImageHandle, img->m_Matrix, mesh.m_IndexBuffer, mesh.m_NumIndices);
 }
 
 void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices, GradientHandle handle)
 {
 	BX_CHECK(isValid(handle), "Invalid gradient handle");
 
-	uint32_t numTris = numPathVertices - 2;
-	uint32_t numDrawVertices = numPathVertices;
-	uint32_t numDrawIndices = numTris * 3; // N - 2 triangles in a N pt fan, 3 indices per triangle
+	Mesh mesh;
+	m_Stroker->convexFill(&mesh, &vtx[0].x, numPathVertices);
 
-	DrawCommand* cmd = allocDrawCommand_ColorGradient(numDrawVertices, numDrawIndices, handle);
-
-	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
-	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
-	uint32_t* dstColor = &vb->m_Color[vbOffset];
-
-	Vec2* dstPos = &vb->m_Pos[vbOffset];
-	bx::memCopy(dstPos, vtx, sizeof(Vec2) * numDrawVertices);
-
-	Vec2* dstUV = &vb->m_UV[vbOffset];
-	const float uv[2] = { 0.0f, 0.0f };
-	memset64(dstUV, numDrawVertices, &uv[0]);
-
-	const uint32_t color = ColorRGBA::White;
-	memset32(dstColor, numDrawVertices, &color);
-
-	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
-	const uint32_t startVertexID = cmd->m_NumVertices;
-	uint32_t secondTriVertex = startVertexID + 1;
-	while (numTris-- > 0) {
-		*dstIndex++ = (uint16_t)startVertexID;
-		*dstIndex++ = (uint16_t)secondTriVertex;
-		*dstIndex++ = (uint16_t)(secondTriVertex + 1);
-		++secondTriVertex;
-	}
-
-	cmd->m_NumVertices += numDrawVertices;
-	cmd->m_NumIndices += numDrawIndices;
+	createDrawCommand_Gradient((const Vec2*)mesh.m_PosBuffer, mesh.m_NumVertices, handle, mesh.m_IndexBuffer, mesh.m_NumIndices);
 }
 
 DrawCommand* Context::allocDrawCommand_TexturedVertexColor(uint32_t numVertices, uint32_t numIndices, ImageHandle img)
@@ -5008,67 +3418,6 @@ void Context::releaseVertexBufferData_Uint32(uint32_t* data)
 	}
 }
 
-inline void Context::tempGeomReset()
-{
-	m_TempGeomNumVertices = 0;
-	m_TempGeomNumIndices = 0;
-}
-
-BX_FORCE_INLINE void Context::tempGeomExpandVB(uint32_t n)
-{
-	if (m_TempGeomNumVertices + n > m_TempGeomVertexCapacity) {
-		tempGeomReallocVB(n);
-	}
-}
-
-void Context::tempGeomReallocVB(uint32_t n)
-{
-	m_TempGeomVertexCapacity += n;
-	m_TempGeomPos = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_TempGeomPos, sizeof(Vec2) * m_TempGeomVertexCapacity, 16);
-	m_TempGeomColor = (uint32_t*)BX_ALIGNED_REALLOC(m_Allocator, m_TempGeomColor, sizeof(uint32_t) * m_TempGeomVertexCapacity, 16);
-}
-
-BX_FORCE_INLINE void Context::tempGeomExpandIB(uint32_t n)
-{
-	if (m_TempGeomNumIndices + n > m_TempGeomIndexCapacity) {
-		tempGeomReallocIB(n);
-	}
-}
-
-void Context::tempGeomReallocIB(uint32_t n)
-{
-	m_TempGeomIndexCapacity += n;
-	m_TempGeomIndex = (uint16_t*)BX_ALIGNED_REALLOC(m_Allocator, m_TempGeomIndex, sizeof(uint16_t) * m_TempGeomIndexCapacity, 16);
-}
-
-BX_FORCE_INLINE void Context::tempGeomAddPos(const Vec2* srcPos, uint32_t n)
-{
-	BX_CHECK(m_TempGeomNumVertices + n <= m_TempGeomVertexCapacity, "Not enough free space for temporary geometry");
-
-	bx::memCopy(&m_TempGeomPos[m_TempGeomNumVertices], srcPos, sizeof(Vec2) * n);
-
-	m_TempGeomNumVertices += n;
-}
-
-BX_FORCE_INLINE void Context::tempGeomAddPosColor(const Vec2* srcPos, const uint32_t* srcColor, uint32_t n)
-{
-	BX_CHECK(m_TempGeomNumVertices + n <= m_TempGeomVertexCapacity, "Not enough free space for temporary geometry");
-
-	bx::memCopy(&m_TempGeomPos[m_TempGeomNumVertices], srcPos, sizeof(Vec2) * n);
-	bx::memCopy(&m_TempGeomColor[m_TempGeomNumVertices], srcColor, sizeof(uint32_t) * n);
-
-	m_TempGeomNumVertices += n;
-}
-
-BX_FORCE_INLINE void Context::tempGeomAddIndices(const uint16_t* src, uint32_t n)
-{
-	BX_CHECK(m_TempGeomNumIndices + n <= m_TempGeomIndexCapacity, "Not enough free space for temporary geometry");
-
-	bx::memCopy(&m_TempGeomIndex[m_TempGeomNumIndices], src, sizeof(uint16_t) * n);
-
-	m_TempGeomNumIndices += n;
-}
-
 String* Context::createString(const Font& font, const char* text, const char* end)
 {
 	const uint32_t textSize = (uint32_t)(end ? end - text : bx::strLen(text));
@@ -5142,168 +3491,7 @@ void Context::text(String* str, uint32_t alignment, Color color, float x, float 
 	popState();
 }
 
-// Concave polygon decomposition
-// http://www.flipcode.com/archives/Efficient_Polygon_Triangulation.shtml
-static float Area(const Vec2* points, uint32_t numPoints)
-{
-	float A = 0.0f;
-	for (uint32_t p = numPoints - 1, q = 0; q < numPoints; p = q++) {
-		A += points[p].x * points[q].y - points[q].x * points[p].y;
-	}
-
-	return A * 0.5f;
-}
-
-inline bool InsideTriangle(const Vec2& A, const Vec2& B, const Vec2& C, const Vec2& P)
-{
-	const Vec2 a = C - B;
-	const Vec2 bp = P - B;
-	const float aCROSSbp = a.x * bp.y - a.y * bp.x;
-	if (aCROSSbp < 0.0f) {
-		return false;
-	}
-
-	const Vec2 c = B - A;
-	const Vec2 ap = P - A;
-	const float cCROSSap = c.x * ap.y - c.y * ap.x;
-	if (cCROSSap < 0.0f) {
-		return false;
-	}
-
-	const Vec2 b = A - C;
-	const Vec2 cp = P - C;
-	const float bCROSScp = b.x * cp.y - b.y * cp.x;
-	if (bCROSScp < 0.0f) {
-		return false;
-	}
-
-	return true;
-};
-
-static bool Snip(const Vec2* points, uint32_t numPoints, int u, int v, int w, int n, const int* V)
-{
-	BX_UNUSED(numPoints);
-
-	const Vec2& A = points[V[u]];
-	const Vec2& B = points[V[v]];
-	const Vec2& C = points[V[w]];
-
-	const Vec2 AB = B - A;
-	const Vec2 AC = C - A;
-	const float AB_cross_AC = AB.x * AC.y - AB.y * AC.x;
-	if (AB_cross_AC < 1e-6f) {
-		return false;
-	}
-
-	for (int p = 0; p < n; p++) {
-		if ((p == u) || (p == v) || (p == w)) {
-			continue;
-		}
-
-		const Vec2& P = points[V[p]];
-		if (InsideTriangle(A, B, C, P)) {
-			return false;
-		}
-	}
-
-	return true;
-}
-
-void Context::decomposeAndFillConcavePolygon(const Vec2* points, uint32_t numPoints, Color col, bool aa)
-{
-	// TODO: Correct AA of concave polygons requires keeping track of original polygon edges
-	// and generating AA fringes only for those edges.
-	// NOTE: On second thought, there's no need to keep track of any edge. Every edge from the original
-	// polygon is between i and i+1 vertices. So I might be able to generate AA fringes either way (they
-	// are like half strokes on the outside of the polygon).
-	BX_UNUSED(aa);
-	BX_CHECK(numPoints >= 3, "Invalid number of points in polygon");
-
-	const State* state = getState();
-	const uint32_t c = ColorRGBA::setAlpha(col, (uint8_t)(state->m_GlobalAlpha * ColorRGBA::getAlpha(col)));
-	if (ColorRGBA::getAlpha(c) == 0) {
-		return;
-	}
-
-	// allocate and initialize list of Vertices in polygon
-	// TODO: Avoid allocation
-	int* V = (int*)BX_ALLOC(m_Allocator, sizeof(int) * numPoints);
-
-	tempGeomReset();
-
-	// we want a counter-clockwise polygon in V
-	if (Area(points, numPoints) > 0.0f) {
-		for (uint32_t v = 0; v < numPoints; ++v) {
-			V[v] = v;
-		}
-	} else {
-		const uint32_t last = numPoints - 1;
-		for (uint32_t v = 0; v < numPoints; ++v) {
-			V[v] = last - v;
-		}
-	}
-
-	int n = (int)numPoints;
-	int nv = n;
-
-	// remove nv - 2 Vertices, creating 1 triangle every time
-	int count = 2 * nv;   // error detection
-	for (int v = nv - 1; nv > 2;) {
-		// if we loop, it is probably a non-simple polygon
-		if ((count--) <= 0) {
-			BX_WARN(false, "Not a simple polygon. Falling back to convex rendering.");
-			BX_FREE(m_Allocator, V);
-			renderConvexPolygonNoAA(points, numPoints, col);
-			return;
-		}
-
-		// three consecutive vertices in current polygon, <u,v,w>
-		int u = v; 
-		if (nv <= u) {
-			u = 0; // previous
-		}
-
-		v = u + 1; 
-		if (nv <= v) {
-			v = 0; // new v
-		}
-		
-		int w = v + 1; 
-		if (nv <= w) {
-			w = 0; // next
-		}
-
-		if (Snip(points, numPoints, u, v, w, nv, V)) {
-			// true names of the vertices
-			uint16_t id[3] = {
-				(uint16_t)V[u],
-				(uint16_t)V[v],
-				(uint16_t)V[w]
-			};
-
-			// output Triangle
-			tempGeomExpandIB(3);
-			tempGeomAddIndices(&id[0], 3);
-
-			// remove v from remaining polygon
-			// TODO: Check if this can be avoided (e.g.) by moving the V ptr (probably won't work but worth the check)
-			--nv;
-			for (int s = v; s < nv; ++s) {
-				V[s] = V[s + 1];
-			}
-
-			// reses error detection counter
-			count = 2 * nv;
-		}
-	}
-	
-	BX_FREE(m_Allocator, V);
-
-	// Create draw command
-	createDrawCommand_TexturedVertexColor(points, numPoints, &c, 1, m_TempGeomIndex, m_TempGeomNumIndices);
-}
-
-void Context::createDrawCommand_TexturedVertexColor(const Vec2* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
+void Context::createDrawCommand_VertexColor(const Vec2* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
 {
 	const Vec2 uv = getWhitePixelUV();
 
@@ -5329,6 +3517,58 @@ void Context::createDrawCommand_TexturedVertexColor(const Vec2* vtx, uint32_t nu
 	}
 
 	// Index buffer
+	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);
+
+	cmd->m_NumVertices += numVertices;
+	cmd->m_NumIndices += numIndices;
+}
+
+void Context::createDrawCommand_Textured(const Vec2* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, ImageHandle imgHandle, const float* uvMatrix, const uint16_t* indices, uint32_t numIndices)
+{
+	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numVertices, numIndices, imgHandle);
+
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	bx::memCopy(dstPos, vtx, sizeof(Vec2) * numVertices);
+
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	batchTransformPositions_Unaligned(vtx, numVertices, dstUV, uvMatrix);
+
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+	if (numColors == numVertices) {
+		bx::memCopy(dstColor, colors, sizeof(uint32_t) * numVertices);
+	} else {
+		BX_CHECK(numColors == 1, "!!!");
+		memset32(dstColor, numVertices, colors);
+	}
+
+	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);
+
+	cmd->m_NumVertices += numVertices;
+	cmd->m_NumIndices += numIndices;
+}
+
+void Context::createDrawCommand_Gradient(const Vec2* vtx, uint32_t numVertices, GradientHandle gradientHandle, const uint16_t* indices, uint32_t numIndices)
+{
+	DrawCommand* cmd = allocDrawCommand_ColorGradient(numVertices, numIndices, gradientHandle);
+
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+
+	Vec2* dstPos = &vb->m_Pos[vbOffset];
+	bx::memCopy(dstPos, vtx, sizeof(Vec2) * numVertices);
+
+	Vec2* dstUV = &vb->m_UV[vbOffset];
+	bx::memSet(dstUV, 0, sizeof(Vec2) * numVertices); // UVs not used by the shader.
+
+	const uint32_t color = ColorRGBA::White;
+	uint32_t* dstColor = &vb->m_Color[vbOffset];
+	memset32(dstColor, numVertices, &color);
+
 	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);
 
