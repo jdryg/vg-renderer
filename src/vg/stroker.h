@@ -2,7 +2,7 @@
 #define VG_STROKER_H
 
 #include <stdint.h>
-#include "common.h"
+#include "vg.h"
 #include <bx/bx.h>
 
 namespace bx

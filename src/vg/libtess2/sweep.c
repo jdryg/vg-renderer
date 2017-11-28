@@ -263,7 +263,7 @@ static void FinishRegion( TESStesselator *tess, ActiveRegion *reg )
 	TESShalfEdge *e = reg->eUp;
 	TESSface *f = e->Lface;
 
-	f->inside = reg->inside;
+	f->inside = (char)reg->inside;
 	f->anEdge = e;   /* optimization for tessMeshTessellateMonoRegion() */
 	DeleteRegion( tess, reg );
 }
@@ -538,7 +538,7 @@ static int CheckForLeftSplice( TESStesselator *tess, ActiveRegion *regUp )
 		e = tessMeshSplitEdge( tess->mesh, eUp );
 		if (e == NULL) longjmp(tess->env,1);
 		if ( !tessMeshSplice( tess->mesh, eLo->Sym, e ) ) longjmp(tess->env,1);
-		e->Lface->inside = regUp->inside;
+		e->Lface->inside = (char)regUp->inside;
 	} else {
 		if( EdgeSign( eLo->Dst, eUp->Dst, eLo->Org ) > 0 ) return FALSE;
 
@@ -547,7 +547,7 @@ static int CheckForLeftSplice( TESStesselator *tess, ActiveRegion *regUp )
 		e = tessMeshSplitEdge( tess->mesh, eLo );
 		if (e == NULL) longjmp(tess->env,1);    
 		if ( !tessMeshSplice( tess->mesh, eUp->Lnext, eLo->Sym ) ) longjmp(tess->env,1);
-		e->Rface->inside = regUp->inside;
+		e->Rface->inside = (char)regUp->inside;
 	}
 	return TRUE;
 }
@@ -1123,10 +1123,10 @@ static void InitEdgeDict( TESStesselator *tess )
 
         /* If the bbox is empty, ensure that sentinels are not coincident by
            slightly enlarging it. */
-	smin = tess->bmin[0] - (w > 0 ? w : 0.01);
-        smax = tess->bmax[0] + (w > 0 ? w : 0.01);
-        tmin = tess->bmin[1] - (h > 0 ? h : 0.01);
-        tmax = tess->bmax[1] + (h > 0 ? h : 0.01);
+	smin = tess->bmin[0] - (w > 0 ? w : (TESSreal)0.01);
+        smax = tess->bmax[0] + (w > 0 ? w : (TESSreal)0.01);
+        tmin = tess->bmin[1] - (h > 0 ? h : (TESSreal)0.01);
+        tmax = tess->bmax[1] + (h > 0 ? h : (TESSreal)0.01);
 
 	AddSentinel( tess, smin, smax, tmin );
 	AddSentinel( tess, smin, smax, tmax );
@@ -1137,6 +1137,7 @@ static void DoneEdgeDict( TESStesselator *tess )
 {
 	ActiveRegion *reg;
 	int fixedEdges = 0;
+	TESS_NOTUSED(fixedEdges);
 
 	while( (reg = (ActiveRegion *)dictKey( dictMin( tess->dict ))) != NULL ) {
 		/*

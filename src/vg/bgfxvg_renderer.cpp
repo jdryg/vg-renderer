@@ -1,36 +1,7 @@
 // TODO:
 // 4) Layers
 // 5) Check polygon winding and force CCW order because otherwise AA fringes are generated inside the polygon!
-
-#if VG_CONFIG_DEBUG
-#define BX_TRACE(_format, ...) \
-	do { \
-		bx::debugPrintf(BX_FILE_LINE_LITERAL "BGFXVGRenderer " _format "\n", ##__VA_ARGS__); \
-	} while(0)
-
-#define BX_WARN(_condition, _format, ...) \
-	do { \
-		if (!(_condition) ) { \
-			BX_TRACE(BX_FILE_LINE_LITERAL _format, ##__VA_ARGS__); \
-		} \
-	} while(0)
-
-#define BX_CHECK(_condition, _format, ...) \
-	do { \
-		if (!(_condition) ) { \
-			BX_TRACE(BX_FILE_LINE_LITERAL _format, ##__VA_ARGS__); \
-			bx::debugBreak(); \
-		} \
-	} while(0)
-#endif
-
-#include <bx/bx.h>
-#include <bx/debug.h>
-
-BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4127) // conditional expression is constant (e.g. BezierTo)
-BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment withing conditional expression
-BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wshadow");
-
+#include "vg.h"
 #include "bgfxvg_renderer.h"
 #include "shape.h"
 #include "path.h"
@@ -51,18 +22,14 @@ BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wshadow");
 #include "util.h"
 
 // Shaders
-#include "vs_solid_color.bin.h"
-#include "fs_solid_color.bin.h"
-#include "vs_gradient.bin.h"
-#include "fs_gradient.bin.h"
+#include "shaders/vs_solid_color.bin.h"
+#include "shaders/fs_solid_color.bin.h"
+#include "shaders/vs_gradient.bin.h"
+#include "shaders/fs_gradient.bin.h"
 
-#if 1
-#include "../util/math.h"
-namespace vg
-{
-using namespace Util;
-}
-#endif
+BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4127) // conditional expression is constant (e.g. BezierTo)
+BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment withing conditional expression
+BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wshadow");
 
 namespace vg
 {
@@ -103,8 +70,8 @@ struct State
 
 struct VertexBuffer
 {
-	Vec2* m_Pos;
-	Vec2* m_UV;
+	float* m_Pos;
+	float* m_UV;
 	uint32_t* m_Color;
 	uint32_t m_Count;
 	bgfx::DynamicVertexBufferHandle m_PosBufferHandle;
@@ -181,8 +148,8 @@ struct DrawCommand
 
 struct CachedDrawCommand
 {
-	Vec2* m_Pos;
-	Vec2* m_UV;
+	float* m_Pos;
+	float* m_UV;
 	uint32_t* m_Color;
 	uint16_t* m_Indices;
 	uint16_t m_NumVertices;
@@ -194,7 +161,7 @@ struct CachedTextCommand
 	String* m_Text;
 	uint32_t m_Alignment;
 	Color m_Color;
-	Vec2 m_Pos;
+	float m_Pos[2];
 };
 
 struct CachedShape
@@ -233,7 +200,7 @@ struct Context
 	uint32_t m_NumVertexBuffers;
 	uint32_t m_VertexBufferCapacity;
 
-	Vec2** m_Vec2DataPool;
+	float** m_Vec2DataPool;
 	uint32_t** m_Uint32DataPool;
 	uint32_t m_Vec2DataPoolCapacity;
 	uint32_t m_Uint32DataPoolCapacity;
@@ -251,7 +218,7 @@ struct Context
 
 	Path* m_Path;
 	Stroker* m_Stroker;
-	Vec2* m_TransformedPathVertices;
+	float* m_TransformedPathVertices;
 	uint32_t m_NumTransformedPathVertices;
 	bool m_PathVerticesTransformed;
 
@@ -261,7 +228,7 @@ struct Context
 	IndexBuffer* m_IndexBuffer;
 
 	FONSquad* m_TextQuads;
-	Vec2* m_TextVertices;
+	float* m_TextVertices;
 	uint32_t m_TextQuadCapacity;
 
 	FONScontext* m_FontStashContext;
@@ -302,11 +269,12 @@ struct Context
 	inline State* getState()               { return &m_StateStack[m_CurStateID]; }
 	inline VertexBuffer* getVertexBuffer() { return &m_VertexBuffers[m_NumVertexBuffers - 1]; }
 	inline IndexBuffer* getIndexBuffer()   { return m_IndexBuffer; }
-	inline Vec2 getWhitePixelUV()
+	inline void getWhitePixelUV(float* uv)
 	{
 		int w, h;
 		getImageSize(m_FontImages[0], &w, &h);
-		return Vec2(0.5f / (float)w, 0.5f / (float)h);
+		uv[0] = 0.5f / (float)w;
+		uv[1] = 0.5f / (float)h;
 	}
 
 	bool init();
@@ -322,7 +290,7 @@ struct Context
 	void rect(float x, float y, float w, float h);
 	void roundedRect(float x, float y, float w, float h, float r);
 	void circle(float cx, float cy, float r);
-	void polyline(const Vec2* coords, uint32_t numPoints);
+	void polyline(const float* coords, uint32_t numPoints);
 	void closePath();
 	void fillConvexPath(Color col, bool aa);
 	void fillConvexPath(GradientHandle gradient, bool aa);
@@ -363,17 +331,17 @@ struct Context
 
 	// Vertex buffers
 	VertexBuffer* allocVertexBuffer();
-	Vec2* allocVertexBufferData_Vec2();
+	float* allocVertexBufferData_Vec2();
 	uint32_t* allocVertexBufferData_Uint32();
-	void releaseVertexBufferData_Vec2(Vec2* data);
+	void releaseVertexBufferData_Vec2(float* data);
 	void releaseVertexBufferData_Uint32(uint32_t* data);
 
 	// Draw commands
 	DrawCommand* allocDrawCommand_TexturedVertexColor(uint32_t numVertices, uint32_t numIndices, ImageHandle img);
 	DrawCommand* allocDrawCommand_ColorGradient(uint32_t numVertices, uint32_t numIndices, GradientHandle gradient);
-	void createDrawCommand_VertexColor(const Vec2* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
-	void createDrawCommand_Textured(const Vec2* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, ImageHandle imgHandle, const float* uvMatrix, const uint16_t* indices, uint32_t numIndices);
-	void createDrawCommand_Gradient(const Vec2* vtx, uint32_t numVertices, GradientHandle gradientHandle, const uint16_t* indices, uint32_t numIndices);
+	void createDrawCommand_VertexColor(const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
+	void createDrawCommand_Textured(const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, ImageHandle imgHandle, const float* uvMatrix, const uint16_t* indices, uint32_t numIndices);
+	void createDrawCommand_Gradient(const float* vtx, uint32_t numVertices, GradientHandle gradientHandle, const uint16_t* indices, uint32_t numIndices);
 
 	// Textures
 	ImageHandle allocImage();
@@ -389,10 +357,10 @@ struct Context
 	void flushTextAtlasTexture();
 
 	// Rendering
-	void renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numVertices, Color color);
-	void renderConvexPolygonAA(const Vec2* vtx, uint32_t numVertices, Color color);
-	void renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numVertices, ImagePatternHandle img);
-	void renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numVertices, GradientHandle grad);
+	void renderConvexPolygonNoAA(const float* vtx, uint32_t numVertices, Color color);
+	void renderConvexPolygonAA(const float* vtx, uint32_t numVertices, Color color);
+	void renderConvexPolygonNoAA(const float* vtx, uint32_t numVertices, ImagePatternHandle img);
+	void renderConvexPolygonNoAA(const float* vtx, uint32_t numVertices, GradientHandle grad);
 	void renderTextQuads(uint32_t numQuads, Color color);
 
 	// Caching
@@ -411,7 +379,7 @@ struct Context
 static void releaseVertexBufferDataCallback_Vec2(void* ptr, void* userData)
 {
 	Context* ctx = (Context*)userData;
-	ctx->releaseVertexBufferData_Vec2((Vec2*)ptr);
+	ctx->releaseVertexBufferData_Vec2((float*)ptr);
 }
 
 static void releaseVertexBufferDataCallback_Uint32(void* ptr, void* userData)
@@ -420,16 +388,16 @@ static void releaseVertexBufferDataCallback_Uint32(void* ptr, void* userData)
 	ctx->releaseVertexBufferData_Uint32((uint32_t*)ptr);
 }
 
-inline Vec2 transformPos2D(float x, float y, const float* mtx)
+inline void transformPos2D(float x, float y, const float* mtx, float* res)
 {
-	return Vec2(mtx[0] * x + mtx[2] * y + mtx[4],
-	            mtx[1] * x + mtx[3] * y + mtx[5]);
+	res[0] = mtx[0] * x + mtx[2] * y + mtx[4];
+	res[1] = mtx[1] * x + mtx[3] * y + mtx[5];
 }
 
-inline Vec2 transformVec2D(float x, float y, const float* mtx)
+inline void transformVec2D(float x, float y, const float* mtx, float* res)
 {
-	return Vec2(mtx[0] * x + mtx[2] * y,
-	            mtx[1] * x + mtx[3] * y);
+	res[0] = mtx[0] * x + mtx[2] * y;
+	res[1] = mtx[1] * x + mtx[3] * y;
 }
 
 inline bool invertMatrix3(const float* t, float* inv)
@@ -481,10 +449,10 @@ inline float getFontScale(const float* xform)
 	return bx::fmin(quantize(getAverageScale(xform), 0.01f), 4.0f);
 }
 
-void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx);
-void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx);
+void batchTransformPositions(const float* __restrict v, uint32_t n, float* __restrict p, const float* __restrict mtx);
+void batchTransformPositions_Unaligned(const float* __restrict v, uint32_t n, float* __restrict p, const float* __restrict mtx);
 void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint16_t* __restrict dst, uint16_t delta);
-void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, Vec2* __restrict transformedVertices);
+void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, float* __restrict transformedVertices);
 
 //////////////////////////////////////////////////////////////////////////
 // BGFXVGRenderer
@@ -568,7 +536,7 @@ void BGFXVGRenderer::Circle(float cx, float cy, float r)
 
 void BGFXVGRenderer::Polyline(const float* coords, uint32_t numPoints)
 {
-	m_Context->polyline((const Vec2*)coords, numPoints);
+	m_Context->polyline(coords, numPoints);
 }
 
 void BGFXVGRenderer::ClosePath()
@@ -915,13 +883,13 @@ Context::~Context()
 	BX_DELETE(m_Allocator, m_IndexBuffer);
 
 	for (uint32_t i = 0; i < m_Vec2DataPoolCapacity; ++i) {
-		Vec2* buffer = m_Vec2DataPool[i];
+		float* buffer = m_Vec2DataPool[i];
 		if (!buffer) {
 			continue;
 		}
 
 		if ((uintptr_t)buffer & 1) {
-			buffer = (Vec2*)((uintptr_t)buffer & ~1);
+			buffer = (float*)((uintptr_t)buffer & ~1);
 			BX_ALIGNED_FREE(m_Allocator, buffer, 16);
 		}
 	}
@@ -1043,15 +1011,15 @@ bool Context::init()
 
 void Context::beginFrame(uint32_t windowWidth, uint32_t windowHeight, float devicePixelRatio)
 {
-	BX_CHECK(windowWidth > 0 && windowWidth < 65536, "Invalid window width");
-	BX_CHECK(windowHeight > 0 && windowHeight < 65536, "Invalid window height");
+	VG_CHECK(windowWidth > 0 && windowWidth < 65536, "Invalid window width");
+	VG_CHECK(windowHeight > 0 && windowHeight < 65536, "Invalid window height");
 	m_WinWidth = (uint16_t)windowWidth;
 	m_WinHeight = (uint16_t)windowHeight;
 	m_DevicePixelRatio = devicePixelRatio;
 	m_TesselationTolerance = 0.25f / devicePixelRatio;
 	m_FringeWidth = 1.0f / devicePixelRatio;
 
-	BX_CHECK(m_CurStateID == 0, "State stack hasn't been properly reset in the previous frame");
+	VG_CHECK(m_CurStateID == 0, "State stack hasn't been properly reset in the previous frame");
 	resetScissor();
 	transformIdentity();
 
@@ -1068,7 +1036,7 @@ void Context::beginFrame(uint32_t windowWidth, uint32_t windowHeight, float devi
 
 void Context::endFrame()
 {
-	BX_CHECK(m_CurStateID == 0, "PushState()/PopState() mismatch");
+	VG_CHECK(m_CurStateID == 0, "PushState()/PopState() mismatch");
 	if (m_NumDrawCommands == 0) {
 		// Release the vertex buffer allocated in beginFrame()
 		releaseVertexBufferData_Vec2(m_VertexBuffers[0].m_Pos);
@@ -1094,8 +1062,8 @@ void Context::endFrame()
 			vb->m_ColorBufferHandle = bgfx::createDynamicVertexBuffer(MAX_VB_VERTICES, m_ColorVertexDecl, 0);
 		}
 
-		const bgfx::Memory* posMem = bgfx::makeRef(vb->m_Pos, sizeof(Vec2) * vb->m_Count, releaseVertexBufferDataCallback_Vec2, this);
-		const bgfx::Memory* uvMem = bgfx::makeRef(vb->m_UV, sizeof(Vec2) * vb->m_Count, releaseVertexBufferDataCallback_Vec2, this);
+		const bgfx::Memory* posMem = bgfx::makeRef(vb->m_Pos, sizeof(float) * 2 * vb->m_Count, releaseVertexBufferDataCallback_Vec2, this);
+		const bgfx::Memory* uvMem = bgfx::makeRef(vb->m_UV, sizeof(float) * 2 * vb->m_Count, releaseVertexBufferDataCallback_Vec2, this);
 		const bgfx::Memory* colorMem = bgfx::makeRef(vb->m_Color, sizeof(uint32_t) * vb->m_Count, releaseVertexBufferDataCallback_Uint32, this);
 
 		bgfx::updateDynamicVertexBuffer(vb->m_PosBufferHandle, 0, posMem);
@@ -1147,7 +1115,7 @@ void Context::endFrame()
 		}
 
 		if (cmd->m_Type == DrawCommand::Type_TexturedVertexColor) {
-			BX_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid image handle");
+			VG_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid image handle");
 			Image* tex = &m_Images[cmd->m_HandleID];
 			bgfx::setTexture(0, m_TexUniform, tex->m_bgfxHandle, tex->m_Flags);
 
@@ -1159,7 +1127,7 @@ void Context::endFrame()
 
 			bgfx::submit(m_ViewID, m_ProgramHandle[DrawCommand::Type_TexturedVertexColor], cmdDepth, false);
 		} else if (cmd->m_Type == DrawCommand::Type_ColorGradient) {
-			BX_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid gradient handle");
+			VG_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid gradient handle");
 			Gradient* grad = &m_Gradients[cmd->m_HandleID];
 
 			bgfx::setUniform(m_PaintMatUniform, grad->m_Matrix, 1);
@@ -1175,7 +1143,7 @@ void Context::endFrame()
 
 			bgfx::submit(m_ViewID, m_ProgramHandle[DrawCommand::Type_ColorGradient], cmdDepth, false);
 		} else {
-			BX_CHECK(false, "Unknown draw command type");
+			VG_CHECK(false, "Unknown draw command type");
 		}
 	}
 
@@ -1225,56 +1193,56 @@ void Context::beginPath()
 
 void Context::moveTo(float x, float y)
 {
-	BX_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
+	VG_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
 	m_Path->moveTo(x, y);
 }
 
 void Context::lineTo(float x, float y)
 {
-	BX_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
+	VG_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
 	m_Path->lineTo(x, y);
 }
 
 void Context::bezierTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
 {
-	BX_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
+	VG_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
 	m_Path->cubicTo(c1x, c1y, c2x, c2y, x, y);
 }
 
 void Context::arcTo(float x1, float y1, float x2, float y2, float radius)
 {
-	BX_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
+	VG_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
+	VG_WARN(false, "ArcTo() not implemented yet"); // NOT USED
 	BX_UNUSED(x1, y1, x2, y2, radius);
-	BX_WARN(false, "ArcTo() not implemented yet"); // NOT USED
 }
 
 void Context::rect(float x, float y, float w, float h)
 {
-	BX_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
+	VG_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
 	m_Path->rect(x, y, w, h);
 }
 
 void Context::roundedRect(float x, float y, float w, float h, float r)
 {
-	BX_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
+	VG_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
 	m_Path->roundedRect(x, y, w, h, r);
 }
 
 void Context::circle(float cx, float cy, float r)
 {
-	BX_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
+	VG_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
 	m_Path->circle(cx, cy, r);
 }
 
-void Context::polyline(const Vec2* coords, uint32_t numPoints)
+void Context::polyline(const float* coords, uint32_t numPoints)
 {
-	BX_CHECK(!m_PathVerticesTransformed, "Cannot add new vertices to the path after submitting a draw command");
-	m_Path->polyline(&coords[0].x, numPoints);
+	VG_CHECK(!m_PathVerticesTransformed, "Cannot add new vertices to the path after submitting a draw command");
+	m_Path->polyline(coords, numPoints);
 }
 
 void Context::closePath()
 {
-	BX_CHECK(!m_PathVerticesTransformed, "Cannot add new vertices to the path after submitting a draw command");
+	VG_CHECK(!m_PathVerticesTransformed, "Cannot add new vertices to the path after submitting a draw command");
 	m_Path->close();
 }
 
@@ -1286,11 +1254,11 @@ void Context::transformPath()
 
 	const uint32_t numPathVertices = m_Path->getNumVertices();
 	if (numPathVertices > m_NumTransformedPathVertices) {
-		m_TransformedPathVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_TransformedPathVertices, sizeof(Vec2) * numPathVertices, 16);
+		m_TransformedPathVertices = (float*)BX_ALIGNED_REALLOC(m_Allocator, m_TransformedPathVertices, sizeof(float) * 2 * numPathVertices, 16);
 		m_NumTransformedPathVertices = numPathVertices;
 	}
 	
-	const Vec2* pathVertices = (const Vec2*)m_Path->getVertices();
+	const float* pathVertices = m_Path->getVertices();
 	const State* state = getState();
 	batchTransformPositions(pathVertices, numPathVertices, m_TransformedPathVertices, state->m_TransformMtx);
 	m_PathVerticesTransformed = true;
@@ -1300,7 +1268,7 @@ void Context::fillConvexPath(Color col, bool aa)
 {
 	transformPath();
 
-	const Vec2* pathVertices = m_TransformedPathVertices;
+	const float* pathVertices = m_TransformedPathVertices;
 
 	const uint32_t numSubPaths = m_Path->getNumSubPaths();
 	const SubPath* subPaths = m_Path->getSubPaths();
@@ -1311,21 +1279,21 @@ void Context::fillConvexPath(Color col, bool aa)
 		}
 
 		if (aa) {
-			renderConvexPolygonAA(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, col);
+			renderConvexPolygonAA(&pathVertices[path->m_FirstVertexID << 1], path->m_NumVertices, col);
 		} else {
-			renderConvexPolygonNoAA(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, col);
+			renderConvexPolygonNoAA(&pathVertices[path->m_FirstVertexID << 1], path->m_NumVertices, col);
 		}
 	}
 }
 
 void Context::fillConvexPath(GradientHandle gradient, bool aa)
 {
-	transformPath();
-
-	const Vec2* pathVertices = m_TransformedPathVertices;
-
 	// TODO: Anti-aliasing of gradient-filled paths
 	BX_UNUSED(aa);
+
+	transformPath();
+
+	const float* pathVertices = m_TransformedPathVertices;
 
 	const uint32_t numSubPaths = m_Path->getNumSubPaths();
 	const SubPath* subPaths = m_Path->getSubPaths();
@@ -1335,18 +1303,19 @@ void Context::fillConvexPath(GradientHandle gradient, bool aa)
 			continue;
 		}
 
-		renderConvexPolygonNoAA(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, gradient);
+		renderConvexPolygonNoAA(&pathVertices[path->m_FirstVertexID << 1], path->m_NumVertices, gradient);
 	}
 }
 
 void Context::fillConvexPath(ImagePatternHandle img, bool aa)
 {
-	transformPath();
-
-	const Vec2* pathVertices = m_TransformedPathVertices;
-
 	// TODO: Anti-aliasing of textured paths
 	BX_UNUSED(aa);
+
+	transformPath();
+
+	const float* pathVertices = m_TransformedPathVertices;
+
 	const uint32_t numSubPaths = m_Path->getNumSubPaths();
 	const SubPath* subPaths = m_Path->getSubPaths();
 	for (uint32_t i = 0; i < numSubPaths; ++i) {
@@ -1355,19 +1324,22 @@ void Context::fillConvexPath(ImagePatternHandle img, bool aa)
 			continue;
 		}
 
-		renderConvexPolygonNoAA(&pathVertices[path->m_FirstVertexID], path->m_NumVertices, img);
+		renderConvexPolygonNoAA(&pathVertices[path->m_FirstVertexID << 1], path->m_NumVertices, img);
 	}
 }
 
 void Context::fillConcavePath(Color col, bool aa)
 {
+	// TODO: AA
+	BX_UNUSED(aa);
+
 	transformPath();
 
-	const Vec2* pathVertices = m_TransformedPathVertices;
+	const float* pathVertices = m_TransformedPathVertices;
 
 	const uint32_t numSubPaths = m_Path->getNumSubPaths();
 	const SubPath* subPaths = m_Path->getSubPaths();
-	BX_CHECK(numSubPaths == 1, "Cannot decompose multiple concave paths");
+	VG_CHECK(numSubPaths == 1, "Cannot decompose multiple concave paths");
 	BX_UNUSED(numSubPaths);
 
 	const SubPath* path = &subPaths[0];
@@ -1375,14 +1347,11 @@ void Context::fillConcavePath(Color col, bool aa)
 		return;
 	}
 
-	// TODO: AA
-	BX_UNUSED(aa);
-
 	Mesh mesh;
-	if (m_Stroker->concaveFill(&mesh, &pathVertices[path->m_FirstVertexID].x, path->m_NumVertices)) {
-		createDrawCommand_VertexColor((const Vec2*)mesh.m_PosBuffer, mesh.m_NumVertices, &col, 1, mesh.m_IndexBuffer, mesh.m_NumIndices);
+	if (m_Stroker->concaveFill(&mesh, &pathVertices[path->m_FirstVertexID << 1], path->m_NumVertices)) {
+		createDrawCommand_VertexColor(mesh.m_PosBuffer, mesh.m_NumVertices, &col, 1, mesh.m_IndexBuffer, mesh.m_NumIndices);
 	} else {
-		BX_WARN(false, "Failed to triangulate concave polygon");
+		VG_WARN(false, "Failed to triangulate concave polygon");
 	}
 }
 
@@ -1390,15 +1359,15 @@ void Context::strokePath(Color color, float width, bool aa, LineCap::Enum lineCa
 {
 	transformPath();
 
-	const Vec2* pathVertices = m_TransformedPathVertices;
+	const float* pathVertices = m_TransformedPathVertices;
 
 	const State* state = getState();
 	const float avgScale = state->m_AvgScale;
-	float strokeWidth = clamp(width * avgScale, 0.0f, 200.0f);
+	float strokeWidth = bx::fclamp(width * avgScale, 0.0f, 200.0f);
 	float alphaScale = state->m_GlobalAlpha;
 	bool isThin = false;
 	if (strokeWidth <= m_FringeWidth) {
-		float alpha = clamp(strokeWidth, 0.0f, m_FringeWidth);
+		float alpha = bx::fclamp(strokeWidth, 0.0f, m_FringeWidth);
 		alphaScale *= alpha * alpha;
 		strokeWidth = m_FringeWidth;
 		isThin = true;
@@ -1419,23 +1388,23 @@ void Context::strokePath(Color color, float width, bool aa, LineCap::Enum lineCa
 			continue;
 		}
 
-		const Vec2* vtx = &pathVertices[path->m_FirstVertexID];
+		const float* vtx = &pathVertices[path->m_FirstVertexID << 1];
 		const uint32_t numPathVertices = path->m_NumVertices;
 		const bool isClosed = path->m_IsClosed;
 
 		Mesh mesh;
 		if (aa) {
 			if (isThin) {
-				m_Stroker->polylineStrokeAAThin(&mesh, &vtx[0].x, numPathVertices, isClosed, c, lineCap, lineJoin);
+				m_Stroker->polylineStrokeAAThin(&mesh, vtx, numPathVertices, isClosed, c, lineCap, lineJoin);
 			} else {
-				m_Stroker->polylineStrokeAA(&mesh, &vtx[0].x, numPathVertices, isClosed, c, strokeWidth, lineCap, lineJoin);
+				m_Stroker->polylineStrokeAA(&mesh, vtx, numPathVertices, isClosed, c, strokeWidth, lineCap, lineJoin);
 			}
 		} else {
-			m_Stroker->polylineStroke(&mesh, &vtx[0].x, numPathVertices, isClosed, strokeWidth, lineCap, lineJoin);
+			m_Stroker->polylineStroke(&mesh, vtx, numPathVertices, isClosed, strokeWidth, lineCap, lineJoin);
 		}
 
 		const bool hasColors = mesh.m_ColorBuffer != nullptr;
-		createDrawCommand_VertexColor((const Vec2*)mesh.m_PosBuffer, mesh.m_NumVertices, hasColors ? mesh.m_ColorBuffer : &c, hasColors ? mesh.m_NumVertices : 1, mesh.m_IndexBuffer, mesh.m_NumIndices);
+		createDrawCommand_VertexColor(mesh.m_PosBuffer, mesh.m_NumVertices, hasColors ? mesh.m_ColorBuffer : &c, hasColors ? mesh.m_NumVertices : 1, mesh.m_IndexBuffer, mesh.m_NumIndices);
 	}
 }
 
@@ -1659,14 +1628,14 @@ bool Context::isImageHandleValid(ImageHandle image)
 
 void Context::pushState()
 {
-	BX_CHECK(m_CurStateID < MAX_STATE_STACK_SIZE - 1, "State stack overflow");
+	VG_CHECK(m_CurStateID < MAX_STATE_STACK_SIZE - 1, "State stack overflow");
 	bx::memCopy(&m_StateStack[m_CurStateID + 1], &m_StateStack[m_CurStateID], sizeof(State));
 	++m_CurStateID;
 }
 
 void Context::popState()
 {
-	BX_CHECK(m_CurStateID > 0, "State stack underflow");
+	VG_CHECK(m_CurStateID > 0, "State stack underflow");
 	--m_CurStateID;
 
 	// If the new state has a different scissor rect than the last draw command 
@@ -1697,27 +1666,29 @@ void Context::resetScissor()
 void Context::setScissor(float x, float y, float w, float h)
 {
 	State* state = getState();
-	Vec2 pos = transformPos2D(x, y, state->m_TransformMtx);
-	Vec2 size = transformVec2D(w, h, state->m_TransformMtx);
-	state->m_ScissorRect[0] = pos.x;
-	state->m_ScissorRect[1] = pos.y;
-	state->m_ScissorRect[2] = size.x;
-	state->m_ScissorRect[3] = size.y;
+	float pos[2], size[2];
+	transformPos2D(x, y, state->m_TransformMtx, &pos[0]);
+	transformVec2D(w, h, state->m_TransformMtx, &size[0]);
+	state->m_ScissorRect[0] = pos[0];
+	state->m_ScissorRect[1] = pos[1];
+	state->m_ScissorRect[2] = size[0];
+	state->m_ScissorRect[3] = size[1];
 	m_ForceNewDrawCommand = true;
 }
 
 bool Context::intersectScissor(float x, float y, float w, float h)
 {
 	State* state = getState();
-	Vec2 pos = transformPos2D(x, y, state->m_TransformMtx);
-	Vec2 size = transformVec2D(w, h, state->m_TransformMtx);
+	float pos[2], size[2];
+	transformPos2D(x, y, state->m_TransformMtx, &pos[0]);
+	transformVec2D(w, h, state->m_TransformMtx, &size[0]);
 
 	const float* rect = state->m_ScissorRect;
 
-	float minx = bx::fmax(pos.x, rect[0]);
-	float miny = bx::fmax(pos.y, rect[1]);
-	float maxx = bx::fmin(pos.x + size.x, rect[0] + rect[2]);
-	float maxy = bx::fmin(pos.y + size.y, rect[1] + rect[3]);
+	float minx = bx::fmax(pos[0], rect[0]);
+	float miny = bx::fmax(pos[1], rect[1]);
+	float maxx = bx::fmin(pos[0] + size[0], rect[0] + rect[2]);
+	float maxy = bx::fmin(pos[1] + size[1], rect[1] + rect[3]);
 
 	state->m_ScissorRect[0] = minx;
 	state->m_ScissorRect[1] = miny;
@@ -1851,7 +1822,7 @@ void Context::text(const Font& font, uint32_t alignment, Color color, float x, f
 	if (m_TextQuadCapacity < numBakedChars) {
 		m_TextQuadCapacity = numBakedChars;
 		m_TextQuads = (FONSquad*)BX_ALIGNED_REALLOC(m_Allocator, m_TextQuads, sizeof(FONSquad) * m_TextQuadCapacity, 16);
-		m_TextVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_TextVertices, sizeof(Vec2) * m_TextQuadCapacity * 4, 16);
+		m_TextVertices = (float*)BX_ALIGNED_REALLOC(m_Allocator, m_TextVertices, sizeof(float) * 2 * m_TextQuadCapacity * 4, 16);
 	}
 
 	bx::memCopy(m_TextQuads, m_TextString.m_Quads, sizeof(FONSquad) * numBakedChars);
@@ -2358,8 +2329,8 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 
 	const uint16_t firstGradientID = (uint16_t)m_NextGradientID;
 	const uint16_t firstImagePatternID = (uint16_t)m_NextImagePatternID;
-	BX_CHECK(firstGradientID + shape->m_NumGradients <= VG_CONFIG_MAX_GRADIENTS, "Not enough free gradients to render shape. Increase VG_MAX_GRADIENTS");
-	BX_CHECK(firstImagePatternID + shape->m_NumImagePatterns <= VG_CONFIG_MAX_IMAGE_PATTERNS, "Not enough free image patterns to render shape. Increase VG_MAX_IMAGE_PATTERS");
+	VG_CHECK(firstGradientID + shape->m_NumGradients <= VG_CONFIG_MAX_GRADIENTS, "Not enough free gradients to render shape. Increase VG_MAX_GRADIENTS");
+	VG_CHECK(firstImagePatternID + shape->m_NumImagePatterns <= VG_CONFIG_MAX_IMAGE_PATTERNS, "Not enough free image patterns to render shape. Increase VG_MAX_IMAGE_PATTERS");
 
 	while (cmdList < cmdListEnd) {
 		ShapeCommand::Enum cmdType = *(ShapeCommand::Enum*)cmdList;
@@ -2615,7 +2586,7 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			float y = CMD_READ(float, cmdList);
 			uint32_t stringID = CMD_READ(uint32_t, cmdList);
 
-			BX_WARN(stringCallback, "Shape includes dynamic text commands but no string callback has been specified");
+			VG_WARN(stringCallback, "Shape includes dynamic text commands but no string callback has been specified");
 			if (stringCallback) {
 				uint32_t len;
 				const char* str = (*stringCallback)(stringID, len, userData);
@@ -2650,15 +2621,15 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 
 		VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 		const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
-		Vec2* dstPos = &vb->m_Pos[vbOffset];
-		Vec2* dstUV = &vb->m_UV[vbOffset];
+		float* dstPos = &vb->m_Pos[vbOffset << 1];
+		float* dstUV = &vb->m_UV[vbOffset << 1];
 		uint32_t* dstColor = &vb->m_Color[vbOffset];
 		uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 		const uint16_t startVertexID = (uint16_t)cmd->m_NumVertices;
 
 		batchTransformPositions_Unaligned(cachedCmd->m_Pos, cachedCmd->m_NumVertices, dstPos, mtx);
-		bx::memCopy(dstUV, cachedCmd->m_UV, sizeof(Vec2) * cachedCmd->m_NumVertices);
+		bx::memCopy(dstUV, cachedCmd->m_UV, sizeof(float) * 2 * cachedCmd->m_NumVertices);
 		bx::memCopy(dstColor, cachedCmd->m_Color, sizeof(uint32_t) * cachedCmd->m_NumVertices);
 		batchTransformDrawIndices(cachedCmd->m_Indices, cachedCmd->m_NumIndices, dstIndex, startVertexID);
 
@@ -2670,7 +2641,7 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 	const uint32_t numStaticTextCommands = shape->m_NumStaticTextCommands;
 	for (uint32_t iStatic = 0; iStatic < numStaticTextCommands; ++iStatic) {
 		CachedTextCommand* cmd = &shape->m_StaticTextCommands[iStatic];
-		text(cmd->m_Text, cmd->m_Alignment, cmd->m_Color, cmd->m_Pos.x, cmd->m_Pos.y);
+		text(cmd->m_Text, cmd->m_Alignment, cmd->m_Color, cmd->m_Pos[0], cmd->m_Pos[1]);
 	}
 
 	const uint32_t numTextCommands = shape->m_NumTextCommands;
@@ -2704,7 +2675,7 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 			float y = CMD_READ(float, cmdData);
 			uint32_t stringID = CMD_READ(uint32_t, cmdData);
 
-			BX_WARN(stringCallback, "Shape includes dynamic text commands but not string callback has been specified");
+			VG_WARN(stringCallback, "Shape includes dynamic text commands but not string callback has been specified");
 			if (stringCallback) {
 				uint32_t len;
 				const char* str = (*stringCallback)(stringID, len, userData);
@@ -2716,7 +2687,7 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 		}
 #endif
 		default:
-			BX_CHECK(false, "Unknown shape command");
+			VG_CHECK(false, "Unknown shape command");
 		}
 	}
 }
@@ -2747,9 +2718,9 @@ void Context::cachedShapeReset(CachedShape* shape)
 
 void Context::cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* cmd)
 {
-	BX_CHECK(cmd->m_NumVertices < 65536, "Each draw command should have max 65535 vertices");
-	BX_CHECK(cmd->m_NumIndices < 65536, "Each draw command should have max 65535 indices");
-	BX_CHECK(cmd->m_Type == DrawCommand::Type_TexturedVertexColor && cmd->m_HandleID == m_FontImages[0].idx, "Cannot cache draw command");
+	VG_CHECK(cmd->m_NumVertices < 65536, "Each draw command should have max 65535 vertices");
+	VG_CHECK(cmd->m_NumIndices < 65536, "Each draw command should have max 65535 indices");
+	VG_CHECK(cmd->m_Type == DrawCommand::Type_TexturedVertexColor && cmd->m_HandleID == m_FontImages[0].idx, "Cannot cache draw command");
 
 	// TODO: Currently only solid color untextured paths are cached. So all draw commands can be batched into a single VB/IB.
 	CachedDrawCommand* cachedCmd = nullptr;
@@ -2771,18 +2742,18 @@ void Context::cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* c
 	const uint16_t firstVertexID = cachedCmd->m_NumVertices;
 	const uint16_t firstIndexID = cachedCmd->m_NumIndices;
 
-	BX_CHECK(cachedCmd->m_NumVertices + cmd->m_NumVertices < 65536, "Not enough space in current cached command");
-	BX_CHECK(cachedCmd->m_NumIndices + cmd->m_NumIndices < 65536, "Not enough space in current cached command");
+	VG_CHECK(cachedCmd->m_NumVertices + cmd->m_NumVertices < 65536, "Not enough space in current cached command");
+	VG_CHECK(cachedCmd->m_NumIndices + cmd->m_NumIndices < 65536, "Not enough space in current cached command");
 	cachedCmd->m_NumVertices += (uint16_t)cmd->m_NumVertices;
-	cachedCmd->m_Pos = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Pos, sizeof(Vec2) * cachedCmd->m_NumVertices, 16);
-	cachedCmd->m_UV = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_UV, sizeof(Vec2) * cachedCmd->m_NumVertices, 16);
+	cachedCmd->m_Pos = (float*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Pos, sizeof(float) * 2 * cachedCmd->m_NumVertices, 16);
+	cachedCmd->m_UV = (float*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_UV, sizeof(float) * 2 * cachedCmd->m_NumVertices, 16);
 	cachedCmd->m_Color = (uint32_t*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Color, sizeof(uint32_t) * cachedCmd->m_NumVertices, 16);
 
-	const Vec2* srcPos = &m_VertexBuffers[cmd->m_VertexBufferID].m_Pos[cmd->m_FirstVertexID];
-	const Vec2* srcUV = &m_VertexBuffers[cmd->m_VertexBufferID].m_UV[cmd->m_FirstVertexID];
+	const float* srcPos = &m_VertexBuffers[cmd->m_VertexBufferID].m_Pos[cmd->m_FirstVertexID << 1];
+	const float* srcUV = &m_VertexBuffers[cmd->m_VertexBufferID].m_UV[cmd->m_FirstVertexID << 1];
 	const uint32_t* srcColor = &m_VertexBuffers[cmd->m_VertexBufferID].m_Color[cmd->m_FirstVertexID];
-	bx::memCopy(&cachedCmd->m_Pos[firstVertexID], srcPos, sizeof(Vec2) * cmd->m_NumVertices);
-	bx::memCopy(&cachedCmd->m_UV[firstVertexID], srcUV, sizeof(Vec2) * cmd->m_NumVertices);
+	bx::memCopy(&cachedCmd->m_Pos[firstVertexID << 1], srcPos, sizeof(float) * 2 * cmd->m_NumVertices);
+	bx::memCopy(&cachedCmd->m_UV[firstVertexID << 1], srcUV, sizeof(float) * 2 * cmd->m_NumVertices);
 	bx::memCopy(&cachedCmd->m_Color[firstVertexID], srcColor, sizeof(uint32_t) * cmd->m_NumVertices);
 
 	// Copy the indices...
@@ -2813,8 +2784,8 @@ void Context::cachedShapeAddTextCommand(CachedShape* shape, String* str, uint32_
 	cmd->m_Text = str;
 	cmd->m_Alignment = alignment;
 	cmd->m_Color = col;
-	cmd->m_Pos.x = x;
-	cmd->m_Pos.y = y;
+	cmd->m_Pos[0] = x;
+	cmd->m_Pos[1] = y;
 }
 
 void Context::getImageSize(ImageHandle image, int* w, int* h)
@@ -2851,7 +2822,7 @@ bool Context::allocTextAtlas()
 	} else {
 		// calculate the new font image size and create it.
 		getImageSize(m_FontImages[m_FontImageID], &iw, &ih);
-		BX_CHECK(iw != -1 && ih != -1, "Invalid font atlas dimensions");
+		VG_CHECK(iw != -1 && ih != -1, "Invalid font atlas dimensions");
 
 		if (iw > ih) {
 			ih *= 2;
@@ -2904,13 +2875,13 @@ void Context::renderTextQuads(uint32_t numQuads, Color color)
 	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 
-	Vec2* dstPos = &vb->m_Pos[vbOffset];
-	bx::memCopy(dstPos, m_TextVertices, sizeof(Vec2) * numDrawVertices);
+	float* dstPos = &vb->m_Pos[vbOffset << 1];
+	bx::memCopy(dstPos, m_TextVertices, sizeof(float) * 2 * numDrawVertices);
 
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
 	memset32(dstColor, numDrawVertices, &c);
 
-	Vec2* dstUV = &vb->m_UV[vbOffset];
+	float* dstUV = &vb->m_UV[vbOffset << 1];
 	const FONSquad* q = m_TextQuads;
 	uint32_t nq = numQuads;
 	while (nq-- > 0) {
@@ -2919,12 +2890,12 @@ void Context::renderTextQuads(uint32_t numQuads, Color color)
 		const float t0 = q->t0;
 		const float t1 = q->t1;
 
-		dstUV[0].x = s0; dstUV[0].y = t0;
-		dstUV[1].x = s1; dstUV[1].y = t0;
-		dstUV[2].x = s1; dstUV[2].y = t1;
-		dstUV[3].x = s0; dstUV[3].y = t1;
+		dstUV[0] = s0; dstUV[1] = t0;
+		dstUV[2] = s1; dstUV[3] = t0;
+		dstUV[4] = s1; dstUV[5] = t1;
+		dstUV[6] = s0; dstUV[7] = t1;
 
-		dstUV += 4;
+		dstUV += 8;
 		++q;
 	}
 
@@ -2945,7 +2916,7 @@ void Context::renderTextQuads(uint32_t numQuads, Color color)
 	cmd->m_NumIndices += numDrawIndices;
 }
 
-void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices, Color color)
+void Context::renderConvexPolygonNoAA(const float* vtx, uint32_t numPathVertices, Color color)
 {
 	const State* state = getState();
 	const uint32_t c = ColorRGBA::setAlpha(color, (uint8_t)(state->m_GlobalAlpha * ColorRGBA::getAlpha(color)));
@@ -2954,12 +2925,12 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 	}
 
 	Mesh mesh;
-	m_Stroker->convexFill(&mesh, &vtx[0].x, numPathVertices);
+	m_Stroker->convexFill(&mesh, vtx, numPathVertices);
 
-	createDrawCommand_VertexColor((const Vec2*)mesh.m_PosBuffer, mesh.m_NumVertices, &c, 1, mesh.m_IndexBuffer, mesh.m_NumIndices);
+	createDrawCommand_VertexColor(mesh.m_PosBuffer, mesh.m_NumVertices, &c, 1, mesh.m_IndexBuffer, mesh.m_NumIndices);
 }
 
-void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, Color color)
+void Context::renderConvexPolygonAA(const float* vtx, uint32_t numPathVertices, Color color)
 {
 	const State* state = getState();
 	const uint32_t c = ColorRGBA::setAlpha(color, (uint8_t)(state->m_GlobalAlpha * ColorRGBA::getAlpha(color)));
@@ -2968,14 +2939,14 @@ void Context::renderConvexPolygonAA(const Vec2* vtx, uint32_t numPathVertices, C
 	}
 
 	Mesh mesh;
-	m_Stroker->convexFillAA(&mesh, &vtx[0].x, numPathVertices, c);
+	m_Stroker->convexFillAA(&mesh, vtx, numPathVertices, c);
 
-	createDrawCommand_VertexColor((const Vec2*)mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_ColorBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
+	createDrawCommand_VertexColor(mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_ColorBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
 }
 
-void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices, ImagePatternHandle handle)
+void Context::renderConvexPolygonNoAA(const float* vtx, uint32_t numPathVertices, ImagePatternHandle handle)
 {
-	BX_CHECK(isValid(handle), "Invalid image pattern handle");
+	VG_CHECK(isValid(handle), "Invalid image pattern handle");
 
 	const State* state = getState();
 	ImagePattern* img = &m_ImagePatterns[handle.idx];
@@ -2985,24 +2956,24 @@ void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices,
 	}
 
 	Mesh mesh;
-	m_Stroker->convexFill(&mesh, &vtx[0].x, numPathVertices);
+	m_Stroker->convexFill(&mesh, vtx, numPathVertices);
 
-	createDrawCommand_Textured((const Vec2*)mesh.m_PosBuffer, mesh.m_NumVertices, &c, 1, img->m_ImageHandle, img->m_Matrix, mesh.m_IndexBuffer, mesh.m_NumIndices);
+	createDrawCommand_Textured(mesh.m_PosBuffer, mesh.m_NumVertices, &c, 1, img->m_ImageHandle, img->m_Matrix, mesh.m_IndexBuffer, mesh.m_NumIndices);
 }
 
-void Context::renderConvexPolygonNoAA(const Vec2* vtx, uint32_t numPathVertices, GradientHandle handle)
+void Context::renderConvexPolygonNoAA(const float* vtx, uint32_t numPathVertices, GradientHandle handle)
 {
-	BX_CHECK(isValid(handle), "Invalid gradient handle");
+	VG_CHECK(isValid(handle), "Invalid gradient handle");
 
 	Mesh mesh;
-	m_Stroker->convexFill(&mesh, &vtx[0].x, numPathVertices);
+	m_Stroker->convexFill(&mesh, vtx, numPathVertices);
 
-	createDrawCommand_Gradient((const Vec2*)mesh.m_PosBuffer, mesh.m_NumVertices, handle, mesh.m_IndexBuffer, mesh.m_NumIndices);
+	createDrawCommand_Gradient(mesh.m_PosBuffer, mesh.m_NumVertices, handle, mesh.m_IndexBuffer, mesh.m_NumIndices);
 }
 
 DrawCommand* Context::allocDrawCommand_TexturedVertexColor(uint32_t numVertices, uint32_t numIndices, ImageHandle img)
 {
-	BX_CHECK(isValid(img), "Invalid image handle");
+	VG_CHECK(isValid(img), "Invalid image handle");
 
 	State* state = getState();
 	const float* scissor = state->m_ScissorRect;
@@ -3027,8 +2998,8 @@ DrawCommand* Context::allocDrawCommand_TexturedVertexColor(uint32_t numVertices,
 	if (!m_ForceNewDrawCommand && m_NumDrawCommands != 0) {
 		DrawCommand* prevCmd = &m_DrawCommands[m_NumDrawCommands - 1];
 
-		BX_CHECK(prevCmd->m_VertexBufferID == vbID, "Cannot merge draw commands with different vertex buffers");
-		BX_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0] 
+		VG_CHECK(prevCmd->m_VertexBufferID == vbID, "Cannot merge draw commands with different vertex buffers");
+		VG_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0] 
 			&& prevCmd->m_ScissorRect[1] == (uint16_t)scissor[1] 
 			&& prevCmd->m_ScissorRect[2] == (uint16_t)scissor[2] 
 			&& prevCmd->m_ScissorRect[3] == (uint16_t)scissor[3], "Invalid scissor rect");
@@ -3072,7 +3043,7 @@ DrawCommand* Context::allocDrawCommand_TexturedVertexColor(uint32_t numVertices,
 
 DrawCommand* Context::allocDrawCommand_ColorGradient(uint32_t numVertices, uint32_t numIndices, GradientHandle gradientHandle)
 {
-	BX_CHECK(isValid(gradientHandle), "Invalid gradient handle");
+	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
 
 	State* state = getState();
 	const float* scissor = state->m_ScissorRect;
@@ -3097,8 +3068,8 @@ DrawCommand* Context::allocDrawCommand_ColorGradient(uint32_t numVertices, uint3
 	if (!m_ForceNewDrawCommand && m_NumDrawCommands != 0) {
 		DrawCommand* prevCmd = &m_DrawCommands[m_NumDrawCommands - 1];
 
-		BX_CHECK(prevCmd->m_VertexBufferID == vbID, "Cannot merge draw commands with different vertex buffers");
-		BX_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0] 
+		VG_CHECK(prevCmd->m_VertexBufferID == vbID, "Cannot merge draw commands with different vertex buffers");
+		VG_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0] 
 			&& prevCmd->m_ScissorRect[1] == (uint16_t)scissor[1] 
 			&& prevCmd->m_ScissorRect[2] == (uint16_t)scissor[2] 
 			&& prevCmd->m_ScissorRect[3] == (uint16_t)scissor[3], "Invalid scissor rect");
@@ -3225,9 +3196,9 @@ ImageHandle Context::allocImage()
 		}
 	}
 
-	BX_CHECK(handle.idx < m_ImageCapacity, "Allocated invalid image handle");
+	VG_CHECK(handle.idx < m_ImageCapacity, "Allocated invalid image handle");
 	Image* tex = &m_Images[handle.idx];
-	BX_CHECK(!bgfx::isValid(tex->m_bgfxHandle), "Allocated texture is already in use");
+	VG_CHECK(!bgfx::isValid(tex->m_bgfxHandle), "Allocated texture is already in use");
 	tex->reset();
 	return handle;
 }
@@ -3281,7 +3252,7 @@ void Context::flushTextAtlasTexture()
 	
 	int iw, ih;
 	const uint8_t* a8Data = fonsGetTextureData(m_FontStashContext, &iw, &ih);
-	BX_CHECK(iw > 0 && ih > 0, "Invalid font atlas dimensions");
+	VG_CHECK(iw > 0 && ih > 0, "Invalid font atlas dimensions");
 
 	// TODO: Convert only the dirty part of the texture (it's the only part that will be uploaded to the backend)
 	uint32_t* rgbaData = (uint32_t*)BX_ALLOC(m_Allocator, sizeof(uint32_t) * iw * ih);
@@ -3303,7 +3274,7 @@ bool Context::updateImage(ImageHandle image, uint16_t x, uint16_t y, uint16_t w,
 	}
 
 	Image* tex = &m_Images[image.idx];
-	BX_CHECK(bgfx::isValid(tex->m_bgfxHandle), "Invalid texture handle");
+	VG_CHECK(bgfx::isValid(tex->m_bgfxHandle), "Invalid texture handle");
 
 	const uint32_t bytesPerPixel = 4;
 	const uint32_t pitch = tex->m_Width * bytesPerPixel;
@@ -3323,7 +3294,7 @@ bool Context::deleteImage(ImageHandle img)
 	}
 
 	Image* tex = &m_Images[img.idx];
-	BX_CHECK(bgfx::isValid(tex->m_bgfxHandle), "Invalid texture handle");
+	VG_CHECK(bgfx::isValid(tex->m_bgfxHandle), "Invalid texture handle");
 	bgfx::destroy(tex->m_bgfxHandle);
 	tex->reset();
 	
@@ -3332,7 +3303,7 @@ bool Context::deleteImage(ImageHandle img)
 	return true;
 }
 
-Vec2* Context::allocVertexBufferData_Vec2()
+float* Context::allocVertexBufferData_Vec2()
 {
 #if BX_CONFIG_SUPPORTS_THREADING
 	bx::MutexScope ms(m_DataPoolMutex);
@@ -3342,20 +3313,20 @@ Vec2* Context::allocVertexBufferData_Vec2()
 		// If LSB of pointer is set it means that the ptr is valid and the buffer is free for reuse.
 		if (((uintptr_t)m_Vec2DataPool[i]) & 1) {
 			// Remove the free flag
-			m_Vec2DataPool[i] = (Vec2*)((uintptr_t)m_Vec2DataPool[i] & ~1);
+			m_Vec2DataPool[i] = (float*)((uintptr_t)m_Vec2DataPool[i] & ~1);
 			return m_Vec2DataPool[i];
 		} else if (m_Vec2DataPool[i] == nullptr) {
-			m_Vec2DataPool[i] = (Vec2*)BX_ALIGNED_ALLOC(m_Allocator, sizeof(Vec2) * MAX_VB_VERTICES, 16);
+			m_Vec2DataPool[i] = (float*)BX_ALIGNED_ALLOC(m_Allocator, sizeof(float) * 2 * MAX_VB_VERTICES, 16);
 			return m_Vec2DataPool[i];
 		}
 	}
 
 	uint32_t oldCapacity = m_Vec2DataPoolCapacity;
 	m_Vec2DataPoolCapacity += 8;
-	m_Vec2DataPool = (Vec2**)BX_REALLOC(m_Allocator, m_Vec2DataPool, sizeof(Vec2*) * m_Vec2DataPoolCapacity);
-	bx::memSet(&m_Vec2DataPool[oldCapacity], 0, sizeof(Vec2*) * (m_Vec2DataPoolCapacity - oldCapacity));
+	m_Vec2DataPool = (float**)BX_REALLOC(m_Allocator, m_Vec2DataPool, sizeof(float*) * m_Vec2DataPoolCapacity);
+	bx::memSet(&m_Vec2DataPool[oldCapacity], 0, sizeof(float*) * (m_Vec2DataPoolCapacity - oldCapacity));
 
-	m_Vec2DataPool[oldCapacity] = (Vec2*)BX_ALIGNED_ALLOC(m_Allocator, sizeof(Vec2) * MAX_VB_VERTICES, 16);
+	m_Vec2DataPool[oldCapacity] = (float*)BX_ALIGNED_ALLOC(m_Allocator, sizeof(float) * 2 * MAX_VB_VERTICES, 16);
 	return m_Vec2DataPool[oldCapacity];
 }
 
@@ -3386,17 +3357,17 @@ uint32_t* Context::allocVertexBufferData_Uint32()
 	return m_Uint32DataPool[oldCapacity];
 }
 
-void Context::releaseVertexBufferData_Vec2(Vec2* data)
+void Context::releaseVertexBufferData_Vec2(float* data)
 {
 #if BX_CONFIG_SUPPORTS_THREADING
 	bx::MutexScope ms(m_DataPoolMutex);
 #endif
 
-	BX_CHECK(data != nullptr, "Tried to release a null vertex buffer");
+	VG_CHECK(data != nullptr, "Tried to release a null vertex buffer");
 	for (uint32_t i = 0; i < m_Vec2DataPoolCapacity; ++i) {
 		if (m_Vec2DataPool[i] == data) {
 			// Mark buffer as free by setting the LSB of the ptr to 1.
-			m_Vec2DataPool[i] = (Vec2*)((uintptr_t)m_Vec2DataPool[i] | 1);
+			m_Vec2DataPool[i] = (float*)((uintptr_t)m_Vec2DataPool[i] | 1);
 			return;
 		}
 	}
@@ -3408,7 +3379,7 @@ void Context::releaseVertexBufferData_Uint32(uint32_t* data)
 	bx::MutexScope ms(m_DataPoolMutex);
 #endif
 
-	BX_CHECK(data != nullptr, "Tried to release a null vertex buffer");
+	VG_CHECK(data != nullptr, "Tried to release a null vertex buffer");
 	for (uint32_t i = 0; i < m_Uint32DataPoolCapacity; ++i) {
 		if (m_Uint32DataPool[i] == data) {
 			// Mark buffer as free by setting the LSB of the ptr to 1.
@@ -3477,7 +3448,7 @@ void Context::text(String* str, uint32_t alignment, Color color, float x, float 
 	if (m_TextQuadCapacity < numBakedChars) {
 		m_TextQuadCapacity = numBakedChars;
 		m_TextQuads = (FONSquad*)BX_ALIGNED_REALLOC(m_Allocator, m_TextQuads, sizeof(FONSquad) * m_TextQuadCapacity, 16);
-		m_TextVertices = (Vec2*)BX_ALIGNED_REALLOC(m_Allocator, m_TextVertices, sizeof(Vec2) * m_TextQuadCapacity * 4, 16);
+		m_TextVertices = (float*)BX_ALIGNED_REALLOC(m_Allocator, m_TextVertices, sizeof(float) * 2 * m_TextQuadCapacity * 4, 16);
 	}
 
 	bx::memCopy(m_TextQuads, fs->m_Quads, sizeof(FONSquad) * numBakedChars);
@@ -3491,9 +3462,10 @@ void Context::text(String* str, uint32_t alignment, Color color, float x, float 
 	popState();
 }
 
-void Context::createDrawCommand_VertexColor(const Vec2* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
+void Context::createDrawCommand_VertexColor(const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
 {
-	const Vec2 uv = getWhitePixelUV();
+	float uv[2];
+	getWhitePixelUV(&uv[0]);
 
 	// Allocate the draw command
 	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numVertices, numIndices, m_FontImages[0]);
@@ -3502,17 +3474,17 @@ void Context::createDrawCommand_VertexColor(const Vec2* vtx, uint32_t numVertice
 	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 
-	Vec2* dstPos = &vb->m_Pos[vbOffset];
-	bx::memCopy(dstPos, vtx, sizeof(Vec2) * numVertices);
+	float* dstPos = &vb->m_Pos[vbOffset << 1];
+	bx::memCopy(dstPos, vtx, sizeof(float) * 2 * numVertices);
 
-	Vec2* dstUV = &vb->m_UV[vbOffset];
-	memset64(dstUV, numVertices, &uv.x);
+	float* dstUV = &vb->m_UV[vbOffset << 1];
+	memset64(dstUV, numVertices, &uv[0]);
 
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
 	if (numColors == numVertices) {
 		bx::memCopy(dstColor, colors, sizeof(uint32_t) * numVertices);
 	} else {
-		BX_CHECK(numColors == 1, "!!!");
+		VG_CHECK(numColors == 1, "!!!");
 		memset32(dstColor, numVertices, colors);
 	}
 
@@ -3524,24 +3496,24 @@ void Context::createDrawCommand_VertexColor(const Vec2* vtx, uint32_t numVertice
 	cmd->m_NumIndices += numIndices;
 }
 
-void Context::createDrawCommand_Textured(const Vec2* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, ImageHandle imgHandle, const float* uvMatrix, const uint16_t* indices, uint32_t numIndices)
+void Context::createDrawCommand_Textured(const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, ImageHandle imgHandle, const float* uvMatrix, const uint16_t* indices, uint32_t numIndices)
 {
 	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numVertices, numIndices, imgHandle);
 
 	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 
-	Vec2* dstPos = &vb->m_Pos[vbOffset];
-	bx::memCopy(dstPos, vtx, sizeof(Vec2) * numVertices);
+	float* dstPos = &vb->m_Pos[vbOffset << 1];
+	bx::memCopy(dstPos, vtx, sizeof(float) * 2 * numVertices);
 
-	Vec2* dstUV = &vb->m_UV[vbOffset];
+	float* dstUV = &vb->m_UV[vbOffset << 1];
 	batchTransformPositions_Unaligned(vtx, numVertices, dstUV, uvMatrix);
 
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
 	if (numColors == numVertices) {
 		bx::memCopy(dstColor, colors, sizeof(uint32_t) * numVertices);
 	} else {
-		BX_CHECK(numColors == 1, "!!!");
+		VG_CHECK(numColors == 1, "Number of colors should either be 1 or match the number of vertices");
 		memset32(dstColor, numVertices, colors);
 	}
 
@@ -3552,18 +3524,18 @@ void Context::createDrawCommand_Textured(const Vec2* vtx, uint32_t numVertices, 
 	cmd->m_NumIndices += numIndices;
 }
 
-void Context::createDrawCommand_Gradient(const Vec2* vtx, uint32_t numVertices, GradientHandle gradientHandle, const uint16_t* indices, uint32_t numIndices)
+void Context::createDrawCommand_Gradient(const float* vtx, uint32_t numVertices, GradientHandle gradientHandle, const uint16_t* indices, uint32_t numIndices)
 {
 	DrawCommand* cmd = allocDrawCommand_ColorGradient(numVertices, numIndices, gradientHandle);
 
 	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 
-	Vec2* dstPos = &vb->m_Pos[vbOffset];
-	bx::memCopy(dstPos, vtx, sizeof(Vec2) * numVertices);
+	float* dstPos = &vb->m_Pos[vbOffset << 1];
+	bx::memCopy(dstPos, vtx, sizeof(float) * 2 * numVertices);
 
-	Vec2* dstUV = &vb->m_UV[vbOffset];
-	bx::memSet(dstUV, 0, sizeof(Vec2) * numVertices); // UVs not used by the shader.
+	float* dstUV = &vb->m_UV[vbOffset << 1];
+	bx::memSet(dstUV, 0, sizeof(float) * 2 * numVertices); // UVs not used by the shader.
 
 	const uint32_t color = ColorRGBA::White;
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
@@ -3579,7 +3551,7 @@ void Context::createDrawCommand_Gradient(const Vec2* vtx, uint32_t numVertices, 
 //////////////////////////////////////////////////////////////////////////
 // SIMD functions
 //
-void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, Vec2* __restrict transformedVertices)
+void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, float* __restrict transformedVertices)
 {
 #if VG_CONFIG_ENABLE_SIMD
 	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
@@ -3621,7 +3593,7 @@ void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const
 		bx::simd128_t v23 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(v0123_x, v0123_y));
 
 		bx::simd_st(transformedVertices, v01);
-		bx::simd_st(transformedVertices + 2, v23);
+		bx::simd_st(transformedVertices + 4, v23);
 
 		// v4.x = x2_m0 + y2_m2 + m4
 		// v5.x = x3_m0 + y2_m2 + m4
@@ -3642,11 +3614,11 @@ void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const
 		bx::simd128_t v45 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(v4567_x, v4567_y));
 		bx::simd128_t v67 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(v4567_x, v4567_y));
 
-		bx::simd_st(transformedVertices + 4, v45);
-		bx::simd_st(transformedVertices + 6, v67);
+		bx::simd_st(transformedVertices + 8, v45);
+		bx::simd_st(transformedVertices + 12, v67);
 
 		quads += 2;
-		transformedVertices += 8;
+		transformedVertices += 16;
 	}
 
 	const uint32_t rem = n & 1;
@@ -3680,29 +3652,30 @@ void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const
 		bx::simd128_t v23 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(v0123_x, v0123_y));
 
 		bx::simd_st(transformedVertices, v01);
-		bx::simd_st(transformedVertices + 2, v23);
+		bx::simd_st(transformedVertices + 4, v23);
 	}
 #else
 	for (uint32_t i = 0; i < n; ++i) {
 		const FONSquad* q = &quads[i];
-		const uint32_t s = i << 2;
-		transformedVertices[s + 0] = transformPos2D(q->x0, q->y0, mtx);
-		transformedVertices[s + 1] = transformPos2D(q->x1, q->y0, mtx);
-		transformedVertices[s + 2] = transformPos2D(q->x1, q->y1, mtx);
-		transformedVertices[s + 3] = transformPos2D(q->x0, q->y1, mtx);
+		const uint32_t s = i << 3;
+		transformPos2D(q->x0, q->y0, mtx, &transformedVertices[s + 0]);
+		transformPos2D(q->x1, q->y0, mtx, &transformedVertices[s + 2]);
+		transformPos2D(q->x1, q->y1, mtx, &transformedVertices[s + 4]);
+		transformPos2D(q->x0, q->y1, mtx, &transformedVertices[s + 6]);
 	}
 #endif
 }
 
-void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx)
+void batchTransformPositions(const float* __restrict v, uint32_t n, float* __restrict p, const float* __restrict mtx)
 {
 #if !VG_CONFIG_ENABLE_SIMD
 	for (uint32_t i = 0; i < n; ++i) {
-		p[i] = transformPos2D(v[i].x, v[i].y, mtx);
+		const uint32_t id = i << 1;
+		transformPos2D(v[id], v[id + 1], mtx, &p[id]);
 	}
 #else
-	const float* src = &v->x;
-	float* dst = &p->x;
+	const float* src = v;
+	float* dst = p;
 
 	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
 	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);
@@ -3750,15 +3723,16 @@ void batchTransformPositions(const Vec2* __restrict v, uint32_t n, Vec2* __restr
 #endif
 }
 
-void batchTransformPositions_Unaligned(const Vec2* __restrict v, uint32_t n, Vec2* __restrict p, const float* __restrict mtx)
+void batchTransformPositions_Unaligned(const float* __restrict v, uint32_t n, float* __restrict p, const float* __restrict mtx)
 {
 #if !VG_CONFIG_ENABLE_SIMD
 	for (uint32_t i = 0; i < n; ++i) {
-		p[i] = transformPos2D(v[i].x, v[i].y, mtx);
+		const uint32_t id = i << 1;
+		transformPos2D(v[id], v[id + 1], mtx, &p[id]);
 	}
 #else
-	const float* src = &v->x;
-	float* dst = &p->x;
+	const float* src = v;
+	float* dst = p;
 
 	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
 	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);

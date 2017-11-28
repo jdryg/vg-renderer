@@ -1,32 +1,4 @@
-#if VG_CONFIG_DEBUG
-#define BX_TRACE(_format, ...) \
-	do { \
-		bx::debugPrintf(BX_FILE_LINE_LITERAL "SVGRenderer " _format "\n", ##__VA_ARGS__); \
-	} while(0)
-
-#define BX_WARN(_condition, _format, ...) \
-	do { \
-		if (!(_condition) ) { \
-			BX_TRACE(BX_FILE_LINE_LITERAL _format, ##__VA_ARGS__); \
-		} \
-	} while(0)
-
-#define BX_CHECK(_condition, _format, ...) \
-	do { \
-		if (!(_condition) ) { \
-			BX_TRACE(BX_FILE_LINE_LITERAL _format, ##__VA_ARGS__); \
-			bx::debugBreak(); \
-		} \
-	} while(0)
-#endif
-
-#include <bx/bx.h>
-#include <bx/debug.h>
-
-BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4127) // conditional expression is constant (e.g. BezierTo)
-BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment withing conditional expression
-BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wshadow");
-
+#include "vg.h"
 #include "svg_renderer.h"
 #include "shape.h"
 
@@ -38,6 +10,10 @@ BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wshadow");
 #include <memory.h>
 #include <math.h>
 #include <float.h>
+
+BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4127) // conditional expression is constant (e.g. BezierTo)
+BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment withing conditional expression
+BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wshadow");
 
 #if 1
 #include "../util/math.h"
@@ -583,12 +559,12 @@ bool Context::init()
 void Context::beginFrame(uint32_t windowWidth, uint32_t windowHeight, float devicePixelRatio)
 {
 	BX_UNUSED(devicePixelRatio);
-	BX_CHECK(m_File == nullptr, "!!!");
+	VG_CHECK(m_File == nullptr, "!!!");
 
 	m_WinWidth = (uint16_t)windowWidth;
 	m_WinHeight = (uint16_t)windowHeight;
 
-	BX_CHECK(m_CurStateID == 0, "State stack hasn't been properly reset in the previous frame");
+	VG_CHECK(m_CurStateID == 0, "State stack hasn't been properly reset in the previous frame");
 	resetScissor();
 	transformIdentity();
 
@@ -603,7 +579,7 @@ void Context::endFrame()
 
 	fprintf(m_File, "</svg>\n");
 
-	BX_CHECK(m_File != nullptr, "!!!");
+	VG_CHECK(m_File != nullptr, "!!!");
 	fclose(m_File);
 	m_File = nullptr;
 }
@@ -628,7 +604,7 @@ void Context::moveTo(float x, float y)
 void Context::lineTo(float x, float y)
 {
 	SVGShape* shape = getLastPathShape();
-	BX_CHECK(shape && shape->m_Type == SVGShapeType::Path, "");
+	VG_CHECK(shape && shape->m_Type == SVGShapeType::Path, "");
 
 	char str[256];
 	bx::snprintf(str, 256, "L %f %f ", x, y);
@@ -638,7 +614,7 @@ void Context::lineTo(float x, float y)
 void Context::bezierTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
 {
 	SVGShape* shape = getLastPathShape();
-	BX_CHECK(shape && shape->m_Type == SVGShapeType::Path, "");
+	VG_CHECK(shape && shape->m_Type == SVGShapeType::Path, "");
 
 	char str[256];
 	bx::snprintf(str, 256, "C %f %f, %f %f, %f %f ", c1x, c1y, c2x, c2y, x, y);
@@ -681,7 +657,7 @@ void Context::circle(float cx, float cy, float r)
 
 void Context::polyline(const Vec2* coords, uint32_t numPoints)
 {
-	BX_CHECK(numPoints > 1, "");
+	VG_CHECK(numPoints > 1, "");
 
 	bool moveToFirst = false;
 	SVGShape* shape = getLastPathShape();
@@ -690,7 +666,7 @@ void Context::polyline(const Vec2* coords, uint32_t numPoints)
 		moveToFirst = true;
 	}
 
-	BX_CHECK(shape && shape->m_Type == SVGShapeType::Path, "");
+	VG_CHECK(shape && shape->m_Type == SVGShapeType::Path, "");
 
 	if (shape->m_Path.m_Ptr == shape->m_Path.m_Str) {
 		// Empty path.
@@ -711,7 +687,7 @@ void Context::polyline(const Vec2* coords, uint32_t numPoints)
 void Context::closePath()
 {
 	SVGShape* shape = getLastPathShape();
-	BX_CHECK(shape && shape->m_Type == SVGShapeType::Path, "");
+	VG_CHECK(shape && shape->m_Type == SVGShapeType::Path, "");
 
 	pathAppend(shape, "Z");
 }
@@ -874,14 +850,14 @@ int Context::textGlyphPositions(const Font& font, uint32_t alignment, float x, f
 
 void Context::pushState()
 {
-	BX_CHECK(m_CurStateID < MAX_STATE_STACK_SIZE - 1, "State stack overflow");
+	VG_CHECK(m_CurStateID < MAX_STATE_STACK_SIZE - 1, "State stack overflow");
 	bx::memCopy(&m_StateStack[m_CurStateID + 1], &m_StateStack[m_CurStateID], sizeof(State));
 	++m_CurStateID;
 }
 
 void Context::popState()
 {
-	BX_CHECK(m_CurStateID > 0, "State stack underflow");
+	VG_CHECK(m_CurStateID > 0, "State stack underflow");
 	--m_CurStateID;
 }
 
@@ -1107,7 +1083,7 @@ void Context::flushPathShapes()
 				mtx[0], mtx[1], mtx[2], mtx[3], mtx[4], mtx[5],
 				strokeStyle, fillStyle);
 		} else {
-			BX_CHECK(false, "Unknown shape type");
+			VG_CHECK(false, "Unknown shape type");
 		}
 	}
 
@@ -1147,7 +1123,7 @@ SVGShape* Context::getLastPathShape()
 
 void Context::pathAppend(SVGShape* path, const char* str)
 {
-	BX_CHECK(path->m_Type == SVGShapeType::Path, "!!!");
+	VG_CHECK(path->m_Type == SVGShapeType::Path, "!!!");
 
 	int len = bx::strLen(str);
 	SVGPathString* pathStr = &path->m_Path;

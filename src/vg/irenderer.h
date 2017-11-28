@@ -2,7 +2,7 @@
 #define VG_IRENDERER_H
 
 #include <stdint.h>
-#include "common.h"
+#include "vg.h"
 
 namespace vg
 {

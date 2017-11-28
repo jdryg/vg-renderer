@@ -1,5 +1,5 @@
-#ifndef VG_COMMON_H
-#define VG_COMMON_H
+#ifndef VG_H
+#define VG_H
 
 #include <stdint.h>
 
@@ -28,7 +28,7 @@
 #endif
 
 #ifndef VG_CONFIG_ENABLE_SIMD
-#	define VG_CONFIG_ENABLE_SIMD 1
+#	define VG_CONFIG_ENABLE_SIMD 0
 #endif
 
 #ifndef VG_CONFIG_FORCE_AA_OFF
@@ -36,12 +36,39 @@
 #endif
 
 #ifndef VG_CONFIG_USE_LIBTESS2
-#	define VG_CONFIG_USE_LIBTESS2 0
+#	define VG_CONFIG_USE_LIBTESS2 1
 #endif
 
 #ifndef VG_CONFIG_LIBTESS2_SCRATCH_BUFFER
 #	define VG_CONFIG_LIBTESS2_SCRATCH_BUFFER (4 * 1024 * 1024) // Set to 0 to let libtess2 use malloc/free
 #endif
+
+#if VG_CONFIG_DEBUG
+#define VG_TRACE(_format, ...) \
+	do { \
+		bx::debugPrintf(BX_FILE_LINE_LITERAL "vg " _format "\n", ##__VA_ARGS__); \
+	} while(0)
+
+#define VG_WARN(_condition, _format, ...) \
+	do { \
+		if (!(_condition) ) { \
+			VG_TRACE(BX_FILE_LINE_LITERAL _format, ##__VA_ARGS__); \
+		} \
+	} while(0)
+
+#define VG_CHECK(_condition, _format, ...) \
+	do { \
+		if (!(_condition) ) { \
+			VG_TRACE(BX_FILE_LINE_LITERAL _format, ##__VA_ARGS__); \
+			bx::debugBreak(); \
+		} \
+	} while(0)
+#else
+#define VG_TRACE(_format, ...)
+#define VG_WARN(_condition, _format, ...)
+#define VG_CHECK(_condition, _format, ...)
+#endif
+
 
 #define VG_HANDLE(_name) struct _name { uint16_t idx; }
 #define VG_INVALID_HANDLE { UINT16_MAX }

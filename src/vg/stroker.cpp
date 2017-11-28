@@ -184,7 +184,7 @@ void Stroker::polylineStroke(Mesh* mesh, const float* vertexList, uint32_t numPa
 	case 21: impl->polylineStroke<true, LineCap::Butt, LineJoin::Bevel>(mesh, vtx, numPathVertices, strokeWidth);    break;
 		// 22 to 32 == invalid line join type
 	default:
-		BX_WARN(false, "Invalid stroke configuration");
+		VG_WARN(false, "Invalid stroke configuration");
 		break;
 	}
 }
@@ -222,7 +222,7 @@ void Stroker::polylineStrokeAA(Mesh* mesh, const float* vertexList, uint32_t num
 	case 21: impl->polylineStrokeAA<true, LineCap::Butt, LineJoin::Bevel>(mesh, vtx, numPathVertices, strokeWidth, color);    break;
 		// 22 to 32 == invalid line join type
 	default:
-		BX_WARN(false, "Invalid stroke configuration");
+		VG_WARN(false, "Invalid stroke configuration");
 		break;
 	}
 }
@@ -247,7 +247,7 @@ void Stroker::polylineStrokeAAThin(Mesh* mesh, const float* vertexList, uint32_t
 	case  9: impl->polylineStrokeAAThin<LineCap::Square, LineJoin::Bevel>(mesh, vtx, numPathVertices, color, isClosed);   break;
 	case 10: impl->polylineStrokeAAThin<LineCap::Square, LineJoin::Bevel>(mesh, vtx, numPathVertices, color, isClosed);   break;
 	default:
-		BX_WARN(false, "Invalid stroke configuration");
+		VG_WARN(false, "Invalid stroke configuration");
 		break;
 	}
 }
@@ -415,7 +415,7 @@ void StrokerImpl::polylineStroke(Mesh* mesh, const Vec2* vtx, uint32_t numPathVe
 			prevSegmentLeftID = 0;
 			prevSegmentRightID = (uint16_t)(numPointsHalfCircle - 1);
 		} else {
-			BX_CHECK(false, "Unknown line cap type");
+			VG_CHECK(false, "Unknown line cap type");
 		}
 	} else {
 		d01 = vec2Dir(vtx[numPathVertices - 1], vtx[0]);
@@ -449,7 +449,7 @@ void StrokerImpl::polylineStroke(Mesh* mesh, const Vec2* vtx, uint32_t numPathVe
 				addPos(&p[0], 2);
 
 				if (prevSegmentLeftID != 0xFFFF) {
-					BX_CHECK(prevSegmentRightID != 0xFFFF, "Invalid previous segment");
+					VG_CHECK(prevSegmentRightID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[6] = {
 						prevSegmentLeftID, prevSegmentRightID, (uint16_t)(firstVertexID + 1),
@@ -504,7 +504,7 @@ void StrokerImpl::polylineStroke(Mesh* mesh, const Vec2* vtx, uint32_t numPathVe
 				addPos(&p[2], 1);
 
 				if (prevSegmentLeftID != 0xFFFF) {
-					BX_CHECK(prevSegmentRightID != 0xFFFF, "Invalid previous segment");
+					VG_CHECK(prevSegmentRightID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[6] = {
 						prevSegmentLeftID, prevSegmentRightID, (uint16_t)(firstFanVertexID + 1),
@@ -547,7 +547,7 @@ void StrokerImpl::polylineStroke(Mesh* mesh, const Vec2* vtx, uint32_t numPathVe
 				addPos(&p[0], 2);
 
 				if (prevSegmentLeftID != 0xFFFF) {
-					BX_CHECK(prevSegmentRightID != 0xFFFF, "Invalid previous segment");
+					VG_CHECK(prevSegmentRightID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[6] = {
 						prevSegmentLeftID, prevSegmentRightID, firstVertexID,
@@ -850,7 +850,7 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 			prevSegmentRightID = (uint16_t)((numPointsHalfCircle - 1) * 2);
 			prevSegmentRightAAID = (uint16_t)((numPointsHalfCircle - 1) * 2 + 1);
 		} else {
-			BX_CHECK(false, "Unknown line cap type");
+			VG_CHECK(false, "Unknown line cap type");
 		}
 	} else {
 		d01	= vec2Dir(vtx[numPathVertices - 1], vtx[0]);
@@ -888,7 +888,7 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 				addPosColor(&p[0], &c0_c_c_c0[0], 4);
 
 				if (prevSegmentLeftAAID != 0xFFFF) {
-					BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
+					VG_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[18] = {
 						prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(firstVertexID + 1),
@@ -902,7 +902,7 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 					expandIB(18);
 					addIndices(&id[0], 18);
 				} else {
-					BX_CHECK(_Closed, "Invalid previous segment");
+					VG_CHECK(_Closed, "Invalid previous segment");
 					firstSegmentLeftAAID = firstVertexID; // 0
 					firstSegmentLeftID = firstVertexID + 1; // 1
 					firstSegmentRightID = firstVertexID + 2; // 2
@@ -985,7 +985,7 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 				}
 
 				if (prevSegmentLeftAAID != 0xFFFF) {
-					BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
+					VG_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[18] = {
 						prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(firstFanVertexID + 1),
@@ -999,7 +999,7 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 					expandIB(18);
 					addIndices(&id[0], 18);
 				} else {
-					BX_CHECK(_Closed, "Invalid previous segment");
+					VG_CHECK(_Closed, "Invalid previous segment");
 					firstSegmentLeftAAID = firstFanVertexID; // 0
 					firstSegmentLeftID = firstFanVertexID + 1; // 1
 					firstSegmentRightID = firstFanVertexID + 2; // 2
@@ -1045,7 +1045,7 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 				addPosColor(&p[0], &c0_c_c_c0[0], 4);
 
 				if (prevSegmentLeftAAID != 0xFFFF) {
-					BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
+					VG_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[18] = {
 						prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(firstFanVertexID + 2),
@@ -1141,7 +1141,7 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 				}
 
 				if (prevSegmentLeftAAID != 0xFFFF) {
-					BX_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
+					VG_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[18] = {
 						prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(firstFanVertexID + 2),
@@ -1304,7 +1304,7 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 			}
 		}
 	} else {
-		BX_CHECK(firstSegmentLeftAAID != 0xFFFF && firstSegmentLeftID != 0xFFFF && firstSegmentRightID != 0xFFFF && firstSegmentRightAAID != 0xFFFF, "Invalid first segment");
+		VG_CHECK(firstSegmentLeftAAID != 0xFFFF && firstSegmentLeftID != 0xFFFF && firstSegmentRightID != 0xFFFF && firstSegmentRightAAID != 0xFFFF, "Invalid first segment");
 
 		uint16_t id[18] = {
 			prevSegmentLeftAAID, prevSegmentLeftID, firstSegmentLeftID,
@@ -1386,9 +1386,9 @@ void StrokerImpl::polylineStrokeAAThin(Mesh* mesh, const Vec2* vtx, uint32_t num
 			prevSegmentMiddleID = 1;
 			prevSegmentRightAAID = 2;
 		} else if (_LineCap == LineCap::Round) {
-			BX_CHECK(false, "Round caps not implemented for thin strokes.");
+			VG_CHECK(false, "Round caps not implemented for thin strokes.");
 		} else {
-			BX_CHECK(false, "Unknown line cap type");
+			VG_CHECK(false, "Unknown line cap type");
 		}
 	} else {
 		d01 = vec2Dir(vtx[numPathVertices - 1], vtx[0]);
@@ -1423,7 +1423,7 @@ void StrokerImpl::polylineStrokeAAThin(Mesh* mesh, const Vec2* vtx, uint32_t num
 				addPosColor(&p[0], &c0_c_c0_c0[0], 3);
 
 				if (prevSegmentLeftAAID != 0xFFFF) {
-					BX_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
+					VG_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[12] = {
 						prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(firstVertexID + 1),
@@ -1435,7 +1435,7 @@ void StrokerImpl::polylineStrokeAAThin(Mesh* mesh, const Vec2* vtx, uint32_t num
 					expandIB(12);
 					addIndices(&id[0], 12);
 				} else {
-					BX_CHECK(closed, "Invalid previous segment");
+					VG_CHECK(closed, "Invalid previous segment");
 					firstSegmentLeftAAID = firstVertexID; // 0
 					firstSegmentMiddleID = firstVertexID + 1; // 1
 					firstSegmentRightAAID = firstVertexID + 2; // 3
@@ -1445,7 +1445,7 @@ void StrokerImpl::polylineStrokeAAThin(Mesh* mesh, const Vec2* vtx, uint32_t num
 				prevSegmentMiddleID = firstVertexID + 1;
 				prevSegmentRightAAID = firstVertexID + 2;
 			} else {
-				BX_CHECK(_LineJoin != LineJoin::Round, "Round joins not implemented for thin strokes.");
+				VG_CHECK(_LineJoin != LineJoin::Round, "Round joins not implemented for thin strokes.");
 				const Vec2 r01 = vec2PerpCW(d01);
 				const Vec2 r12 = vec2PerpCW(d12);
 
@@ -1461,7 +1461,7 @@ void StrokerImpl::polylineStrokeAAThin(Mesh* mesh, const Vec2* vtx, uint32_t num
 				addPosColor(&p[0], &c0_c_c0_c0[0], 4);
 
 				if (prevSegmentLeftAAID != 0xFFFF) {
-					BX_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
+					VG_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[12] = {
 						prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(firstFanVertexID + 1),
@@ -1473,7 +1473,7 @@ void StrokerImpl::polylineStrokeAAThin(Mesh* mesh, const Vec2* vtx, uint32_t num
 					expandIB(12);
 					addIndices(&id[0], 12);
 				} else {
-					BX_CHECK(closed, "Invalid previous segment");
+					VG_CHECK(closed, "Invalid previous segment");
 					firstSegmentLeftAAID = firstFanVertexID;
 					firstSegmentMiddleID = firstFanVertexID + 1;
 					firstSegmentRightAAID = firstFanVertexID + 2;
@@ -1506,7 +1506,7 @@ void StrokerImpl::polylineStrokeAAThin(Mesh* mesh, const Vec2* vtx, uint32_t num
 				addPosColor(&p[0], &c0_c_c0_c0[0], 3);
 
 				if (prevSegmentLeftAAID != 0xFFFF) {
-					BX_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
+					VG_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[12] = {
 						prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(firstFanVertexID + 1),
@@ -1542,7 +1542,7 @@ void StrokerImpl::polylineStrokeAAThin(Mesh* mesh, const Vec2* vtx, uint32_t num
 				addPosColor(&p[0], &c0_c_c0_c0[0], 4);
 
 				if (prevSegmentLeftAAID != 0xFFFF) {
-					BX_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
+					VG_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
 
 					uint16_t id[12] = {
 						prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(firstFanVertexID + 1),
@@ -1625,10 +1625,10 @@ void StrokerImpl::polylineStrokeAAThin(Mesh* mesh, const Vec2* vtx, uint32_t num
 			expandIB(12);
 			addIndices(&id[0], 12);
 		} else if (_LineCap == LineCap::Round) {
-			BX_CHECK(false, "Round caps not implemented for thin strokes.");
+			VG_CHECK(false, "Round caps not implemented for thin strokes.");
 		}
 	} else {
-		BX_CHECK(firstSegmentLeftAAID != 0xFFFF && firstSegmentMiddleID != 0xFFFF && firstSegmentRightAAID != 0xFFFF, "Invalid first segment");
+		VG_CHECK(firstSegmentLeftAAID != 0xFFFF && firstSegmentMiddleID != 0xFFFF && firstSegmentRightAAID != 0xFFFF, "Invalid first segment");
 
 		uint16_t id[12] = {
 			prevSegmentLeftAAID, prevSegmentMiddleID, firstSegmentMiddleID,
@@ -1940,7 +1940,7 @@ void StrokerImpl::reallocIB(uint32_t n)
 
 BX_FORCE_INLINE void StrokerImpl::addPos(const Vec2* srcPos, uint32_t n)
 {
-	BX_CHECK(m_NumVertices + n <= m_VertexCapacity, "Not enough free space for temporary geometry");
+	VG_CHECK(m_NumVertices + n <= m_VertexCapacity, "Not enough free space for temporary geometry");
 
 	bx::memCopy(&m_PosBuffer[m_NumVertices], srcPos, sizeof(Vec2) * n);
 
@@ -1949,7 +1949,7 @@ BX_FORCE_INLINE void StrokerImpl::addPos(const Vec2* srcPos, uint32_t n)
 
 BX_FORCE_INLINE void StrokerImpl::addPosColor(const Vec2* srcPos, const uint32_t* srcColor, uint32_t n)
 {
-	BX_CHECK(m_NumVertices + n <= m_VertexCapacity, "Not enough free space for temporary geometry");
+	VG_CHECK(m_NumVertices + n <= m_VertexCapacity, "Not enough free space for temporary geometry");
 
 	bx::memCopy(&m_PosBuffer[m_NumVertices], srcPos, sizeof(Vec2) * n);
 	bx::memCopy(&m_ColorBuffer[m_NumVertices], srcColor, sizeof(uint32_t) * n);
@@ -1959,7 +1959,7 @@ BX_FORCE_INLINE void StrokerImpl::addPosColor(const Vec2* srcPos, const uint32_t
 
 BX_FORCE_INLINE void StrokerImpl::addIndices(const uint16_t* src, uint32_t n)
 {
-	BX_CHECK(m_NumIndices + n <= m_IndexCapacity, "Not enough free space for temporary geometry");
+	VG_CHECK(m_NumIndices + n <= m_IndexCapacity, "Not enough free space for temporary geometry");
 
 	bx::memCopy(&m_IndexBuffer[m_NumIndices], src, sizeof(uint16_t) * n);
 

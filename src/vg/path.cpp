@@ -1,7 +1,9 @@
 #include "path.h"
-#include "common.h"
+#include "vg.h"
 #include <bx/allocator.h>
 #include <bx/math.h>
+
+BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4127) // conditional expression is constant
 
 namespace vg
 {
@@ -70,14 +72,14 @@ void Path::moveTo(float x, float y)
 
 void Path::lineTo(float x, float y)
 {
-	BX_CHECK(m_CurSubPath && m_CurSubPath->m_NumVertices != 0, "moveTo() should be called once before calling lineTo()");
+	VG_CHECK(m_CurSubPath && m_CurSubPath->m_NumVertices != 0, "moveTo() should be called once before calling lineTo()");
 
 	addVertex(x, y);
 }
 
 void Path::cubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
 {
-	BX_CHECK(m_CurSubPath && m_CurSubPath->m_NumVertices != 0, "moveTo() should be called once before calling cubicTo()")
+	VG_CHECK(m_CurSubPath && m_CurSubPath->m_NumVertices != 0, "moveTo() should be called once before calling cubicTo()");
 
 	const int MAX_LEVELS = 10;
 	static float stack[MAX_LEVELS * 8];
@@ -338,8 +340,8 @@ void Path::circle(float cx, float cy, float r)
 
 void Path::polyline(const float* coords, uint32_t numPoints)
 {
-	BX_CHECK(m_CurSubPath && m_CurSubPath->m_NumVertices != 0, "moveTo() should be called once before calling polyline()");
-	BX_CHECK(!m_CurSubPath->m_IsClosed, "Cannot add new vertices to a closed path");
+	VG_CHECK(m_CurSubPath && m_CurSubPath->m_NumVertices != 0, "moveTo() should be called once before calling polyline()");
+	VG_CHECK(!m_CurSubPath->m_IsClosed, "Cannot add new vertices to a closed path");
 
 	if (m_CurSubPath->m_NumVertices > 0) {
 		const uint32_t lastVertexID = m_CurSubPath->m_FirstVertexID + (m_CurSubPath->m_NumVertices - 1);
@@ -361,7 +363,7 @@ void Path::polyline(const float* coords, uint32_t numPoints)
 
 void Path::close()
 {
-	BX_CHECK(m_CurSubPath && m_CurSubPath->m_NumVertices != 0, "Cannot close empty path");
+	VG_CHECK(m_CurSubPath && m_CurSubPath->m_NumVertices != 0, "Cannot close empty path");
 	if (m_CurSubPath->m_IsClosed || m_CurSubPath->m_NumVertices <= 2) {
 		return;
 	}
@@ -396,8 +398,8 @@ float* Path::allocVertices(uint32_t n)
 void Path::addVertex(float x, float y)
 {
 	// Don't allow adding new vertices to a closed sub-path.
-	BX_CHECK(m_CurSubPath, "No path");
-	BX_CHECK(!m_CurSubPath->m_IsClosed, "Cannot add new vertices to a closed path");
+	VG_CHECK(m_CurSubPath, "No path");
+	VG_CHECK(!m_CurSubPath->m_IsClosed, "Cannot add new vertices to a closed path");
 
 	if (m_CurSubPath->m_NumVertices != 0) {
 		const uint32_t lastVertexID = m_CurSubPath->m_FirstVertexID + (m_CurSubPath->m_NumVertices - 1);

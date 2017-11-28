@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 #include <bx/readerwriter.h>
-#include "common.h"
+#include "vg.h"
 
 namespace vg
 {

@@ -1,5 +1,5 @@
 #include "shape.h"
-#include <string.h> // strlen
+#include <bx/string.h>
 
 namespace vg
 {
@@ -260,7 +260,7 @@ ImagePatternHandle Shape::ImagePattern(float cx, float cy, float w, float h, flo
 
 void Shape::Text(const Font& font, uint32_t alignment, Color color, float x, float y, const char* text, const char* end)
 {
-	uint32_t len = (uint32_t)(end != nullptr ? end - text : strlen(text));
+	uint32_t len = (uint32_t)(end != nullptr ? end - text : bx::strLen(text));
 
 	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(Font) + sizeof(uint32_t) * 2 + sizeof(Color) + sizeof(float) * 2 + len;
 	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
