@@ -1,20 +1,27 @@
 # vg-renderer
 
+**WIP**
+
 A vector graphics renderer for bgfx, based on ideas from both NanoVG and ImDrawList (Dear ImGUI)
 
-**WIP** and doesn't compile as is! Requires structs and functions from my codebase which aren't present in this repo. Nothing too complicated (it needs a Vec2 struct and several math/utility functions) so if you really want to make it compile, you can try writing/using your own version of those.
-
-Also includes some small changes to FontStash.
+Includes some small changes to FontStash.
+Optionally uses libtess2 for concave polygon decomposition.
 
 Based on NanoVG and FontStash versions included in bgfx repo.
+
+### Path and Stroker classes
+
+Paths are tesselated using the Path class (`src/vg/path.cpp, .h`). You can use this class to convert your SVG commands to a polyline without using the renderer interface.
+
+Strokes and fills are generated using the Stroker class (`src/vg/stroker.cpp, .h). You can use this class to generate strokes and fills for your polylines without using the renderer interface.
 
 ### Compared to NanoVG/FontStash
 
 1. Generates fewer draw calls, by batching multiple paths together, and using indexed triangle lists (like ImDrawList)
-2. Separate shader program for gradients to reduce uniform usage (NanoVG's bgfx backend uses a single program for all cases)
+2. Separate shader programs for gradients to reduce uniform usage (NanoVG's bgfx backend uses a single program for all cases)
 3. Circle() and RoundedRect() are implemented without Beziers
 4. All textures are RGBA (even the font altas)
-5. Concave polygons are decomposed into convex parts and rendered normally instead of using the stencil buffer (not tested extensively; might have issues with AA) (uses algorithm from https://mpen.ca/406/bayazit)
+5. Concave polygons are decomposed into convex parts and rendered normally instead of using the stencil buffer (not tested extensively; might have issues with AA)
 6. Stack-based Bezier tesselation
 7. FontStash glyph hashing uses BKDR for better distribution of glyphs in the LUT (fewer collisions when searching for cached glyphs)
 8. Shapes (aka prebaked command lists, aka display lists) with dynamic text support (i.e. the actual text string is retrieved at the time the shape is submitted for rendering, via a callback) (can be disabled with a compile-time flag (VG_SHAPE_DYNAMIC_TEXT)).
