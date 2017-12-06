@@ -9,7 +9,7 @@ namespace vg
 {
 struct ShapeCommand
 {
-	enum Enum : uint8_t // Max 256 commands should be enough
+	enum Enum : uint32_t // Max 256 commands should be enough
 	{
 		BeginPath = 0,
 		ClosePath,
@@ -31,6 +31,10 @@ struct ShapeCommand
 		BoxGradient,
 		RadialGradient,
 		ImagePattern,
+
+		PushState,
+		PopState,
+		Scissor,
 
 		TextStatic, 
 #if VG_CONFIG_SHAPE_DYNAMIC_TEXT
@@ -55,6 +59,7 @@ struct ShapeFlag
 struct Shape
 {
 	bx::MemoryBlockI* m_CmdList;
+	bx::MemoryWriter m_CmdListWriter;
 	void* m_RendererData;
 	uint16_t m_NumGradients;
 	uint16_t m_NumImagePatterns;
@@ -63,6 +68,7 @@ struct Shape
 	// NOTE: The shape doesn't own the memory block.
 	Shape(bx::MemoryBlockI* memBlock) :
 		m_CmdList(memBlock),
+		m_CmdListWriter(memBlock),
 		m_NumGradients(0),
 		m_NumImagePatterns(0),
 		m_Flags(0),
@@ -71,6 +77,8 @@ struct Shape
 
 	~Shape()
 	{}
+
+	void Reset();
 
 	void BeginPath();
 	void MoveTo(float x, float y);
@@ -86,6 +94,10 @@ struct Shape
 	void FillConvexPath(ImagePatternHandle img, bool aa);
 	void FillConcavePath(Color col, bool aa);
 	void StrokePath(Color col, float width, bool aa, LineCap::Enum lineCap = LineCap::Butt, LineJoin::Enum lineJoin = LineJoin::Miter);
+
+	void PushState();
+	void PopState();
+	void Scissor(float x, float y, float w, float h);
 
 	GradientHandle LinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol);
 	GradientHandle BoxGradient(float x, float y, float w, float h, float r, float f, Color icol, Color ocol);

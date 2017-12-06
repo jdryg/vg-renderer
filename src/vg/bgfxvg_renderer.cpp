@@ -85,14 +85,6 @@ struct IndexBuffer
 	uint32_t m_Count;
 	uint32_t m_Capacity;
 	bgfx::DynamicIndexBufferHandle m_bgfxHandle;
-
-	IndexBuffer() : m_Indices(nullptr), m_Count(0), m_Capacity(0), m_bgfxHandle(VG_INVALID_HANDLE)
-	{}
-
-	void reset()
-	{
-		m_Count = 0;
-	}
 };
 
 struct ImagePattern
@@ -225,7 +217,9 @@ struct Context
 	State m_StateStack[MAX_STATE_STACK_SIZE];
 	uint32_t m_CurStateID;
 
-	IndexBuffer* m_IndexBuffer;
+	IndexBuffer* m_IndexBuffers;
+	IndexBuffer* m_ActiveIndexBuffer;
+	uint32_t m_NumIndexBuffers;
 
 	FONSquad* m_TextQuads;
 	float* m_TextVertices;
@@ -268,7 +262,6 @@ struct Context
 	// Helpers...
 	inline State* getState()               { return &m_StateStack[m_CurStateID]; }
 	inline VertexBuffer* getVertexBuffer() { return &m_VertexBuffers[m_NumVertexBuffers - 1]; }
-	inline IndexBuffer* getIndexBuffer()   { return m_IndexBuffer; }
 	inline void getWhitePixelUV(float* uv)
 	{
 		int w, h;
@@ -336,6 +329,10 @@ struct Context
 	void releaseVertexBufferData_Vec2(float* data);
 	void releaseVertexBufferData_Uint32(uint32_t* data);
 
+	// Index buffers
+	IndexBuffer* allocIndexBuffer();
+	void releaseIndexBuffer(uint16_t* data);
+
 	// Draw commands
 	DrawCommand* allocDrawCommand_TexturedVertexColor(uint32_t numVertices, uint32_t numIndices, ImageHandle img);
 	DrawCommand* allocDrawCommand_ColorGradient(uint32_t numVertices, uint32_t numIndices, GradientHandle gradient);
@@ -357,10 +354,6 @@ struct Context
 	void flushTextAtlasTexture();
 
 	// Rendering
-	void renderConvexPolygonNoAA(const float* vtx, uint32_t numVertices, Color color);
-	void renderConvexPolygonAA(const float* vtx, uint32_t numVertices, Color color);
-	void renderConvexPolygonNoAA(const float* vtx, uint32_t numVertices, ImagePatternHandle img);
-	void renderConvexPolygonNoAA(const float* vtx, uint32_t numVertices, GradientHandle grad);
 	void renderTextQuads(uint32_t numQuads, Color color);
 
 	// Caching
@@ -386,6 +379,12 @@ static void releaseVertexBufferDataCallback_Uint32(void* ptr, void* userData)
 {
 	Context* ctx = (Context*)userData;
 	ctx->releaseVertexBufferData_Uint32((uint32_t*)ptr);
+}
+
+static void releaseIndexBufferCallback(void* ptr, void* userData)
+{
+	Context* ctx = (Context*)userData;
+	ctx->releaseIndexBuffer((uint16_t*)ptr);
 }
 
 inline void transformPos2D(float x, float y, const float* mtx, float* res)
@@ -788,42 +787,44 @@ void BGFXVGRenderer::Text(String* str, uint32_t alignment, Color color, float x,
 //////////////////////////////////////////////////////////////////////////
 // Context
 //
-Context::Context(bx::AllocatorI* allocator, uint8_t viewID) :
-	m_Allocator(allocator),
-	m_VertexBuffers(nullptr),
-	m_NumVertexBuffers(0),
-	m_VertexBufferCapacity(0),
-	m_Vec2DataPool(nullptr),
-	m_Uint32DataPool(nullptr),
-	m_Vec2DataPoolCapacity(0),
-	m_Uint32DataPoolCapacity(0),
-	m_DrawCommands(nullptr),
-	m_NumDrawCommands(0),
-	m_DrawCommandCapacity(0),
-	m_Images(nullptr),
-	m_ImageCapacity(0),
-	m_Path(nullptr),
-	m_Stroker(nullptr),
-	m_TransformedPathVertices(nullptr),
-	m_NumTransformedPathVertices(0),
-	m_PathVerticesTransformed(false),
-	m_CurStateID(0),
-	m_IndexBuffer(nullptr),
-	m_TextQuads(nullptr),
-	m_TextVertices(nullptr),
-	m_TextQuadCapacity(0),
-	m_FontStashContext(nullptr),
-	m_FontImageID(0),
-	m_WinWidth(0),
-	m_WinHeight(0),
-	m_DevicePixelRatio(1.0f),
-	m_TesselationTolerance(1.0f),
-	m_FringeWidth(1.0f),
-	m_ViewID(viewID),
-	m_ForceNewDrawCommand(false),
-	m_NextFontID(0),
-	m_NextGradientID(0),
-	m_NextImagePatternID(0)
+Context::Context(bx::AllocatorI* allocator, uint8_t viewID) 
+	: m_Allocator(allocator)
+	, m_VertexBuffers(nullptr)
+	, m_NumVertexBuffers(0)
+	, m_VertexBufferCapacity(0)
+	, m_Vec2DataPool(nullptr)
+	, m_Uint32DataPool(nullptr)
+	, m_Vec2DataPoolCapacity(0)
+	, m_Uint32DataPoolCapacity(0)
+	, m_DrawCommands(nullptr)
+	, m_NumDrawCommands(0)
+	, m_DrawCommandCapacity(0)
+	, m_Images(nullptr)
+	, m_ImageCapacity(0)
+	, m_Path(nullptr)
+	, m_Stroker(nullptr)
+	, m_TransformedPathVertices(nullptr)
+	, m_NumTransformedPathVertices(0)
+	, m_PathVerticesTransformed(false)
+	, m_CurStateID(0)
+	, m_IndexBuffers(nullptr)
+	, m_NumIndexBuffers(0)
+	, m_ActiveIndexBuffer(nullptr)
+	, m_TextQuads(nullptr)
+	, m_TextVertices(nullptr)
+	, m_TextQuadCapacity(0)
+	, m_FontStashContext(nullptr)
+	, m_FontImageID(0)
+	, m_WinWidth(0)
+	, m_WinHeight(0)
+	, m_DevicePixelRatio(1.0f)
+	, m_TesselationTolerance(1.0f)
+	, m_FringeWidth(1.0f)
+	, m_ViewID(viewID)
+	, m_ForceNewDrawCommand(false)
+	, m_NextFontID(0)
+	, m_NextGradientID(0)
+	, m_NextImagePatternID(0)
 {
 	for (uint32_t i = 0; i < MAX_FONT_IMAGES; ++i) {
 		m_FontImages[i] = VG_INVALID_HANDLE;
@@ -854,6 +855,7 @@ Context::~Context()
 	for (uint32_t i = 0; i < DrawCommand::NumTypes; ++i) {
 		if (bgfx::isValid(m_ProgramHandle[i])) {
 			bgfx::destroy(m_ProgramHandle[i]);
+			m_ProgramHandle[i] = BGFX_INVALID_HANDLE;
 		}
 	}
 
@@ -864,23 +866,40 @@ Context::~Context()
 	bgfx::destroy(m_OuterColorUniform);
 
 	for (uint32_t i = 0; i < m_VertexBufferCapacity; ++i) {
-		if (bgfx::isValid(m_VertexBuffers[i].m_PosBufferHandle)) {
-			bgfx::destroy(m_VertexBuffers[i].m_PosBufferHandle);
+		VertexBuffer* vb = &m_VertexBuffers[i];
+		if (bgfx::isValid(vb->m_PosBufferHandle)) {
+			bgfx::destroy(vb->m_PosBufferHandle);
+			vb->m_PosBufferHandle = BGFX_INVALID_HANDLE;
 		}
-		if (bgfx::isValid(m_VertexBuffers[i].m_UVBufferHandle)) {
-			bgfx::destroy(m_VertexBuffers[i].m_UVBufferHandle);
+		if (bgfx::isValid(vb->m_UVBufferHandle)) {
+			bgfx::destroy(vb->m_UVBufferHandle);
+			vb->m_UVBufferHandle = BGFX_INVALID_HANDLE;
 		}
-		if (bgfx::isValid(m_VertexBuffers[i].m_ColorBufferHandle)) {
-			bgfx::destroy(m_VertexBuffers[i].m_ColorBufferHandle);
+		if (bgfx::isValid(vb->m_ColorBufferHandle)) {
+			bgfx::destroy(vb->m_ColorBufferHandle);
+			vb->m_ColorBufferHandle = BGFX_INVALID_HANDLE;
 		}
 	}
 	BX_FREE(m_Allocator, m_VertexBuffers);
+	m_VertexBuffers = nullptr;
+	m_VertexBufferCapacity = 0;
+	m_NumVertexBuffers = 0;
 
-	if (bgfx::isValid(m_IndexBuffer->m_bgfxHandle)) {
-		bgfx::destroy(m_IndexBuffer->m_bgfxHandle);
+	for (uint32_t i = 0; i < m_NumIndexBuffers; ++i) {
+		IndexBuffer* ib = &m_IndexBuffers[i];
+		if (bgfx::isValid(ib->m_bgfxHandle)) {
+			bgfx::destroy(ib->m_bgfxHandle);
+			ib->m_bgfxHandle = BGFX_INVALID_HANDLE;
+		}
+
+		BX_ALIGNED_FREE(m_Allocator, ib->m_Indices, 16);
+		ib->m_Indices = nullptr;
+		ib->m_Capacity = 0;
+		ib->m_Count = 0;
 	}
-	BX_ALIGNED_FREE(m_Allocator, m_IndexBuffer->m_Indices, 16);
-	BX_DELETE(m_Allocator, m_IndexBuffer);
+	BX_FREE(m_Allocator, m_IndexBuffers);
+	m_IndexBuffers = nullptr;
+	m_ActiveIndexBuffer = nullptr;
 
 	for (uint32_t i = 0; i < m_Vec2DataPoolCapacity; ++i) {
 		float* buffer = m_Vec2DataPool[i];
@@ -911,18 +930,20 @@ Context::~Context()
 	m_Uint32DataPoolCapacity = 0;
 
 	BX_FREE(m_Allocator, m_DrawCommands);
+	m_DrawCommands = nullptr;
 
 	// Manually delete font data
 	for (int i = 0; i < VG_CONFIG_MAX_FONTS; ++i) {
 		if (m_FontData[i]) {
 			BX_FREE(m_Allocator, m_FontData[i]);
+			m_FontData[i] = nullptr;
 		}
 	}
 
 	fonsDeleteInternal(m_FontStashContext);
 
 	for (uint32_t i = 0; i < MAX_FONT_IMAGES; ++i) {
-		deleteImage(m_FontImages[i]);
+		deleteImage(m_FontImages[i]);		
 	}
 
 	BX_DELETE(m_Allocator, m_Path);
@@ -932,10 +953,16 @@ Context::~Context()
 	m_Stroker = nullptr;
 
 	BX_FREE(m_Allocator, m_Images);
+	m_Images = nullptr;
 
 	BX_ALIGNED_FREE(m_Allocator, m_TextQuads, 16);
+	m_TextQuads = nullptr;
+
 	BX_ALIGNED_FREE(m_Allocator, m_TextVertices, 16);
+	m_TextVertices = nullptr;
+
 	BX_ALIGNED_FREE(m_Allocator, m_TransformedPathVertices, 16);
+	m_TransformedPathVertices = nullptr;
 }
 
 bool Context::init()
@@ -950,8 +977,7 @@ bool Context::init()
 
 	m_Path = BX_NEW(m_Allocator, Path)(m_Allocator);
 	m_Stroker = BX_NEW(m_Allocator, Stroker)(m_Allocator);
-	m_IndexBuffer = BX_NEW(m_Allocator, IndexBuffer)();
-
+	
 	m_PosVertexDecl.begin().add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float).end();
 	m_UVVertexDecl.begin().add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float).end();
 	m_ColorVertexDecl.begin().add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true).end();
@@ -1026,7 +1052,9 @@ void Context::beginFrame(uint32_t windowWidth, uint32_t windowHeight, float devi
 	m_NumVertexBuffers = 0;
 	allocVertexBuffer();
 
-	m_IndexBuffer->reset();
+	m_ActiveIndexBuffer = allocIndexBuffer();
+	VG_CHECK(m_ActiveIndexBuffer->m_Count == 0, "Not empty index buffer");
+
 	m_NumDrawCommands = 0;
 	m_ForceNewDrawCommand = true;
 
@@ -1076,11 +1104,12 @@ void Context::endFrame()
 	}
 
 	// Update bgfx index buffer...
-	const bgfx::Memory* indexMem = bgfx::copy(&m_IndexBuffer->m_Indices[0], sizeof(uint16_t) * m_IndexBuffer->m_Count);
-	if (!bgfx::isValid(m_IndexBuffer->m_bgfxHandle)) {
-		m_IndexBuffer->m_bgfxHandle = bgfx::createDynamicIndexBuffer(indexMem, BGFX_BUFFER_ALLOW_RESIZE);
+	IndexBuffer* ib = m_ActiveIndexBuffer;
+	const bgfx::Memory* indexMem = bgfx::makeRef(&ib->m_Indices[0], sizeof(uint16_t) * ib->m_Count, releaseIndexBufferCallback, this);
+	if (!bgfx::isValid(ib->m_bgfxHandle)) {
+		ib->m_bgfxHandle = bgfx::createDynamicIndexBuffer(indexMem, BGFX_BUFFER_ALLOW_RESIZE);
 	} else {
-		bgfx::updateDynamicIndexBuffer(m_IndexBuffer->m_bgfxHandle, 0, indexMem);
+		bgfx::updateDynamicIndexBuffer(ib->m_bgfxHandle, 0, indexMem);
 	}
 	
 	float viewMtx[16];
@@ -1100,7 +1129,7 @@ void Context::endFrame()
 		bgfx::setVertexBuffer(0, vb->m_PosBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
 		bgfx::setVertexBuffer(1, vb->m_UVBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
 		bgfx::setVertexBuffer(2, vb->m_ColorBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
-		bgfx::setIndexBuffer(m_IndexBuffer->m_bgfxHandle, cmd->m_FirstIndexID, cmd->m_NumIndices);
+		bgfx::setIndexBuffer(ib->m_bgfxHandle, cmd->m_FirstIndexID, cmd->m_NumIndices);
 
 		// Set scissor.
 		{
@@ -1266,6 +1295,12 @@ void Context::transformPath()
 
 void Context::fillConvexPath(Color col, bool aa)
 {
+	const State* state = getState();
+	const uint32_t c = ColorRGBA::setAlpha(col, (uint8_t)(state->m_GlobalAlpha * ColorRGBA::getAlpha(col)));
+	if (ColorRGBA::getAlpha(c) == 0) {
+		return;
+	}
+
 	transformPath();
 
 	const float* pathVertices = m_TransformedPathVertices;
@@ -1278,16 +1313,29 @@ void Context::fillConvexPath(Color col, bool aa)
 			continue;
 		}
 
+		const float* vtx = &pathVertices[path->m_FirstVertexID << 1];
+		const uint32_t numPathVertices = path->m_NumVertices;
+
+		Mesh mesh;
+		const uint32_t* colors = &c;
+		uint32_t numColors = 1;
+
 		if (aa) {
-			renderConvexPolygonAA(&pathVertices[path->m_FirstVertexID << 1], path->m_NumVertices, col);
+			m_Stroker->convexFillAA(&mesh, vtx, numPathVertices, c);
+			colors = mesh.m_ColorBuffer;
+			numColors = mesh.m_NumVertices;
 		} else {
-			renderConvexPolygonNoAA(&pathVertices[path->m_FirstVertexID << 1], path->m_NumVertices, col);
+			m_Stroker->convexFill(&mesh, vtx, numPathVertices);
 		}
+
+		createDrawCommand_VertexColor(mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
 	}
 }
 
-void Context::fillConvexPath(GradientHandle gradient, bool aa)
+void Context::fillConvexPath(GradientHandle gradientHandle, bool aa)
 {
+	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
+
 	// TODO: Anti-aliasing of gradient-filled paths
 	BX_UNUSED(aa);
 
@@ -1303,14 +1351,28 @@ void Context::fillConvexPath(GradientHandle gradient, bool aa)
 			continue;
 		}
 
-		renderConvexPolygonNoAA(&pathVertices[path->m_FirstVertexID << 1], path->m_NumVertices, gradient);
+		const float* vtx = &pathVertices[path->m_FirstVertexID << 1];
+		const uint32_t numPathVertices = path->m_NumVertices;
+
+		Mesh mesh;
+		m_Stroker->convexFill(&mesh, vtx, numPathVertices);
+		createDrawCommand_Gradient(mesh.m_PosBuffer, mesh.m_NumVertices, gradientHandle, mesh.m_IndexBuffer, mesh.m_NumIndices);
 	}
 }
 
-void Context::fillConvexPath(ImagePatternHandle img, bool aa)
+void Context::fillConvexPath(ImagePatternHandle imgHandle, bool aa)
 {
+	VG_CHECK(isValid(imgHandle), "Invalid image pattern handle");
+
 	// TODO: Anti-aliasing of textured paths
 	BX_UNUSED(aa);
+
+	const State* state = getState();
+	ImagePattern* img = &m_ImagePatterns[imgHandle.idx];
+	uint32_t c = ColorRGBA::fromFloat(1.0f, 1.0f, 1.0f, img->m_Alpha * state->m_GlobalAlpha);
+	if (ColorRGBA::getAlpha(c) == 0) {
+		return;
+	}
 
 	transformPath();
 
@@ -1324,7 +1386,13 @@ void Context::fillConvexPath(ImagePatternHandle img, bool aa)
 			continue;
 		}
 
-		renderConvexPolygonNoAA(&pathVertices[path->m_FirstVertexID << 1], path->m_NumVertices, img);
+		const float* vtx = &pathVertices[path->m_FirstVertexID << 1];
+		const uint32_t numPathVertices = path->m_NumVertices;
+
+		Mesh mesh;
+		m_Stroker->convexFill(&mesh, vtx, numPathVertices);
+
+		createDrawCommand_Textured(mesh.m_PosBuffer, mesh.m_NumVertices, &c, 1, img->m_ImageHandle, img->m_Matrix, mesh.m_IndexBuffer, mesh.m_NumIndices);
 	}
 }
 
@@ -2322,19 +2390,17 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 	// Now execute the command stream and keep every new DrawCommand in the cachedShape.
 #endif // VG_CONFIG_ENABLE_SHAPE_CACHING
 
-	const uint8_t* cmdList = (uint8_t*)shape->m_CmdList->more(0);
-	const uint32_t cmdListSize = shape->m_CmdList->getSize();
-
-	const uint8_t* cmdListEnd = cmdList + cmdListSize;
+	bx::MemoryReader cmdListReader(shape->m_CmdList->more(0), (uint32_t)shape->m_CmdListWriter.seek(0, bx::Whence::Current));
 
 	const uint16_t firstGradientID = (uint16_t)m_NextGradientID;
 	const uint16_t firstImagePatternID = (uint16_t)m_NextImagePatternID;
 	VG_CHECK(firstGradientID + shape->m_NumGradients <= VG_CONFIG_MAX_GRADIENTS, "Not enough free gradients to render shape. Increase VG_MAX_GRADIENTS");
 	VG_CHECK(firstImagePatternID + shape->m_NumImagePatterns <= VG_CONFIG_MAX_IMAGE_PATTERNS, "Not enough free image patterns to render shape. Increase VG_MAX_IMAGE_PATTERS");
 
-	while (cmdList < cmdListEnd) {
-		ShapeCommand::Enum cmdType = *(ShapeCommand::Enum*)cmdList;
-		cmdList += sizeof(ShapeCommand::Enum);
+	pushState();
+	while (cmdListReader.remaining()) {
+		ShapeCommand::Enum cmdType;
+		bx::read(&cmdListReader, cmdType);
 
 		switch (cmdType) {
 		case ShapeCommand::BeginPath:
@@ -2349,51 +2415,51 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 		}
 		case ShapeCommand::MoveTo:
 		{
-			float* coords = (float*)cmdList;
+			float coords[2];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 2);
 			moveTo(coords[0], coords[1]);
-			cmdList += sizeof(float) * 2;
 			break;
 		}
 		case ShapeCommand::LineTo:
 		{
-			float* coords = (float*)cmdList;
+			float coords[2];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 2);
 			lineTo(coords[0], coords[1]);
-			cmdList += sizeof(float) * 2;
 			break;
 		}
 		case ShapeCommand::BezierTo:
 		{
-			float* coords = (float*)cmdList;
+			float coords[6];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 6);
 			bezierTo(coords[0], coords[1], coords[2], coords[3], coords[4], coords[5]);
-			cmdList += sizeof(float) * 6;
 			break;
 		}
 		case ShapeCommand::ArcTo:
 		{
-			float* coords = (float*)cmdList;
+			float coords[5];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 5);
 			arcTo(coords[0], coords[1], coords[2], coords[3], coords[4]);
-			cmdList += sizeof(float) * 5;
 			break;
 		}
 		case ShapeCommand::Rect:
 		{
-			float* coords = (float*)cmdList;
+			float coords[4];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 4);
 			rect(coords[0], coords[1], coords[2], coords[3]);
-			cmdList += sizeof(float) * 4;
 			break;
 		}
 		case ShapeCommand::RoundedRect:
 		{
-			float* coords = (float*)cmdList;
+			float coords[5];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 5);
 			roundedRect(coords[0], coords[1], coords[2], coords[3], coords[4]);
-			cmdList += sizeof(float) * 5;
 			break;
 		}
 		case ShapeCommand::Circle:
 		{
-			float* coords = (float*)cmdList;
+			float coords[3];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 3);
 			circle(coords[0], coords[1], coords[2]);
-			cmdList += sizeof(float) * 3;
 			break;
 		}
 		case ShapeCommand::FillConvexColor:
@@ -2410,8 +2476,10 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			const uint32_t prevDrawCommandID = m_NumDrawCommands - 1;
 #endif
 
-			Color col = CMD_READ(Color, cmdList);
-			bool aa = CMD_READ(bool, cmdList);
+			Color col;
+			bool aa;
+			bx::read(&cmdListReader, col);
+			bx::read(&cmdListReader, aa);
 			fillConvexPath(col, aa);
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
@@ -2426,8 +2494,11 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 		case ShapeCommand::FillConvexGradient:
 		{
 			// TODO: Cache gradient fills.
-			GradientHandle handle = CMD_READ(GradientHandle, cmdList);
-			bool aa = CMD_READ(bool, cmdList);
+			GradientHandle handle;
+			bool aa;
+
+			bx::read(&cmdListReader, handle);
+			bx::read(&cmdListReader, aa);
 
 			handle.idx += firstGradientID;
 			fillConvexPath(handle, aa);
@@ -2436,8 +2507,11 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 		case ShapeCommand::FillConvexImage:
 		{
 			// TODO: Cache image fills
-			ImagePatternHandle handle = CMD_READ(ImagePatternHandle, cmdList);
-			bool aa = CMD_READ(bool, cmdList);
+			ImagePatternHandle handle;
+			bool aa;
+
+			bx::read(&cmdListReader, handle);
+			bx::read(&cmdListReader, aa);
 
 			handle.idx += firstImagePatternID;
 			fillConvexPath(handle, aa);
@@ -2453,8 +2527,12 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			const uint32_t prevDrawCommandID = m_NumDrawCommands - 1;
 #endif
 
-			Color col = CMD_READ(Color, cmdList);
-			bool aa = CMD_READ(bool, cmdList);
+			Color col;
+			bool aa;
+
+			bx::read(&cmdListReader, col);
+			bx::read(&cmdListReader, aa);
+
 			fillConcavePath(col, aa);
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
@@ -2480,12 +2558,18 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 
 			const uint32_t prevDrawCommandID = m_NumDrawCommands - 1;
 #endif
+			Color col;
+			float width;
+			bool aa;
+			LineCap::Enum lineCap;
+			LineJoin::Enum lineJoin;
 
-			Color col = CMD_READ(Color, cmdList);
-			float width = CMD_READ(float, cmdList);
-			bool aa = CMD_READ(bool, cmdList);
-			LineCap::Enum lineCap = CMD_READ(LineCap::Enum, cmdList);
-			LineJoin::Enum lineJoin = CMD_READ(LineJoin::Enum, cmdList);
+			bx::read(&cmdListReader, col);
+			bx::read(&cmdListReader, width);
+			bx::read(&cmdListReader, aa);
+			bx::read(&cmdListReader, lineCap);
+			bx::read(&cmdListReader, lineJoin);
+
 			strokePath(col, width, aa, lineCap, lineJoin);
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
@@ -2499,49 +2583,42 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 		}
 		case ShapeCommand::LinearGradient:
 		{
-			float sx = CMD_READ(float, cmdList);
-			float sy = CMD_READ(float, cmdList);
-			float ex = CMD_READ(float, cmdList);
-			float ey = CMD_READ(float, cmdList);
-			Color icol = CMD_READ(Color, cmdList);
-			Color ocol = CMD_READ(Color, cmdList);
-			createLinearGradient(sx, sy, ex, ey, icol, ocol);
+			float grad[4];
+			Color icol, ocol;
+			bx::read(&cmdListReader, &grad[0], sizeof(float) * 4);
+			bx::read(&cmdListReader, icol);
+			bx::read(&cmdListReader, ocol);
+			createLinearGradient(grad[0], grad[1], grad[2], grad[3], icol, ocol);
 			break;
 		}
 		case ShapeCommand::BoxGradient:
 		{
-			float x = CMD_READ(float, cmdList);
-			float y = CMD_READ(float, cmdList);
-			float w = CMD_READ(float, cmdList);
-			float h = CMD_READ(float, cmdList);
-			float r = CMD_READ(float, cmdList);
-			float f = CMD_READ(float, cmdList);
-			Color icol = CMD_READ(Color, cmdList);
-			Color ocol = CMD_READ(Color, cmdList);
-			createBoxGradient(x, y, w, h, r, f, icol, ocol);
+			float grad[6];
+			Color icol, ocol;
+			bx::read(&cmdListReader, &grad[0], sizeof(float) * 6);
+			bx::read(&cmdListReader, icol);
+			bx::read(&cmdListReader, ocol);
+			createBoxGradient(grad[0], grad[1], grad[2], grad[3], grad[4], grad[5], icol, ocol);
 			break;
 		}
 		case ShapeCommand::RadialGradient:
 		{
-			float cx = CMD_READ(float, cmdList);
-			float cy = CMD_READ(float, cmdList);
-			float inr = CMD_READ(float, cmdList);
-			float outr = CMD_READ(float, cmdList);
-			Color icol = CMD_READ(Color, cmdList);
-			Color ocol = CMD_READ(Color, cmdList);
-			createRadialGradient(cx, cy, inr, outr, icol, ocol);
+			float grad[4];
+			Color icol, ocol;
+			bx::read(&cmdListReader, &grad[0], sizeof(float) * 4);
+			bx::read(&cmdListReader, icol);
+			bx::read(&cmdListReader, ocol);
+			createRadialGradient(grad[0], grad[1], grad[2], grad[3], icol, ocol);
 			break;
 		}
 		case ShapeCommand::ImagePattern:
 		{
-			float cx = CMD_READ(float, cmdList);
-			float cy = CMD_READ(float, cmdList);
-			float w = CMD_READ(float, cmdList);
-			float h = CMD_READ(float, cmdList);
-			float angle = CMD_READ(float, cmdList);
-			ImageHandle image = CMD_READ(ImageHandle, cmdList);
-			float alpha = CMD_READ(float, cmdList);
-			createImagePattern(cx, cy, w, h, angle, image, alpha);
+			float params[5], alpha;
+			ImageHandle image;
+			bx::read(&cmdListReader, &params[0], sizeof(float) * 5);
+			bx::read(&cmdListReader, image);
+			bx::read(&cmdListReader, alpha);
+			createImagePattern(params[0], params[1], params[2], params[3], params[4], image, alpha);
 			break;
 		}
 		case ShapeCommand::TextStatic:
@@ -2551,22 +2628,29 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 //				cachedShapeAddTextCommand(cachedShape, cmdList - sizeof(ShapeCommand::Enum));
 //			}
 //#endif
-
-			Font font = CMD_READ(Font, cmdList);
-			uint32_t alignment = CMD_READ(uint32_t, cmdList);
-			Color col = CMD_READ(Color, cmdList);
-			float x = CMD_READ(float, cmdList);
-			float y = CMD_READ(float, cmdList);
-			uint32_t len = CMD_READ(uint32_t, cmdList);
-			const char* str = (const char*)cmdList;
-			cmdList += len;
+			Font font;
+			uint32_t alignment, len;
+			Color col;
+			float coords[2];
+			bx::read(&cmdListReader, font);
+			bx::read(&cmdListReader, alignment);
+			bx::read(&cmdListReader, col);
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 2);
+			bx::read(&cmdListReader, len);
+			
+			const char* str = (const char*)cmdListReader.getDataPtr();
+			cmdListReader.seek(len, bx::Whence::Current);
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
-			String* cachedString = createString(font, str, str + len);
-			cachedShapeAddTextCommand(cachedShape, cachedString, alignment, col, x, y);
-			text(cachedString, alignment, col, x, y);
+			if (canCache) {
+				String* cachedString = createString(font, str, str + len);
+				cachedShapeAddTextCommand(cachedShape, cachedString, alignment, col, coords[0], coords[1]);
+				text(cachedString, alignment, col, coords[0], coords[1]);
+			} else {
+				text(font, alignment, col, coords[0], coords[1], str, str + len);
+			}
 #else
-			text(font, alignment, col, x, y, str, str + len);
+			text(font, alignment, col, coords[0], coords[1], str, str + len);
 #endif
 			break;
 		}
@@ -2575,16 +2659,18 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 		{
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
 			if (canCache) {
-				cachedShapeAddTextCommand(cachedShape, cmdList - sizeof(ShapeCommand::Enum));
+				cachedShapeAddTextCommand(cachedShape, cmdListReader.getDataPtr() - sizeof(ShapeCommand::Enum));
 			}
 #endif
-
-			Font font = CMD_READ(Font, cmdList);
-			uint32_t alignment = CMD_READ(uint32_t, cmdList);
-			Color col = CMD_READ(Color, cmdList);
-			float x = CMD_READ(float, cmdList);
-			float y = CMD_READ(float, cmdList);
-			uint32_t stringID = CMD_READ(uint32_t, cmdList);
+			Font font;
+			uint32_t alignment, stringID;
+			Color col;
+			float coords[2];
+			bx::read(&cmdListReader, font);
+			bx::read(&cmdListReader, alignment);
+			bx::read(&cmdListReader, col);
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 2);
+			bx::read(&cmdListReader, stringID);
 
 			VG_WARN(stringCallback, "Shape includes dynamic text commands but no string callback has been specified");
 			if (stringCallback) {
@@ -2592,13 +2678,32 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 				const char* str = (*stringCallback)(stringID, len, userData);
 				const char* end = len != ~0u ? str + len : str + bx::strLen(str);
 
-				text(font, alignment, col, x, y, str, end);
-				break;
+				text(font, alignment, col, coords[0], coords[1], str, end);
 			}
+
+			break;
 		}
 #endif
+		case ShapeCommand::Scissor:
+		{
+			float rect[4];
+			bx::read(&cmdListReader, &rect[0], sizeof(float) * 4);
+
+			setScissor(rect[0], rect[1], rect[2], rect[3]);
+			break;
+		}
+		case ShapeCommand::PushState:
+			pushState();
+			break;
+		case ShapeCommand::PopState:
+			popState();
+			break;
+		default:
+			VG_CHECK(false, "Unknown shape command");
+			break;
 		}
 	}
+	popState();
 
 	// Free shape gradients and image patterns
 	m_NextGradientID = firstGradientID;
@@ -2620,11 +2725,12 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 		DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(cachedCmd->m_NumVertices, cachedCmd->m_NumIndices, m_FontImages[0]);
 
 		VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+		IndexBuffer* ib = m_ActiveIndexBuffer;
 		const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 		float* dstPos = &vb->m_Pos[vbOffset << 1];
 		float* dstUV = &vb->m_UV[vbOffset << 1];
 		uint32_t* dstColor = &vb->m_Color[vbOffset];
-		uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+		uint16_t* dstIndex = &ib->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 		const uint16_t startVertexID = (uint16_t)cmd->m_NumVertices;
 
@@ -2760,7 +2866,7 @@ void Context::cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* c
 	cachedCmd->m_NumIndices += (uint16_t)cmd->m_NumIndices;
 	cachedCmd->m_Indices = (uint16_t*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Indices, sizeof(uint16_t) * cachedCmd->m_NumIndices, 16);
 
-	const uint16_t* srcIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID];
+	const uint16_t* srcIndex = &m_ActiveIndexBuffer->m_Indices[cmd->m_FirstIndexID];
 	uint16_t* dstIndex = &cachedCmd->m_Indices[firstIndexID];
 	const uint32_t numIndices = cmd->m_NumIndices;
 	for (uint32_t i = 0; i < numIndices; ++i) {
@@ -2899,76 +3005,11 @@ void Context::renderTextQuads(uint32_t numQuads, Color color)
 		++q;
 	}
 
-	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
-	uint32_t startVertexID = cmd->m_NumVertices;
-	while (numQuads-- > 0) {
-		*dstIndex++ = (uint16_t)startVertexID;
-		*dstIndex++ = (uint16_t)(startVertexID + 1);
-		*dstIndex++ = (uint16_t)(startVertexID + 2);
-		*dstIndex++ = (uint16_t)startVertexID;
-		*dstIndex++ = (uint16_t)(startVertexID + 2);
-		*dstIndex++ = (uint16_t)(startVertexID + 3);
-
-		startVertexID += 4;
-	}
+	uint16_t* dstIndex = &m_ActiveIndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	genQuadIndices_unaligned(dstIndex, numQuads, (uint16_t)cmd->m_NumVertices);
 
 	cmd->m_NumVertices += numDrawVertices;
 	cmd->m_NumIndices += numDrawIndices;
-}
-
-void Context::renderConvexPolygonNoAA(const float* vtx, uint32_t numPathVertices, Color color)
-{
-	const State* state = getState();
-	const uint32_t c = ColorRGBA::setAlpha(color, (uint8_t)(state->m_GlobalAlpha * ColorRGBA::getAlpha(color)));
-	if (ColorRGBA::getAlpha(c) == 0) {
-		return;
-	}
-
-	Mesh mesh;
-	m_Stroker->convexFill(&mesh, vtx, numPathVertices);
-
-	createDrawCommand_VertexColor(mesh.m_PosBuffer, mesh.m_NumVertices, &c, 1, mesh.m_IndexBuffer, mesh.m_NumIndices);
-}
-
-void Context::renderConvexPolygonAA(const float* vtx, uint32_t numPathVertices, Color color)
-{
-	const State* state = getState();
-	const uint32_t c = ColorRGBA::setAlpha(color, (uint8_t)(state->m_GlobalAlpha * ColorRGBA::getAlpha(color)));
-	if (ColorRGBA::getAlpha(c) == 0) {
-		return;
-	}
-
-	Mesh mesh;
-	m_Stroker->convexFillAA(&mesh, vtx, numPathVertices, c);
-
-	createDrawCommand_VertexColor(mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_ColorBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
-}
-
-void Context::renderConvexPolygonNoAA(const float* vtx, uint32_t numPathVertices, ImagePatternHandle handle)
-{
-	VG_CHECK(isValid(handle), "Invalid image pattern handle");
-
-	const State* state = getState();
-	ImagePattern* img = &m_ImagePatterns[handle.idx];
-	uint32_t c = ColorRGBA::fromFloat(1.0f, 1.0f, 1.0f, img->m_Alpha * state->m_GlobalAlpha);
-	if (ColorRGBA::getAlpha(c) == 0) {
-		return;
-	}
-
-	Mesh mesh;
-	m_Stroker->convexFill(&mesh, vtx, numPathVertices);
-
-	createDrawCommand_Textured(mesh.m_PosBuffer, mesh.m_NumVertices, &c, 1, img->m_ImageHandle, img->m_Matrix, mesh.m_IndexBuffer, mesh.m_NumIndices);
-}
-
-void Context::renderConvexPolygonNoAA(const float* vtx, uint32_t numPathVertices, GradientHandle handle)
-{
-	VG_CHECK(isValid(handle), "Invalid gradient handle");
-
-	Mesh mesh;
-	m_Stroker->convexFill(&mesh, vtx, numPathVertices);
-
-	createDrawCommand_Gradient(mesh.m_PosBuffer, mesh.m_NumVertices, handle, mesh.m_IndexBuffer, mesh.m_NumIndices);
 }
 
 DrawCommand* Context::allocDrawCommand_TexturedVertexColor(uint32_t numVertices, uint32_t numIndices, ImageHandle img)
@@ -2988,7 +3029,7 @@ DrawCommand* Context::allocDrawCommand_TexturedVertexColor(uint32_t numVertices,
 
 	uint32_t vbID = (uint32_t)(vb - m_VertexBuffers);
 
-	IndexBuffer* ib = getIndexBuffer();
+	IndexBuffer* ib = m_ActiveIndexBuffer;
 	if (ib->m_Count + numIndices > ib->m_Capacity) {
 		const uint32_t nextCapacity = ib->m_Capacity != 0 ? (ib->m_Capacity * 3) / 2 : 32;
 		ib->m_Capacity = bx::uint32_max(nextCapacity, ib->m_Count + numIndices);
@@ -3058,7 +3099,7 @@ DrawCommand* Context::allocDrawCommand_ColorGradient(uint32_t numVertices, uint3
 
 	uint32_t vbID = (uint32_t)(vb - m_VertexBuffers);
 
-	IndexBuffer* ib = getIndexBuffer();
+	IndexBuffer* ib = m_ActiveIndexBuffer;
 	if (ib->m_Count + numIndices > ib->m_Capacity) {
 		const uint32_t nextCapacity = ib->m_Capacity != 0 ? (ib->m_Capacity * 3) / 2 : 32;
 		ib->m_Capacity = bx::uint32_max(nextCapacity, ib->m_Count + numIndices);
@@ -3131,6 +3172,30 @@ VertexBuffer* Context::allocVertexBuffer()
 	vb->m_Count = 0;
 
 	return vb;
+}
+
+IndexBuffer* Context::allocIndexBuffer()
+{
+	IndexBuffer* ib = nullptr;
+	for (uint32_t i = 0; i < m_NumIndexBuffers; ++i) {
+		if (m_IndexBuffers[i].m_Count == 0) {
+			ib = &m_IndexBuffers[i];
+			break;
+		}
+	}
+
+	if (!ib) {
+		m_NumIndexBuffers++;
+		m_IndexBuffers = (IndexBuffer*)BX_REALLOC(m_Allocator, m_IndexBuffers, sizeof(IndexBuffer) * m_NumIndexBuffers);
+
+		ib = &m_IndexBuffers[m_NumIndexBuffers - 1];
+		ib->m_bgfxHandle = BGFX_INVALID_HANDLE;
+		ib->m_Capacity = 0;
+		ib->m_Count = 0;
+		ib->m_Indices = nullptr;
+	}
+
+	return ib;
 }
 
 ImageHandle Context::createImageRGBA(uint16_t w, uint16_t h, uint32_t flags, const uint8_t* data)
@@ -3389,6 +3454,22 @@ void Context::releaseVertexBufferData_Uint32(uint32_t* data)
 	}
 }
 
+void Context::releaseIndexBuffer(uint16_t* data)
+{
+#if BX_CONFIG_SUPPORTS_THREADING
+	bx::MutexScope ms(m_DataPoolMutex);
+#endif
+
+	VG_CHECK(data != nullptr, "Tried to release a null vertex buffer");
+	for (uint32_t i = 0; i < m_NumIndexBuffers; ++i) {
+		if (m_IndexBuffers[i].m_Indices == data) {
+			// Reset the ib for reuse.
+			m_IndexBuffers[i].m_Count = 0;
+			return;
+		}
+	}
+}
+
 String* Context::createString(const Font& font, const char* text, const char* end)
 {
 	const uint32_t textSize = (uint32_t)(end ? end - text : bx::strLen(text));
@@ -3489,7 +3570,7 @@ void Context::createDrawCommand_VertexColor(const float* vtx, uint32_t numVertic
 	}
 
 	// Index buffer
-	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	uint16_t* dstIndex = &m_ActiveIndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);
 
 	cmd->m_NumVertices += numVertices;
@@ -3517,7 +3598,7 @@ void Context::createDrawCommand_Textured(const float* vtx, uint32_t numVertices,
 		memset32(dstColor, numVertices, colors);
 	}
 
-	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	uint16_t* dstIndex = &m_ActiveIndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);
 
 	cmd->m_NumVertices += numVertices;
@@ -3541,7 +3622,7 @@ void Context::createDrawCommand_Gradient(const float* vtx, uint32_t numVertices,
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
 	memset32(dstColor, numVertices, &color);
 
-	uint16_t* dstIndex = &m_IndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	uint16_t* dstIndex = &m_ActiveIndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);
 
 	cmd->m_NumVertices += numVertices;

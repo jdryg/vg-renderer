@@ -3,152 +3,107 @@
 
 namespace vg
 {
-inline void* allocCommand(bx::MemoryBlockI* memBlock, uint32_t cmdSize)
+BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4127) // conditional expression is constant
+
+void Shape::Reset()
 {
-	uint32_t curMemBlockSize = memBlock->getSize();
-	void* buffer = memBlock->more(cmdSize);
-	return (uint8_t*)buffer + curMemBlockSize;
+	VG_CHECK(!m_RendererData, "Cannot reset shape if it's already cached. Disable caching for this shape to be able to reset it.");
+	if (!m_RendererData) {
+		m_CmdListWriter.seek(0, bx::Whence::Begin);
+	}
 }
 
 void Shape::BeginPath()
 {
-	const size_t cmdSize = sizeof(ShapeCommand::Enum);
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::BeginPath);
+	bx::write(&m_CmdListWriter, ShapeCommand::BeginPath);
 }
 
 void Shape::MoveTo(float x, float y)
 {
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(float) * 2;
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::MoveTo);
-	bx::write(&writer, x);
-	bx::write(&writer, y);
+	bx::write(&m_CmdListWriter, ShapeCommand::MoveTo);
+	bx::write(&m_CmdListWriter, x);
+	bx::write(&m_CmdListWriter, y);
 }
 
 void Shape::LineTo(float x, float y)
 {
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(float) * 2;
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::LineTo);
-	bx::write(&writer, x);
-	bx::write(&writer, y);
+	bx::write(&m_CmdListWriter, ShapeCommand::LineTo);
+	bx::write(&m_CmdListWriter, x);
+	bx::write(&m_CmdListWriter, y);
 }
 
 void Shape::BezierTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
 {
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(float) * 6;
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::BezierTo);
-	bx::write(&writer, c1x);
-	bx::write(&writer, c1y);
-	bx::write(&writer, c2x);
-	bx::write(&writer, c2y);
-	bx::write(&writer, x);
-	bx::write(&writer, y);
+	bx::write(&m_CmdListWriter, ShapeCommand::BezierTo);
+	bx::write(&m_CmdListWriter, c1x);
+	bx::write(&m_CmdListWriter, c1y);
+	bx::write(&m_CmdListWriter, c2x);
+	bx::write(&m_CmdListWriter, c2y);
+	bx::write(&m_CmdListWriter, x);
+	bx::write(&m_CmdListWriter, y);
 }
 
 void Shape::ArcTo(float x1, float y1, float x2, float y2, float radius)
 {
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(float) * 5;
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::ArcTo);
-	bx::write(&writer, x1);
-	bx::write(&writer, y1);
-	bx::write(&writer, x2);
-	bx::write(&writer, y2);
-	bx::write(&writer, radius);
+	bx::write(&m_CmdListWriter, ShapeCommand::ArcTo);
+	bx::write(&m_CmdListWriter, x1);
+	bx::write(&m_CmdListWriter, y1);
+	bx::write(&m_CmdListWriter, x2);
+	bx::write(&m_CmdListWriter, y2);
+	bx::write(&m_CmdListWriter, radius);
 }
 
 void Shape::Rect(float x, float y, float w, float h)
 {
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(float) * 4;
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::Rect);
-	bx::write(&writer, x);
-	bx::write(&writer, y);
-	bx::write(&writer, w);
-	bx::write(&writer, h);
+	bx::write(&m_CmdListWriter, ShapeCommand::Rect);
+	bx::write(&m_CmdListWriter, x);
+	bx::write(&m_CmdListWriter, y);
+	bx::write(&m_CmdListWriter, w);
+	bx::write(&m_CmdListWriter, h);
 }
 
 void Shape::RoundedRect(float x, float y, float w, float h, float r)
 {
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(float) * 5;
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::RoundedRect);
-	bx::write(&writer, x);
-	bx::write(&writer, y);
-	bx::write(&writer, w);
-	bx::write(&writer, h);
-	bx::write(&writer, r);
+	bx::write(&m_CmdListWriter, ShapeCommand::RoundedRect);
+	bx::write(&m_CmdListWriter, x);
+	bx::write(&m_CmdListWriter, y);
+	bx::write(&m_CmdListWriter, w);
+	bx::write(&m_CmdListWriter, h);
+	bx::write(&m_CmdListWriter, r);
 }
 
 void Shape::Circle(float cx, float cy, float radius)
 {
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(float) * 3;
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::Circle);
-	bx::write(&writer, cx);
-	bx::write(&writer, cy);
-	bx::write(&writer, radius);
+	bx::write(&m_CmdListWriter, ShapeCommand::Circle);
+	bx::write(&m_CmdListWriter, cx);
+	bx::write(&m_CmdListWriter, cy);
+	bx::write(&m_CmdListWriter, radius);
 }
 
 void Shape::ClosePath()
 {
-	const size_t cmdSize = sizeof(ShapeCommand::Enum);
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::ClosePath);
+	bx::write(&m_CmdListWriter, ShapeCommand::ClosePath);
 }
 
 void Shape::FillConvexPath(Color col, bool aa)
 {
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(Color) + sizeof(bool);
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::FillConvexColor);
-	bx::write(&writer, col);
-	bx::write(&writer, aa);
+	bx::write(&m_CmdListWriter, ShapeCommand::FillConvexColor);
+	bx::write(&m_CmdListWriter, col);
+	bx::write(&m_CmdListWriter, aa);
 }
 
 void Shape::FillConvexPath(GradientHandle gradient, bool aa)
 {
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(GradientHandle) + sizeof(bool);
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::FillConvexGradient);
-	bx::write(&writer, gradient);
-	bx::write(&writer, aa);
+	bx::write(&m_CmdListWriter, ShapeCommand::FillConvexGradient);
+	bx::write(&m_CmdListWriter, gradient);
+	bx::write(&m_CmdListWriter, aa);
 }
 
 void Shape::FillConvexPath(ImagePatternHandle img, bool aa)
 {
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(ImagePatternHandle) + sizeof(bool);
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::FillConvexImage);
-	bx::write(&writer, img);
-	bx::write(&writer, aa);
+	bx::write(&m_CmdListWriter, ShapeCommand::FillConvexImage);
+	bx::write(&m_CmdListWriter, img);
+	bx::write(&m_CmdListWriter, aa);
 }
 
 void Shape::FillConcavePath(Color col, bool aa)
@@ -156,44 +111,32 @@ void Shape::FillConcavePath(Color col, bool aa)
 	// NOTE: Concave polygon decomposition cannot be done at this point because it requires all the 
 	// previously cached commands to be executed (which in turn requires a rendering context).
 	// It should be the responsibility of the renderer to cache the final shape.
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(Color) + sizeof(bool);
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::FillConcaveColor);
-	bx::write(&writer, col);
-	bx::write(&writer, aa);
+	bx::write(&m_CmdListWriter, ShapeCommand::FillConcaveColor);
+	bx::write(&m_CmdListWriter, col);
+	bx::write(&m_CmdListWriter, aa);
 }
 
 void Shape::StrokePath(Color col, float width, bool aa, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
 {
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(Color) + sizeof(float) + sizeof(bool) + sizeof(LineCap::Enum) + sizeof(LineJoin::Enum);
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::Stroke);
-	bx::write(&writer, col);
-	bx::write(&writer, width);
-	bx::write(&writer, aa);
-	bx::write(&writer, lineCap);
-	bx::write(&writer, lineJoin);
+	bx::write(&m_CmdListWriter, ShapeCommand::Stroke);
+	bx::write(&m_CmdListWriter, col);
+	bx::write(&m_CmdListWriter, width);
+	bx::write(&m_CmdListWriter, aa);
+	bx::write(&m_CmdListWriter, lineCap);
+	bx::write(&m_CmdListWriter, lineJoin);
 }
 
 GradientHandle Shape::LinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol)
 {
 	const uint16_t gradientHandle = m_NumGradients++;
 
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(float) * 4 + sizeof(Color) * 2;
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::LinearGradient);
-	bx::write(&writer, sx);
-	bx::write(&writer, sy);
-	bx::write(&writer, ex);
-	bx::write(&writer, ey);
-	bx::write(&writer, icol);
-	bx::write(&writer, ocol);
+	bx::write(&m_CmdListWriter, ShapeCommand::LinearGradient);
+	bx::write(&m_CmdListWriter, sx);
+	bx::write(&m_CmdListWriter, sy);
+	bx::write(&m_CmdListWriter, ex);
+	bx::write(&m_CmdListWriter, ey);
+	bx::write(&m_CmdListWriter, icol);
+	bx::write(&m_CmdListWriter, ocol);
 
 	return { gradientHandle };
 }
@@ -202,19 +145,15 @@ GradientHandle Shape::BoxGradient(float x, float y, float w, float h, float r, f
 {
 	const uint16_t gradientHandle = m_NumGradients++;
 
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(float) * 6 + sizeof(Color) * 2;
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::BoxGradient);
-	bx::write(&writer, x);
-	bx::write(&writer, y);
-	bx::write(&writer, w);
-	bx::write(&writer, h);
-	bx::write(&writer, r);
-	bx::write(&writer, f);
-	bx::write(&writer, icol);
-	bx::write(&writer, ocol);
+	bx::write(&m_CmdListWriter, ShapeCommand::BoxGradient);
+	bx::write(&m_CmdListWriter, x);
+	bx::write(&m_CmdListWriter, y);
+	bx::write(&m_CmdListWriter, w);
+	bx::write(&m_CmdListWriter, h);
+	bx::write(&m_CmdListWriter, r);
+	bx::write(&m_CmdListWriter, f);
+	bx::write(&m_CmdListWriter, icol);
+	bx::write(&m_CmdListWriter, ocol);
 
 	return { gradientHandle };
 }
@@ -223,17 +162,13 @@ GradientHandle Shape::RadialGradient(float cx, float cy, float inr, float outr, 
 {
 	const uint16_t gradientHandle = m_NumGradients++;
 
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(float) * 4 + sizeof(Color) * 2;
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::RadialGradient);
-	bx::write(&writer, cx);
-	bx::write(&writer, cy);
-	bx::write(&writer, inr);
-	bx::write(&writer, outr);
-	bx::write(&writer, icol);
-	bx::write(&writer, ocol);
+	bx::write(&m_CmdListWriter, ShapeCommand::RadialGradient);
+	bx::write(&m_CmdListWriter, cx);
+	bx::write(&m_CmdListWriter, cy);
+	bx::write(&m_CmdListWriter, inr);
+	bx::write(&m_CmdListWriter, outr);
+	bx::write(&m_CmdListWriter, icol);
+	bx::write(&m_CmdListWriter, ocol);
 
 	return { gradientHandle };
 }
@@ -242,18 +177,14 @@ ImagePatternHandle Shape::ImagePattern(float cx, float cy, float w, float h, flo
 {
 	const uint16_t gradientHandle = m_NumGradients++;
 
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(float) * 6 + sizeof(ImageHandle);
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::ImagePattern);
-	bx::write(&writer, cx);
-	bx::write(&writer, cy);
-	bx::write(&writer, w);
-	bx::write(&writer, h);
-	bx::write(&writer, angle);
-	bx::write(&writer, image);
-	bx::write(&writer, alpha);
+	bx::write(&m_CmdListWriter, ShapeCommand::ImagePattern);
+	bx::write(&m_CmdListWriter, cx);
+	bx::write(&m_CmdListWriter, cy);
+	bx::write(&m_CmdListWriter, w);
+	bx::write(&m_CmdListWriter, h);
+	bx::write(&m_CmdListWriter, angle);
+	bx::write(&m_CmdListWriter, image);
+	bx::write(&m_CmdListWriter, alpha);
 
 	return { gradientHandle };
 }
@@ -262,18 +193,14 @@ void Shape::Text(const Font& font, uint32_t alignment, Color color, float x, flo
 {
 	uint32_t len = (uint32_t)(end != nullptr ? end - text : bx::strLen(text));
 
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(Font) + sizeof(uint32_t) * 2 + sizeof(Color) + sizeof(float) * 2 + len;
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::TextStatic);
-	bx::write(&writer, font);
-	bx::write(&writer, alignment);
-	bx::write(&writer, color);
-	bx::write(&writer, x);
-	bx::write(&writer, y);
-	bx::write(&writer, len);
-	bx::write(&writer, text, len);
+	bx::write(&m_CmdListWriter, ShapeCommand::TextStatic);
+	bx::write(&m_CmdListWriter, font);
+	bx::write(&m_CmdListWriter, alignment);
+	bx::write(&m_CmdListWriter, color);
+	bx::write(&m_CmdListWriter, x);
+	bx::write(&m_CmdListWriter, y);
+	bx::write(&m_CmdListWriter, len);
+	bx::write(&m_CmdListWriter, text, len);
 
 	m_Flags |= ShapeFlag::HasText;
 }
@@ -281,19 +208,34 @@ void Shape::Text(const Font& font, uint32_t alignment, Color color, float x, flo
 #if VG_CONFIG_SHAPE_DYNAMIC_TEXT
 void Shape::TextDynamic(const Font& font, uint32_t alignment, Color color, float x, float y, uint32_t stringID)
 {
-	const size_t cmdSize = sizeof(ShapeCommand::Enum) + sizeof(Font) + sizeof(uint32_t) * 2 + sizeof(Color) + sizeof(float) * 2;
-	void* cmd = allocCommand(m_CmdList, (uint32_t)cmdSize);
-
-	bx::StaticMemoryBlockWriter writer(cmd, (uint32_t)cmdSize);
-	bx::write(&writer, ShapeCommand::TextDynamic);
-	bx::write(&writer, font);
-	bx::write(&writer, alignment);
-	bx::write(&writer, color);
-	bx::write(&writer, x);
-	bx::write(&writer, y);
-	bx::write(&writer, stringID);
+	bx::write(&m_CmdListWriter, ShapeCommand::TextDynamic);
+	bx::write(&m_CmdListWriter, font);
+	bx::write(&m_CmdListWriter, alignment);
+	bx::write(&m_CmdListWriter, color);
+	bx::write(&m_CmdListWriter, x);
+	bx::write(&m_CmdListWriter, y);
+	bx::write(&m_CmdListWriter, stringID);
 
 	m_Flags |= ShapeFlag::HasText | ShapeFlag::HasDynamicText;
 }
 #endif
+
+void Shape::PushState()
+{
+	bx::write(&m_CmdListWriter, ShapeCommand::PushState);
+}
+
+void Shape::PopState()
+{
+	bx::write(&m_CmdListWriter, ShapeCommand::PopState);
+}
+
+void Shape::Scissor(float x, float y, float w, float h)
+{
+	bx::write(&m_CmdListWriter, ShapeCommand::Scissor);
+	bx::write(&m_CmdListWriter, x);
+	bx::write(&m_CmdListWriter, y);
+	bx::write(&m_CmdListWriter, w);
+	bx::write(&m_CmdListWriter, h);
+}
 }

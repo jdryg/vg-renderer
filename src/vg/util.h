@@ -8,6 +8,8 @@ namespace vg
 void memset32(void* __restrict dst, uint32_t n, const void* __restrict src);
 void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src);
 void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src);
+
+void genQuadIndices_unaligned(uint16_t* dst, uint32_t numQuads, uint16_t firstVertexID);
 }
 
 #endif
