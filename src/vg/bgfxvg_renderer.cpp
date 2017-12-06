@@ -1681,8 +1681,8 @@ GradientHandle Context::createRadialGradient(float cx, float cy, float inr, floa
 	grad->m_Matrix[6] = inversePatternMatrix[4];
 	grad->m_Matrix[7] = inversePatternMatrix[5];
 	grad->m_Matrix[8] = 1.0f;
-	grad->m_Params[0] = r * 0.5f;
-	grad->m_Params[1] = r * 0.5f;
+	grad->m_Params[0] = r;
+	grad->m_Params[1] = r;
 	grad->m_Params[2] = r;
 	grad->m_Params[3] = bx::fmax(1.0f, f);
 	grad->m_InnerColor[0] = ColorRGBA::getRed(icol) / 255.0f;
