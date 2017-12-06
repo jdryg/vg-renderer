@@ -71,7 +71,11 @@ struct State
 struct VertexBuffer
 {
 	float* m_Pos;
+#if VG_CONFIG_UV_INT16
+	int16_t* m_UV;
+#else
 	float* m_UV;
+#endif
 	uint32_t* m_Color;
 	uint32_t m_Count;
 	bgfx::DynamicVertexBufferHandle m_PosBufferHandle;
@@ -141,7 +145,11 @@ struct DrawCommand
 struct CachedDrawCommand
 {
 	float* m_Pos;
+#if VG_CONFIG_UV_INT16
+	int16_t* m_UV;
+#else
 	float* m_UV;
+#endif
 	uint32_t* m_Color;
 	uint16_t* m_Indices;
 	uint16_t m_NumVertices;
@@ -194,8 +202,14 @@ struct Context
 
 	float** m_Vec2DataPool;
 	uint32_t** m_Uint32DataPool;
+#if VG_CONFIG_UV_INT16
+	int16_t** m_UVDataPool;
+#endif
 	uint32_t m_Vec2DataPoolCapacity;
 	uint32_t m_Uint32DataPoolCapacity;
+#if VG_CONFIG_UV_INT16
+	uint32_t m_UVDataPoolCapacity;
+#endif
 #if BX_CONFIG_SUPPORTS_THREADING
 	bx::Mutex m_DataPoolMutex;
 #endif
@@ -262,6 +276,15 @@ struct Context
 	// Helpers...
 	inline State* getState()               { return &m_StateStack[m_CurStateID]; }
 	inline VertexBuffer* getVertexBuffer() { return &m_VertexBuffers[m_NumVertexBuffers - 1]; }
+#if VG_CONFIG_UV_INT16
+	inline void getWhitePixelUV(int16_t* uv)
+	{
+		int w, h;
+		getImageSize(m_FontImages[0], &w, &h);
+		uv[0] = INT16_MAX / (int16_t)w;
+		uv[1] = INT16_MAX / (int16_t)h;
+	}
+#else
 	inline void getWhitePixelUV(float* uv)
 	{
 		int w, h;
@@ -269,6 +292,7 @@ struct Context
 		uv[0] = 0.5f / (float)w;
 		uv[1] = 0.5f / (float)h;
 	}
+#endif
 
 	bool init();
 	void beginFrame(uint32_t windowWidth, uint32_t windowHeight, float devicePixelRatio);
@@ -328,6 +352,10 @@ struct Context
 	uint32_t* allocVertexBufferData_Uint32();
 	void releaseVertexBufferData_Vec2(float* data);
 	void releaseVertexBufferData_Uint32(uint32_t* data);
+#if VG_CONFIG_UV_INT16
+	int16_t* allocVertexBufferData_UV();
+	void releaseVertexBufferData_UV(int16_t* data);
+#endif
 
 	// Index buffers
 	IndexBuffer* allocIndexBuffer();
@@ -380,6 +408,14 @@ static void releaseVertexBufferDataCallback_Uint32(void* ptr, void* userData)
 	Context* ctx = (Context*)userData;
 	ctx->releaseVertexBufferData_Uint32((uint32_t*)ptr);
 }
+
+#if VG_CONFIG_UV_INT16
+static void releaseVertexBufferDataCallback_UV(void* ptr, void* userData)
+{
+	Context* ctx = (Context*)userData;
+	ctx->releaseVertexBufferData_UV((int16_t*)ptr);
+}
+#endif
 
 static void releaseIndexBufferCallback(void* ptr, void* userData)
 {
@@ -452,6 +488,9 @@ void batchTransformPositions(const float* __restrict v, uint32_t n, float* __res
 void batchTransformPositions_Unaligned(const float* __restrict v, uint32_t n, float* __restrict p, const float* __restrict mtx);
 void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint16_t* __restrict dst, uint16_t delta);
 void batchTransformTextQuads(const FONSquad* __restrict quads, uint32_t n, const float* __restrict mtx, float* __restrict transformedVertices);
+#if VG_CONFIG_UV_INT16
+void generateUVs(const float* __restrict v, uint32_t n, int16_t* __restrict uv, const float* __restrict mtx);
+#endif
 
 //////////////////////////////////////////////////////////////////////////
 // BGFXVGRenderer
@@ -796,6 +835,10 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID)
 	, m_Uint32DataPool(nullptr)
 	, m_Vec2DataPoolCapacity(0)
 	, m_Uint32DataPoolCapacity(0)
+#if VG_CONFIG_UV_INT16
+	, m_UVDataPool(nullptr)
+	, m_UVDataPoolCapacity(0)
+#endif
 	, m_DrawCommands(nullptr)
 	, m_NumDrawCommands(0)
 	, m_DrawCommandCapacity(0)
@@ -979,7 +1022,11 @@ bool Context::init()
 	m_Stroker = BX_NEW(m_Allocator, Stroker)(m_Allocator);
 	
 	m_PosVertexDecl.begin().add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float).end();
+#if VG_CONFIG_UV_INT16
+	m_UVVertexDecl.begin().add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Int16, true).end();
+#else
 	m_UVVertexDecl.begin().add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float).end();
+#endif
 	m_ColorVertexDecl.begin().add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true).end();
 
 	bgfx::RendererType::Enum bgfxRendererType = bgfx::getRendererType();
@@ -1068,7 +1115,11 @@ void Context::endFrame()
 	if (m_NumDrawCommands == 0) {
 		// Release the vertex buffer allocated in beginFrame()
 		releaseVertexBufferData_Vec2(m_VertexBuffers[0].m_Pos);
+#if VG_CONFIG_UV_INT16
+		releaseVertexBufferData_UV(m_VertexBuffers[0].m_UV);
+#else
 		releaseVertexBufferData_Vec2(m_VertexBuffers[0].m_UV);
+#endif
 		releaseVertexBufferData_Uint32(m_VertexBuffers[0].m_Color);
 
 		return;
@@ -1091,7 +1142,11 @@ void Context::endFrame()
 		}
 
 		const bgfx::Memory* posMem = bgfx::makeRef(vb->m_Pos, sizeof(float) * 2 * vb->m_Count, releaseVertexBufferDataCallback_Vec2, this);
+#if VG_CONFIG_UV_INT16
+		const bgfx::Memory* uvMem = bgfx::makeRef(vb->m_UV, sizeof(int16_t) * 2 * vb->m_Count, releaseVertexBufferDataCallback_UV, this);
+#else
 		const bgfx::Memory* uvMem = bgfx::makeRef(vb->m_UV, sizeof(float) * 2 * vb->m_Count, releaseVertexBufferDataCallback_Vec2, this);
+#endif
 		const bgfx::Memory* colorMem = bgfx::makeRef(vb->m_Color, sizeof(uint32_t) * vb->m_Count, releaseVertexBufferDataCallback_Uint32, this);
 
 		bgfx::updateDynamicVertexBuffer(vb->m_PosBufferHandle, 0, posMem);
@@ -2728,14 +2783,22 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 		IndexBuffer* ib = m_ActiveIndexBuffer;
 		const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 		float* dstPos = &vb->m_Pos[vbOffset << 1];
+#if VG_CONFIG_UV_INT16
+		int16_t* dstUV = &vb->m_UV[vbOffset << 1];
+#else
 		float* dstUV = &vb->m_UV[vbOffset << 1];
+#endif
 		uint32_t* dstColor = &vb->m_Color[vbOffset];
 		uint16_t* dstIndex = &ib->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 		const uint16_t startVertexID = (uint16_t)cmd->m_NumVertices;
 
 		batchTransformPositions_Unaligned(cachedCmd->m_Pos, cachedCmd->m_NumVertices, dstPos, mtx);
+#if VG_CONFIG_UV_INT16
+		bx::memCopy(dstUV, cachedCmd->m_UV, sizeof(int16_t) * 2 * cachedCmd->m_NumVertices);
+#else
 		bx::memCopy(dstUV, cachedCmd->m_UV, sizeof(float) * 2 * cachedCmd->m_NumVertices);
+#endif
 		bx::memCopy(dstColor, cachedCmd->m_Color, sizeof(uint32_t) * cachedCmd->m_NumVertices);
 		batchTransformDrawIndices(cachedCmd->m_Indices, cachedCmd->m_NumIndices, dstIndex, startVertexID);
 
@@ -2852,14 +2915,26 @@ void Context::cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* c
 	VG_CHECK(cachedCmd->m_NumIndices + cmd->m_NumIndices < 65536, "Not enough space in current cached command");
 	cachedCmd->m_NumVertices += (uint16_t)cmd->m_NumVertices;
 	cachedCmd->m_Pos = (float*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Pos, sizeof(float) * 2 * cachedCmd->m_NumVertices, 16);
+#if VG_CONFIG_UV_INT16
+	cachedCmd->m_UV = (int16_t*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_UV, sizeof(int16_t) * 2 * cachedCmd->m_NumVertices, 16);
+#else
 	cachedCmd->m_UV = (float*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_UV, sizeof(float) * 2 * cachedCmd->m_NumVertices, 16);
+#endif
 	cachedCmd->m_Color = (uint32_t*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Color, sizeof(uint32_t) * cachedCmd->m_NumVertices, 16);
 
 	const float* srcPos = &m_VertexBuffers[cmd->m_VertexBufferID].m_Pos[cmd->m_FirstVertexID << 1];
+#if VG_CONFIG_UV_INT16
+	const int16_t* srcUV = &m_VertexBuffers[cmd->m_VertexBufferID].m_UV[cmd->m_FirstVertexID << 1];
+#else
 	const float* srcUV = &m_VertexBuffers[cmd->m_VertexBufferID].m_UV[cmd->m_FirstVertexID << 1];
+#endif
 	const uint32_t* srcColor = &m_VertexBuffers[cmd->m_VertexBufferID].m_Color[cmd->m_FirstVertexID];
 	bx::memCopy(&cachedCmd->m_Pos[firstVertexID << 1], srcPos, sizeof(float) * 2 * cmd->m_NumVertices);
+#if VG_CONFIG_UV_INT16
+	bx::memCopy(&cachedCmd->m_UV[firstVertexID << 1], srcUV, sizeof(int16_t) * 2 * cmd->m_NumVertices);
+#else
 	bx::memCopy(&cachedCmd->m_UV[firstVertexID << 1], srcUV, sizeof(float) * 2 * cmd->m_NumVertices);
+#endif
 	bx::memCopy(&cachedCmd->m_Color[firstVertexID], srcColor, sizeof(uint32_t) * cmd->m_NumVertices);
 
 	// Copy the indices...
@@ -2987,6 +3062,25 @@ void Context::renderTextQuads(uint32_t numQuads, Color color)
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
 	memset32(dstColor, numDrawVertices, &c);
 
+#if VG_CONFIG_UV_INT16
+	int16_t* dstUV = &vb->m_UV[vbOffset << 1];
+	const FONSquad* q = m_TextQuads;
+	uint32_t nq = numQuads;
+	while (nq-- > 0) {
+		const float s0 = q->s0;
+		const float s1 = q->s1;
+		const float t0 = q->t0;
+		const float t1 = q->t1;
+
+		dstUV[0] = (int16_t)(s0 * INT16_MAX); dstUV[1] = (int16_t)(t0 * INT16_MAX);
+		dstUV[2] = (int16_t)(s1 * INT16_MAX); dstUV[3] = (int16_t)(t0 * INT16_MAX);
+		dstUV[4] = (int16_t)(s1 * INT16_MAX); dstUV[5] = (int16_t)(t1 * INT16_MAX);
+		dstUV[6] = (int16_t)(s0 * INT16_MAX); dstUV[7] = (int16_t)(t1 * INT16_MAX);
+
+		dstUV += 8;
+		++q;
+	}
+#else
 	float* dstUV = &vb->m_UV[vbOffset << 1];
 	const FONSquad* q = m_TextQuads;
 	uint32_t nq = numQuads;
@@ -3004,6 +3098,7 @@ void Context::renderTextQuads(uint32_t numQuads, Color color)
 		dstUV += 8;
 		++q;
 	}
+#endif
 
 	uint16_t* dstIndex = &m_ActiveIndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	genQuadIndices_unaligned(dstIndex, numQuads, (uint16_t)cmd->m_NumVertices);
@@ -3167,7 +3262,11 @@ VertexBuffer* Context::allocVertexBuffer()
 
 	VertexBuffer* vb = &m_VertexBuffers[m_NumVertexBuffers++];
 	vb->m_Pos = allocVertexBufferData_Vec2();
+#if VG_CONFIG_UV_INT16
+	vb->m_UV = allocVertexBufferData_UV();
+#else
 	vb->m_UV = allocVertexBufferData_Vec2();
+#endif
 	vb->m_Color = allocVertexBufferData_Uint32();
 	vb->m_Count = 0;
 
@@ -3422,6 +3521,35 @@ uint32_t* Context::allocVertexBufferData_Uint32()
 	return m_Uint32DataPool[oldCapacity];
 }
 
+#if VG_CONFIG_UV_INT16
+int16_t* Context::allocVertexBufferData_UV()
+{
+#if BX_CONFIG_SUPPORTS_THREADING
+	bx::MutexScope ms(m_DataPoolMutex);
+#endif
+
+	for (uint32_t i = 0; i < m_UVDataPoolCapacity; ++i) {
+		// If LSB of pointer is set it means that the ptr is valid and the buffer is free for reuse.
+		if (((uintptr_t)m_UVDataPool[i]) & 1) {
+			// Remove the free flag
+			m_UVDataPool[i] = (int16_t*)((uintptr_t)m_UVDataPool[i] & ~1);
+			return m_UVDataPool[i];
+		} else if (m_UVDataPool[i] == nullptr) {
+			m_UVDataPool[i] = (int16_t*)BX_ALIGNED_ALLOC(m_Allocator, sizeof(int16_t) * 2 * MAX_VB_VERTICES, 16);
+			return m_UVDataPool[i];
+		}
+	}
+
+	uint32_t oldCapacity = m_UVDataPoolCapacity;
+	m_UVDataPoolCapacity += 8;
+	m_UVDataPool = (int16_t**)BX_REALLOC(m_Allocator, m_UVDataPool, sizeof(int16_t*) * m_UVDataPoolCapacity);
+	bx::memSet(&m_UVDataPool[oldCapacity], 0, sizeof(int16_t*) * (m_UVDataPoolCapacity - oldCapacity));
+
+	m_UVDataPool[oldCapacity] = (int16_t*)BX_ALIGNED_ALLOC(m_Allocator, sizeof(int16_t) * 2 * MAX_VB_VERTICES, 16);
+	return m_UVDataPool[oldCapacity];
+}
+#endif
+
 void Context::releaseVertexBufferData_Vec2(float* data)
 {
 #if BX_CONFIG_SUPPORTS_THREADING
@@ -3453,6 +3581,24 @@ void Context::releaseVertexBufferData_Uint32(uint32_t* data)
 		}
 	}
 }
+
+#if VG_CONFIG_UV_INT16
+void Context::releaseVertexBufferData_UV(int16_t* data)
+{
+#if BX_CONFIG_SUPPORTS_THREADING
+	bx::MutexScope ms(m_DataPoolMutex);
+#endif
+
+	VG_CHECK(data != nullptr, "Tried to release a null vertex buffer");
+	for (uint32_t i = 0; i < m_UVDataPoolCapacity; ++i) {
+		if (m_UVDataPool[i] == data) {
+			// Mark buffer as free by setting the LSB of the ptr to 1.
+			m_UVDataPool[i] = (int16_t*)((uintptr_t)m_UVDataPool[i] | 1);
+			return;
+		}
+	}
+}
+#endif
 
 void Context::releaseIndexBuffer(uint16_t* data)
 {
@@ -3545,9 +3691,6 @@ void Context::text(String* str, uint32_t alignment, Color color, float x, float 
 
 void Context::createDrawCommand_VertexColor(const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
 {
-	float uv[2];
-	getWhitePixelUV(&uv[0]);
-
 	// Allocate the draw command
 	DrawCommand* cmd = allocDrawCommand_TexturedVertexColor(numVertices, numIndices, m_FontImages[0]);
 
@@ -3558,8 +3701,19 @@ void Context::createDrawCommand_VertexColor(const float* vtx, uint32_t numVertic
 	float* dstPos = &vb->m_Pos[vbOffset << 1];
 	bx::memCopy(dstPos, vtx, sizeof(float) * 2 * numVertices);
 
+#if VG_CONFIG_UV_INT16
+	int16_t uv[2];
+	getWhitePixelUV(&uv[0]);
+
+	int16_t* dstUV = &vb->m_UV[vbOffset << 1];
+	memset32(dstUV, numVertices, &uv[0]);
+#else
+	float uv[2];
+	getWhitePixelUV(&uv[0]);
+
 	float* dstUV = &vb->m_UV[vbOffset << 1];
 	memset64(dstUV, numVertices, &uv[0]);
+#endif
 
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
 	if (numColors == numVertices) {
@@ -3587,8 +3741,13 @@ void Context::createDrawCommand_Textured(const float* vtx, uint32_t numVertices,
 	float* dstPos = &vb->m_Pos[vbOffset << 1];
 	bx::memCopy(dstPos, vtx, sizeof(float) * 2 * numVertices);
 
+#if VG_CONFIG_UV_INT16
+	int16_t* dstUV = &vb->m_UV[vbOffset << 1];
+	generateUVs(vtx, numVertices, dstUV, uvMatrix);
+#else
 	float* dstUV = &vb->m_UV[vbOffset << 1];
 	batchTransformPositions_Unaligned(vtx, numVertices, dstUV, uvMatrix);
+#endif
 
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
 	if (numColors == numVertices) {
@@ -3615,8 +3774,13 @@ void Context::createDrawCommand_Gradient(const float* vtx, uint32_t numVertices,
 	float* dstPos = &vb->m_Pos[vbOffset << 1];
 	bx::memCopy(dstPos, vtx, sizeof(float) * 2 * numVertices);
 
+#if VG_CONFIG_UV_INT16
+	int16_t* dstUV = &vb->m_UV[vbOffset << 1];
+	bx::memSet(dstUV, 0, sizeof(int16_t) * 2 * numVertices);
+#else
 	float* dstUV = &vb->m_UV[vbOffset << 1];
 	bx::memSet(dstUV, 0, sizeof(float) * 2 * numVertices); // UVs not used by the shader.
+#endif
 
 	const uint32_t color = ColorRGBA::White;
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
@@ -3919,21 +4083,29 @@ void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint1
 	}
 
 	switch (rem) {
-	case 7:
-		*dst++ = *src++ + delta;
-	case 6:
-		*dst++ = *src++ + delta;
-	case 5:
-		*dst++ = *src++ + delta;
-	case 4:
-		*dst++ = *src++ + delta;
-	case 3:
-		*dst++ = *src++ + delta;
-	case 2:
-		*dst++ = *src++ + delta;
-	case 1:
-		*dst++ = *src++ + delta;
+	case 7: *dst++ = *src++ + delta;
+	case 6: *dst++ = *src++ + delta;
+	case 5: *dst++ = *src++ + delta;
+	case 4: *dst++ = *src++ + delta;
+	case 3: *dst++ = *src++ + delta;
+	case 2: *dst++ = *src++ + delta;
+	case 1: *dst   = *src   + delta;
 	}
 #endif
 }
+
+#if VG_CONFIG_UV_INT16
+void generateUVs(const float* __restrict v, uint32_t n, int16_t* __restrict uv, const float* __restrict mtx)
+{
+	for (uint32_t i = 0; i < n; ++i) {
+		const uint32_t id = i << 1;
+
+		float p[2];
+		transformPos2D(v[id], v[id + 1], mtx, &p[0]);
+
+		uv[id + 0] = (int16_t)(p[0] * INT16_MAX);
+		uv[id + 1] = (int16_t)(p[1] * INT16_MAX);
+	}
+}
+#endif
 }

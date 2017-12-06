@@ -43,6 +43,10 @@
 #	define VG_CONFIG_LIBTESS2_SCRATCH_BUFFER (4 * 1024 * 1024) // Set to 0 to let libtess2 use malloc/free
 #endif
 
+#ifndef VG_CONFIG_UV_INT16
+#	define VG_CONFIG_UV_INT16 1
+#endif
+
 #if VG_CONFIG_DEBUG
 #define VG_TRACE(_format, ...) \
 	do { \
