@@ -3774,6 +3774,7 @@ void Context::createDrawCommand_Gradient(const float* vtx, uint32_t numVertices,
 	float* dstPos = &vb->m_Pos[vbOffset << 1];
 	bx::memCopy(dstPos, vtx, sizeof(float) * 2 * numVertices);
 
+#if 0
 #if VG_CONFIG_UV_INT16
 	int16_t* dstUV = &vb->m_UV[vbOffset << 1];
 	bx::memSet(dstUV, 0, sizeof(int16_t) * 2 * numVertices);
@@ -3785,6 +3786,7 @@ void Context::createDrawCommand_Gradient(const float* vtx, uint32_t numVertices,
 	const uint32_t color = ColorRGBA::White;
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
 	memset32(dstColor, numVertices, &color);
+#endif
 
 	uint16_t* dstIndex = &m_ActiveIndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);
