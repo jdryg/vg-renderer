@@ -7,6 +7,7 @@
 #include <bx/math.h>
 
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4127) // conditional expression is constant
+BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4456) // declaration of X hides previous local decleration
 
 namespace vg
 {
@@ -29,7 +30,11 @@ inline Vec2 vec2Dir(const Vec2& a, const Vec2& b)
 	const float dx = b.x - a.x;
 	const float dy = b.y - a.y;
 	const float lenSqr = dx * dx + dy * dy;
-	const float invLen = lenSqr < VG_EPSILON ? 0.0f : bx::frsqrt(lenSqr);
+#if 0
+	const float invLen = lenSqr < VG_EPSILON ? 0.0f : bx::rsqrt(lenSqr);
+#else
+	const float invLen = lenSqr < VG_EPSILON ? 0.0f : (1.0f / sqrtf(lenSqr));
+#endif
 	return{ dx * invLen, dy * invLen };
 }
 
@@ -40,7 +45,7 @@ inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
 	// assumed to be normalized.
 	Vec2 v = vec2PerpCCW(d01);
 	const float cross = vec2Cross(d12, d01);
-	if (bx::fabs(cross) > VG_EPSILON) {
+	if (bx::abs(cross) > VG_EPSILON) {
 		v = vec2Scale(vec2Sub(d01, d12), (1.0f / cross));
 	}
 
@@ -346,8 +351,8 @@ void StrokerImpl::polylineStroke(Mesh* mesh, const Vec2* vtx, uint32_t numPathVe
 {
 	const uint32_t numSegments = numPathVertices - (_Closed ? 0 : 1);
 	const float hsw = strokeWidth * 0.5f;
-	const float da = bx::facos((m_Scale * hsw) / ((m_Scale * hsw) + m_TesselationTolerance)) * 2.0f;
-	const uint32_t numPointsHalfCircle = bx::uint32_max(2u, (uint32_t)bx::fceil(bx::kPi / da));
+	const float da = bx::acos((m_Scale * hsw) / ((m_Scale * hsw) + m_TesselationTolerance)) * 2.0f;
+	const uint32_t numPointsHalfCircle = bx::uint32_max(2u, (uint32_t)bx::ceil(bx::kPi / da));
 
 	resetGeometry();
 
@@ -395,11 +400,11 @@ void StrokerImpl::polylineStroke(Mesh* mesh, const Vec2* vtx, uint32_t numPathVe
 		} else if (_LineCap == LineCap::Round) {
 			expandVB(numPointsHalfCircle);
 
-			const float startAngle = bx::fatan2(l01.y, l01.x);
+			const float startAngle = bx::atan2(l01.y, l01.x);
 			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
 				float a = startAngle + i * bx::kPi / (float)(numPointsHalfCircle - 1);
-				float ca = bx::fcos(a);
-				float sa = bx::fsin(a);
+				float ca = bx::cos(a);
+				float sa = bx::sin(a);
 
 				Vec2 p = { p0.x + ca * hsw, p0.y + sa * hsw };
 
@@ -473,8 +478,8 @@ void StrokerImpl::polylineStroke(Mesh* mesh, const Vec2* vtx, uint32_t numPathVe
 				float a01 = 0.0f, a12 = 0.0f, arcDa = 0.0f;
 				uint32_t numArcPoints = 1;
 				if (_LineJoin == LineJoin::Round) {
-					a01 = bx::fatan2(r01.y, r01.x);
-					a12 = bx::fatan2(r12.y, r12.x);
+					a01 = bx::atan2(r01.y, r01.x);
+					a12 = bx::atan2(r12.y, r12.x);
 					if (a12 < a01) {
 						a12 += bx::kPi2;
 					}
@@ -494,8 +499,8 @@ void StrokerImpl::polylineStroke(Mesh* mesh, const Vec2* vtx, uint32_t numPathVe
 				addPos(&p[0], 2);
 				for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
 					float a = a01 + iArcPoint * arcDa;
-					float ca = bx::fcos(a);
-					float sa = bx::fsin(a);
+					float ca = bx::cos(a);
+					float sa = bx::sin(a);
 
 					Vec2 p = { p1.x + hsw * ca, p1.y + hsw * sa };
 
@@ -571,8 +576,8 @@ void StrokerImpl::polylineStroke(Mesh* mesh, const Vec2* vtx, uint32_t numPathVe
 				float a01 = 0.0f, a12 = 0.0f, arcDa = 0.0f;
 				uint32_t numArcPoints = 1;
 				if (_LineJoin == LineJoin::Round) {
-					a01 = bx::fatan2(l01.y, l01.x);
-					a12 = bx::fatan2(l12.y, l12.x);
+					a01 = bx::atan2(l01.y, l01.x);
+					a12 = bx::atan2(l12.y, l12.x);
 					if (a12 > a01) {
 						a12 -= bx::kPi2;
 					}
@@ -592,8 +597,8 @@ void StrokerImpl::polylineStroke(Mesh* mesh, const Vec2* vtx, uint32_t numPathVe
 				addPos(&p[0], 2);
 				for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
 					float a = a01 + iArcPoint * arcDa;
-					float ca = bx::fcos(a);
-					float sa = bx::fsin(a);
+					float ca = bx::cos(a);
+					float sa = bx::sin(a);
 
 					Vec2 p = { p1.x + hsw * ca, p1.y + hsw * sa };
 					addPos(&p, 1);
@@ -679,11 +684,11 @@ void StrokerImpl::polylineStroke(Mesh* mesh, const Vec2* vtx, uint32_t numPathVe
 			expandVB(numPointsHalfCircle);
 
 			const uint16_t curSegmentLeftID = (uint16_t)m_NumVertices;
-			const float startAngle = bx::fatan2(l01.y, l01.x);
+			const float startAngle = bx::atan2(l01.y, l01.x);
 			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
 				float a = startAngle - i * bx::kPi / (float)(numPointsHalfCircle - 1);
-				float ca = bx::fcos(a);
-				float sa = bx::fsin(a);
+				float ca = bx::cos(a);
+				float sa = bx::sin(a);
 
 				Vec2 p = { p1.x + ca * hsw, p1.y + sa * hsw };
 
@@ -731,8 +736,8 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 	const uint32_t c0_c_c_c0[4] = { c0, color, color, c0 };
 	const float hsw = (strokeWidth - m_FringeWidth) * 0.5f;
 	const float hsw_aa = hsw + m_FringeWidth;
-	const float da = bx::facos((m_Scale * hsw) / ((m_Scale * hsw) + m_TesselationTolerance)) * 2.0f;
-	const uint32_t numPointsHalfCircle = bx::uint32_max(2u, (uint32_t)bx::fceil(bx::kPi / da));
+	const float da = bx::acos((m_Scale * hsw) / ((m_Scale * hsw) + m_TesselationTolerance)) * 2.0f;
+	const uint32_t numPointsHalfCircle = bx::uint32_max(2u, (uint32_t)bx::ceil(bx::kPi / da));
 
 	resetGeometry();
 
@@ -809,12 +814,12 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 			prevSegmentRightID = 2;
 			prevSegmentRightAAID = 3;
 		} else if (_LineCap == LineCap::Round) {
-			const float startAngle = bx::fatan2(l01.y, l01.x);
+			const float startAngle = bx::atan2(l01.y, l01.x);
 			expandVB(numPointsHalfCircle << 1);
 			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
 				float a = startAngle + i * bx::kPi / (float)(numPointsHalfCircle - 1);
-				float ca = bx::fcos(a);
-				float sa = bx::fsin(a);
+				float ca = bx::cos(a);
+				float sa = bx::sin(a);
 
 				Vec2 p[2] = {
 					{ p0.x + ca * hsw, p0.y + sa * hsw },
@@ -921,8 +926,8 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 				float a01 = 0.0f, a12 = 0.0f, arcDa = 0.0f;
 				uint32_t numArcPoints = 1;
 				if (_LineJoin == LineJoin::Round) {
-					a01 = bx::fatan2(r01.y, r01.x);
-					a12 = bx::fatan2(r12.y, r12.x);
+					a01 = bx::atan2(r01.y, r01.x);
+					a12 = bx::atan2(r12.y, r12.x);
 					if (a12 < a01) {
 						a12 += bx::kPi2;
 					}
@@ -948,7 +953,7 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 					};
 
 					if (_LineJoin == LineJoin::Bevel) {
-						const float cosAngle = bx::fabs(vec2Dot(r01, r12));
+						const float cosAngle = bx::abs(vec2Dot(r01, r12));
 						p[0] = vec2Sub(p[0], vec2Scale(d01, (cosAngle * m_FringeWidth)));
 					}
 
@@ -959,7 +964,7 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 				for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
 					float a = a01 + iArcPoint * arcDa;
 
-					const Vec2 arcPointDir = { bx::fcos(a), bx::fsin(a) };
+					const Vec2 arcPointDir = { bx::cos(a), bx::sin(a) };
 
 					Vec2 p[2] = {
 						vec2Add(p1, vec2Scale(arcPointDir, hsw)),
@@ -977,7 +982,7 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 					};
 
 					if (_LineJoin == LineJoin::Bevel) {
-						const float cosAngle = bx::fabs(vec2Dot(r01, r12));
+						const float cosAngle = bx::abs(vec2Dot(r01, r12));
 						p[0] = vec2Add(p[0], vec2Scale(d12, (cosAngle * m_FringeWidth)));
 					}
 
@@ -1077,8 +1082,8 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 				float a01 = 0.0f, a12 = 0.0f, arcDa = 0.0f;
 				uint32_t numArcPoints = 1;
 				if (_LineJoin == LineJoin::Round) {
-					a01 = bx::fatan2(l01.y, l01.x);
-					a12 = bx::fatan2(l12.y, l12.x);
+					a01 = bx::atan2(l01.y, l01.x);
+					a12 = bx::atan2(l12.y, l12.x);
 					if (a12 > a01) {
 						a12 -= bx::kPi2;
 					}
@@ -1104,7 +1109,7 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 					};
 
 					if (_LineJoin == LineJoin::Bevel) {
-						const float cosAngle = bx::fabs(vec2Dot(l01, l12));
+						const float cosAngle = bx::abs(vec2Dot(l01, l12));
 						p[0] = vec2Sub(p[0], vec2Scale(d01, (cosAngle * m_FringeWidth)));
 					}
 
@@ -1115,7 +1120,7 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 				for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
 					float a = a01 + iArcPoint * arcDa;
 
-					const Vec2 arcPointDir = { bx::fcos(a), bx::fsin(a) };
+					const Vec2 arcPointDir = { bx::cos(a), bx::sin(a) };
 
 					Vec2 p[2] = {
 						vec2Add(p1, vec2Scale(arcPointDir, hsw)),
@@ -1133,7 +1138,7 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 					};
 
 					if (_LineJoin == LineJoin::Bevel) {
-						const float cosAngle = bx::fabs(vec2Dot(l01, l12));
+						const float cosAngle = bx::abs(vec2Dot(l01, l12));
 						p[0] = vec2Add(p[0], vec2Scale(d12, (cosAngle * m_FringeWidth)));
 					}
 
@@ -1252,13 +1257,13 @@ void StrokerImpl::polylineStrokeAA(Mesh* mesh, const Vec2* vtx, uint32_t numPath
 			addIndices(&id[0], 24);
 		} else if (_LineCap == LineCap::Round) {
 			const uint16_t curSegmentLeftID = (uint16_t)m_NumVertices;
-			const float startAngle = bx::fatan2(l01.y, l01.x);
+			const float startAngle = bx::atan2(l01.y, l01.x);
 
 			expandVB(numPointsHalfCircle * 2);
 			for (uint32_t i = 0; i < numPointsHalfCircle; ++i) {
 				float a = startAngle - i * bx::kPi / (float)(numPointsHalfCircle - 1);
-				float ca = bx::fcos(a);
-				float sa = bx::fsin(a);
+				float ca = bx::cos(a);
+				float sa = bx::sin(a);
 
 				Vec2 p[2] = {
 					{ p1.x + ca * hsw, p1.y + sa * hsw },

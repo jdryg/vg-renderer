@@ -29,6 +29,7 @@ public:
 	void cubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y);
 	void rect(float x, float y, float w, float h);
 	void roundedRect(float x, float y, float w, float h, float r);
+	void roundedRectVarying(float x, float y, float w, float h, float rtl, float rbl, float rbr, float rtr);
 	void circle(float x, float y, float r);
 	void polyline(const float* coords, uint32_t numPoints);
 	void close();

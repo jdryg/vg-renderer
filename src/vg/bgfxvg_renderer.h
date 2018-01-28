@@ -31,6 +31,7 @@ public:
 	virtual void ArcTo(float x1, float y1, float x2, float y2, float radius);
 	virtual void Rect(float x, float y, float w, float h);
 	virtual void RoundedRect(float x, float y, float w, float h, float r);
+	virtual void RoundedRectVarying(float x, float y, float w, float h, float rtl, float rbl, float rbr, float rtr);
 	virtual void Circle(float cx, float cy, float radius);
 	virtual void Polyline(const float* coords, uint32_t numPoints);
 	virtual void ClosePath();
@@ -39,6 +40,9 @@ public:
 	virtual void FillConvexPath(ImagePatternHandle img, bool aa);
 	virtual void FillConcavePath(Color col, bool aa);
 	virtual void StrokePath(Color col, float width, bool aa, LineCap::Enum lineCap, LineJoin::Enum lineJoin);
+	virtual void BeginClip(ClipRule::Enum rule);
+	virtual void EndClip();
+	virtual void ResetClip();
 
 	virtual GradientHandle LinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol);
 	virtual GradientHandle BoxGradient(float x, float y, float w, float h, float r, float f, Color icol, vg::Color ocol);

@@ -26,9 +26,11 @@
 #include "shaders/fs_solid_color.bin.h"
 #include "shaders/vs_gradient.bin.h"
 #include "shaders/fs_gradient.bin.h"
+#include "shaders/vs_stencil.bin.h"
+#include "shaders/fs_stencil.bin.h"
 
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4127) // conditional expression is constant (e.g. BezierTo)
-BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment withing conditional expression
+BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment within conditional expression
 BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wshadow");
 
 namespace vg
@@ -53,6 +55,8 @@ static const bgfx::EmbeddedShader s_EmbeddedShaders[] =
 	BGFX_EMBEDDED_SHADER(fs_solid_color),
 	BGFX_EMBEDDED_SHADER(vs_gradient),
 	BGFX_EMBEDDED_SHADER(fs_gradient),
+	BGFX_EMBEDDED_SHADER(vs_stencil),
+	BGFX_EMBEDDED_SHADER(fs_stencil),
 
 	BGFX_EMBEDDED_SHADER_END()
 };
@@ -123,16 +127,25 @@ struct Image
 	}
 };
 
+struct ClipState
+{
+	ClipRule::Enum m_Rule;
+	uint32_t m_FirstCmdID;
+	uint32_t m_NumCmds;
+};
+
 struct DrawCommand
 {
 	enum Type : uint32_t
 	{
 		Type_TexturedVertexColor = 0,
 		Type_ColorGradient = 1,
+		Type_Clip = 2,
 		NumTypes
 	};
 
 	Type m_Type;
+	ClipState m_ClipState;
 	uint32_t m_VertexBufferID;
 	uint32_t m_FirstVertexID;
 	uint32_t m_FirstIndexID;
@@ -218,6 +231,12 @@ struct Context
 	uint32_t m_NumDrawCommands;
 	uint32_t m_DrawCommandCapacity;
 
+	ClipState m_ClipState;
+	DrawCommand* m_ClipCommands;
+	uint32_t m_NumClipCommands;
+	uint32_t m_ClipCommandCapacity;
+	bool m_RecordClipCommands;
+
 	Image* m_Images;
 	uint32_t m_ImageCapacity;
 	bx::HandleAllocT<MAX_TEXTURES> m_ImageAlloc;
@@ -269,6 +288,7 @@ struct Context
 	float m_FringeWidth;
 	uint8_t m_ViewID;
 	bool m_ForceNewDrawCommand;
+	bool m_ForceNewClipCommand;
 
 	Context(bx::AllocatorI* allocator, uint8_t viewID);
 	~Context();
@@ -306,6 +326,7 @@ struct Context
 	void arcTo(float x1, float y1, float x2, float y2, float radius);
 	void rect(float x, float y, float w, float h);
 	void roundedRect(float x, float y, float w, float h, float r);
+	void roundedRectVarying(float x, float y, float w, float h, float rtl, float rbl, float rbr, float rtr);
 	void circle(float cx, float cy, float r);
 	void polyline(const float* coords, uint32_t numPoints);
 	void closePath();
@@ -325,6 +346,11 @@ struct Context
 	float getTextLineHeight(const Font& font, uint32_t alignment);
 	int textBreakLines(const Font& font, uint32_t alignment, const char* text, const char* end, float breakRowWidth, TextRow* rows, int maxRows, uint32_t flags);
 	int textGlyphPositions(const Font& font, uint32_t alignment, float x, float y, const char* text, const char* end, GlyphPosition* positions, int maxPositions);
+
+	// Clipping
+	void beginClip(ClipRule::Enum rule);
+	void endClip();
+	void resetClip();
 
 	// State
 	void pushState();
@@ -364,9 +390,11 @@ struct Context
 	// Draw commands
 	DrawCommand* allocDrawCommand_TexturedVertexColor(uint32_t numVertices, uint32_t numIndices, ImageHandle img);
 	DrawCommand* allocDrawCommand_ColorGradient(uint32_t numVertices, uint32_t numIndices, GradientHandle gradient);
+	DrawCommand* allocDrawCommand_Clip(uint32_t numVertices, uint32_t numIndices);
 	void createDrawCommand_VertexColor(const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
 	void createDrawCommand_Textured(const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, ImageHandle imgHandle, const float* uvMatrix, const uint16_t* indices, uint32_t numIndices);
 	void createDrawCommand_Gradient(const float* vtx, uint32_t numVertices, GradientHandle gradientHandle, const uint16_t* indices, uint32_t numIndices);
+	void createDrawCommand_Clip(const float* vtx, uint32_t numVertices, const uint16_t* indices, uint32_t numIndices);
 
 	// Textures
 	ImageHandle allocImage();
@@ -469,8 +497,13 @@ inline void multiplyMatrix3(const float* __restrict a, const float* __restrict b
 inline float getAverageScale(const float* t)
 {
 	// nvg__getAverageScale
-	float sx = bx::fsqrt(t[0] * t[0] + t[2] * t[2]);
-	float sy = bx::fsqrt(t[1] * t[1] + t[3] * t[3]);
+#if 0
+	float sx = bx::sqrt(t[0] * t[0] + t[2] * t[2]);
+	float sy = bx::sqrt(t[1] * t[1] + t[3] * t[3]);
+#else
+	float sx = sqrtf(t[0] * t[0] + t[2] * t[2]);
+	float sy = sqrtf(t[1] * t[1] + t[3] * t[3]);
+#endif
 	return (sx + sy) * 0.5f;
 }
 
@@ -481,7 +514,7 @@ inline float quantize(float a, float d)
 
 inline float getFontScale(const float* xform)
 {
-	return bx::fmin(quantize(getAverageScale(xform), 0.01f), 4.0f);
+	return bx::min<float>(quantize(getAverageScale(xform), 0.01f), 4.0f);
 }
 
 void batchTransformPositions(const float* __restrict v, uint32_t n, float* __restrict p, const float* __restrict mtx);
@@ -567,6 +600,11 @@ void BGFXVGRenderer::RoundedRect(float x, float y, float w, float h, float r)
 	m_Context->roundedRect(x, y, w, h, r);
 }
 
+void BGFXVGRenderer::RoundedRectVarying(float x, float y, float w, float h, float rtl, float rbl, float rbr, float rtr)
+{
+	m_Context->roundedRectVarying(x, y, w, h, rtl, rbl, rbr, rtr);
+}
+
 void BGFXVGRenderer::Circle(float cx, float cy, float r)
 {
 	m_Context->circle(cx, cy, r);
@@ -625,6 +663,21 @@ void BGFXVGRenderer::StrokePath(Color col, float width, bool aa, LineCap::Enum l
 #endif
 
 	m_Context->strokePath(col, width, aa, lineCap, lineJoin);
+}
+
+void BGFXVGRenderer::BeginClip(ClipRule::Enum rule)
+{
+	m_Context->beginClip(rule);
+}
+
+void BGFXVGRenderer::EndClip()
+{
+	m_Context->endClip();
+}
+
+void BGFXVGRenderer::ResetClip()
+{
+	m_Context->resetClip();
 }
 
 GradientHandle BGFXVGRenderer::LinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol)
@@ -842,6 +895,9 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID)
 	, m_DrawCommands(nullptr)
 	, m_NumDrawCommands(0)
 	, m_DrawCommandCapacity(0)
+	, m_ClipCommands(nullptr)
+	, m_NumClipCommands(0)
+	, m_ClipCommandCapacity(0)
 	, m_Images(nullptr)
 	, m_ImageCapacity(0)
 	, m_Path(nullptr)
@@ -865,6 +921,7 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID)
 	, m_FringeWidth(1.0f)
 	, m_ViewID(viewID)
 	, m_ForceNewDrawCommand(false)
+	, m_ForceNewClipCommand(false)
 	, m_NextFontID(0)
 	, m_NextGradientID(0)
 	, m_NextImagePatternID(0)
@@ -1041,6 +1098,11 @@ bool Context::init()
 		bgfx::createEmbeddedShader(s_EmbeddedShaders, bgfxRendererType, "vs_gradient"),
 		bgfx::createEmbeddedShader(s_EmbeddedShaders, bgfxRendererType, "fs_gradient"),
 		true);
+	m_ProgramHandle[DrawCommand::Type_Clip] =
+		bgfx::createProgram(
+		bgfx::createEmbeddedShader(s_EmbeddedShaders, bgfxRendererType, "vs_stencil"),
+		bgfx::createEmbeddedShader(s_EmbeddedShaders, bgfxRendererType, "fs_stencil"),
+		true);
 
 	m_TexUniform = bgfx::createUniform("s_tex", bgfx::UniformType::Int1, 1);
 	m_PaintMatUniform = bgfx::createUniform("u_paintMat", bgfx::UniformType::Mat3, 1);
@@ -1104,6 +1166,12 @@ void Context::beginFrame(uint32_t windowWidth, uint32_t windowHeight, float devi
 
 	m_NumDrawCommands = 0;
 	m_ForceNewDrawCommand = true;
+
+	m_NumClipCommands = 0;
+	m_ForceNewClipCommand = true;
+	m_ClipState.m_FirstCmdID = ~0u;
+	m_ClipState.m_NumCmds = 0;
+	m_ClipState.m_Rule = ClipRule::In;
 
 	m_NextGradientID = 0;
 	m_NextImagePatternID = 0;
@@ -1175,10 +1243,67 @@ void Context::endFrame()
 
 	uint16_t prevScissorRect[4] = { 0, 0, m_WinWidth, m_WinHeight };
 	uint16_t prevScissorID = UINT16_MAX;
+	uint32_t prevClipCmdID = UINT32_MAX;
+	uint32_t stencilState = BGFX_STENCIL_NONE;
+	uint8_t nextStencilValue = 1;
 
 	const uint32_t numCommands = m_NumDrawCommands;
 	for (uint32_t iCmd = 0; iCmd < numCommands; ++iCmd) {
 		DrawCommand* cmd = &m_DrawCommands[iCmd];
+
+		const ClipState* cmdClipState = &cmd->m_ClipState;
+		if (cmdClipState->m_FirstCmdID != prevClipCmdID) {
+			prevClipCmdID = cmdClipState->m_FirstCmdID;
+			const uint32_t numClipCommands = cmdClipState->m_NumCmds;
+			if (numClipCommands) {
+				for (uint32_t iClip = 0; iClip < numClipCommands; ++iClip) {
+					DrawCommand* clipCmd = &m_ClipCommands[cmdClipState->m_FirstCmdID + iClip];
+
+					VertexBuffer* vb = &m_VertexBuffers[clipCmd->m_VertexBufferID];
+					bgfx::setVertexBuffer(0, vb->m_PosBufferHandle, clipCmd->m_FirstVertexID, clipCmd->m_NumVertices);
+					bgfx::setIndexBuffer(ib->m_bgfxHandle, clipCmd->m_FirstIndexID, clipCmd->m_NumIndices);
+
+					// Set scissor.
+					{
+						const uint16_t* cmdScissorRect = &clipCmd->m_ScissorRect[0];
+						if (!bx::memCmp(cmdScissorRect, &prevScissorRect[0], sizeof(uint16_t) * 4)) {
+							// Re-set the previous cached scissor rect (submit() below doesn't preserve state).
+							bgfx::setScissor(prevScissorID);
+						} else {
+							prevScissorID = bgfx::setScissor(cmdScissorRect[0], cmdScissorRect[1], cmdScissorRect[2], cmdScissorRect[3]);
+							bx::memCopy(prevScissorRect, cmdScissorRect, sizeof(uint16_t) * 4);
+						}
+					}
+
+					VG_CHECK(clipCmd->m_Type == DrawCommand::Type_Clip, "Invalid clip command");
+					VG_CHECK(clipCmd->m_HandleID == UINT16_MAX, "Invalid clip command image handle");
+
+					int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
+					bgfx::setState(0);
+					bgfx::setStencil(BGFX_STENCIL_TEST_ALWAYS     // pass always
+						| BGFX_STENCIL_FUNC_REF(nextStencilValue) // value = nextStencilValue
+						| BGFX_STENCIL_FUNC_RMASK(0xff)
+						| BGFX_STENCIL_OP_FAIL_S_REPLACE
+						| BGFX_STENCIL_OP_FAIL_Z_REPLACE
+						| BGFX_STENCIL_OP_PASS_Z_REPLACE, BGFX_STENCIL_NONE);
+
+					// TODO: Check if it's better to use Type_TexturedVertexColor program here to avoid too many 
+					// state switches.
+					bgfx::submit(m_ViewID, m_ProgramHandle[DrawCommand::Type_Clip], cmdDepth, false);
+				}
+
+				stencilState = (cmdClipState->m_Rule == ClipRule::In ? BGFX_STENCIL_TEST_EQUAL : BGFX_STENCIL_TEST_NOTEQUAL)
+					| BGFX_STENCIL_FUNC_REF(nextStencilValue)
+					| BGFX_STENCIL_FUNC_RMASK(0xff)
+					| BGFX_STENCIL_OP_FAIL_S_KEEP
+					| BGFX_STENCIL_OP_FAIL_Z_KEEP
+					| BGFX_STENCIL_OP_PASS_Z_KEEP;
+
+				++nextStencilValue;
+			} else {
+				stencilState = BGFX_STENCIL_NONE;
+			}
+		}
 
 		VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
 		bgfx::setVertexBuffer(0, vb->m_PosBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
@@ -1208,6 +1333,7 @@ void Context::endFrame()
 				BGFX_STATE_ALPHA_WRITE |
 				BGFX_STATE_RGB_WRITE |
 				BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
+			bgfx::setStencil(stencilState);
 
 			bgfx::submit(m_ViewID, m_ProgramHandle[DrawCommand::Type_TexturedVertexColor], cmdDepth, false);
 		} else if (cmd->m_Type == DrawCommand::Type_ColorGradient) {
@@ -1224,6 +1350,7 @@ void Context::endFrame()
 				BGFX_STATE_ALPHA_WRITE |
 				BGFX_STATE_RGB_WRITE |
 				BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
+			bgfx::setStencil(stencilState);
 
 			bgfx::submit(m_ViewID, m_ProgramHandle[DrawCommand::Type_ColorGradient], cmdDepth, false);
 		} else {
@@ -1312,6 +1439,12 @@ void Context::roundedRect(float x, float y, float w, float h, float r)
 	m_Path->roundedRect(x, y, w, h, r);
 }
 
+void Context::roundedRectVarying(float x, float y, float w, float h, float rtl, float rbl, float rbr, float rtr)
+{
+	VG_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
+	m_Path->roundedRectVarying(x, y, w, h, rtl, rbl, rbr, rtr);
+}
+
 void Context::circle(float cx, float cy, float r)
 {
 	VG_CHECK(!m_PathVerticesTransformed, "Call beginPath() before starting a new path");
@@ -1350,6 +1483,11 @@ void Context::transformPath()
 
 void Context::fillConvexPath(Color col, bool aa)
 {
+	if (m_RecordClipCommands) {
+		col = ColorRGBA::Black;
+		aa = false;
+	}
+
 	const State* state = getState();
 	const uint32_t c = ColorRGBA::setAlpha(col, (uint8_t)(state->m_GlobalAlpha * ColorRGBA::getAlpha(col)));
 	if (ColorRGBA::getAlpha(c) == 0) {
@@ -1383,12 +1521,17 @@ void Context::fillConvexPath(Color col, bool aa)
 			m_Stroker->convexFill(&mesh, vtx, numPathVertices);
 		}
 
-		createDrawCommand_VertexColor(mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+		if (m_RecordClipCommands) {
+			createDrawCommand_Clip(mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
+		} else {
+			createDrawCommand_VertexColor(mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+		}
 	}
 }
 
 void Context::fillConvexPath(GradientHandle gradientHandle, bool aa)
 {
+	VG_CHECK(!m_RecordClipCommands, "Only fillConvexPath(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
 
 	// TODO: Anti-aliasing of gradient-filled paths
@@ -1417,6 +1560,7 @@ void Context::fillConvexPath(GradientHandle gradientHandle, bool aa)
 
 void Context::fillConvexPath(ImagePatternHandle imgHandle, bool aa)
 {
+	VG_CHECK(!m_RecordClipCommands, "Only fillConvexPath(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(imgHandle), "Invalid image pattern handle");
 
 	// TODO: Anti-aliasing of textured paths
@@ -1454,7 +1598,16 @@ void Context::fillConvexPath(ImagePatternHandle imgHandle, bool aa)
 void Context::fillConcavePath(Color col, bool aa)
 {
 	// TODO: AA
-	BX_UNUSED(aa);
+	if (m_RecordClipCommands) {
+		col = ColorRGBA::Black;
+		aa = false;
+	}
+
+	const State* state = getState();
+	const uint32_t c = ColorRGBA::setAlpha(col, (uint8_t)(state->m_GlobalAlpha * ColorRGBA::getAlpha(col)));
+	if (ColorRGBA::getAlpha(c) == 0) {
+		return;
+	}
 
 	transformPath();
 
@@ -1472,7 +1625,11 @@ void Context::fillConcavePath(Color col, bool aa)
 
 	Mesh mesh;
 	if (m_Stroker->concaveFill(&mesh, &pathVertices[path->m_FirstVertexID << 1], path->m_NumVertices)) {
-		createDrawCommand_VertexColor(mesh.m_PosBuffer, mesh.m_NumVertices, &col, 1, mesh.m_IndexBuffer, mesh.m_NumIndices);
+		if (m_RecordClipCommands) {
+			createDrawCommand_Clip(mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
+		} else {
+			createDrawCommand_VertexColor(mesh.m_PosBuffer, mesh.m_NumVertices, &c, 1, mesh.m_IndexBuffer, mesh.m_NumIndices);
+		}
 	} else {
 		VG_WARN(false, "Failed to triangulate concave polygon");
 	}
@@ -1480,17 +1637,22 @@ void Context::fillConcavePath(Color col, bool aa)
 
 void Context::strokePath(Color color, float width, bool aa, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
 {
+	if (m_RecordClipCommands) {
+		color = ColorRGBA::Black;
+		aa = false;
+	}
+
 	transformPath();
 
 	const float* pathVertices = m_TransformedPathVertices;
 
 	const State* state = getState();
 	const float avgScale = state->m_AvgScale;
-	float strokeWidth = bx::fclamp(width * avgScale, 0.0f, 200.0f);
+	float strokeWidth = bx::clamp<float>(width * avgScale, 0.0f, 200.0f);
 	float alphaScale = state->m_GlobalAlpha;
 	bool isThin = false;
 	if (strokeWidth <= m_FringeWidth) {
-		float alpha = bx::fclamp(strokeWidth, 0.0f, m_FringeWidth);
+		float alpha = bx::clamp<float>(strokeWidth, 0.0f, m_FringeWidth);
 		alphaScale *= alpha * alpha;
 		strokeWidth = m_FringeWidth;
 		isThin = true;
@@ -1526,9 +1688,38 @@ void Context::strokePath(Color color, float width, bool aa, LineCap::Enum lineCa
 			m_Stroker->polylineStroke(&mesh, vtx, numPathVertices, isClosed, strokeWidth, lineCap, lineJoin);
 		}
 
-		const bool hasColors = mesh.m_ColorBuffer != nullptr;
-		createDrawCommand_VertexColor(mesh.m_PosBuffer, mesh.m_NumVertices, hasColors ? mesh.m_ColorBuffer : &c, hasColors ? mesh.m_NumVertices : 1, mesh.m_IndexBuffer, mesh.m_NumIndices);
+		if (m_RecordClipCommands) {
+			createDrawCommand_Clip(mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
+		} else {
+			const bool hasColors = mesh.m_ColorBuffer != nullptr;
+			createDrawCommand_VertexColor(mesh.m_PosBuffer, mesh.m_NumVertices, hasColors ? mesh.m_ColorBuffer : &c, hasColors ? mesh.m_NumVertices : 1, mesh.m_IndexBuffer, mesh.m_NumIndices);
+		}
 	}
+}
+
+void Context::beginClip(ClipRule::Enum rule)
+{
+	m_ClipState.m_Rule = rule;
+	m_ClipState.m_FirstCmdID = m_NumClipCommands;
+	m_ClipState.m_NumCmds = 0;
+	m_RecordClipCommands = true;
+	m_ForceNewClipCommand = true;
+}
+
+void Context::endClip()
+{
+	VG_CHECK(m_RecordClipCommands, "Must be called once after beginClip");
+	m_ClipState.m_NumCmds = m_NumClipCommands - m_ClipState.m_FirstCmdID;
+	m_RecordClipCommands = false;
+	m_ForceNewDrawCommand = true;
+}
+
+void Context::resetClip()
+{
+	VG_CHECK(!m_RecordClipCommands, "Must be called outside beginClip()/endClip() pair.");
+	m_ClipState.m_FirstCmdID = ~0u;
+	m_ClipState.m_NumCmds = 0;
+	m_ForceNewDrawCommand = true;
 }
 
 // NOTE: In contrast to NanoVG these Gradients are State dependent (the current transformation matrix is baked in the Gradient matrix).
@@ -1545,7 +1736,11 @@ GradientHandle Context::createLinearGradient(float sx, float sy, float ex, float
 	const float large = 1e5;
 	float dx = ex - sx;
 	float dy = ey - sy;
-	float d = bx::fsqrt(dx * dx + dy * dy);
+#if 0
+	float d = bx::sqrt(dx * dx + dy * dy);
+#else
+	float d = sqrtf(dx * dx + dy * dy);
+#endif
 	if (d > 0.0001f) {
 		dx /= d;
 		dy /= d;
@@ -1581,7 +1776,7 @@ GradientHandle Context::createLinearGradient(float sx, float sy, float ex, float
 	grad->m_Params[0] = large;
 	grad->m_Params[1] = large + d * 0.5f;
 	grad->m_Params[2] = 0.0f;
-	grad->m_Params[3] = bx::fmax(1.0f, d);
+	grad->m_Params[3] = bx::max<float>(1.0f, d);
 	grad->m_InnerColor[0] = ColorRGBA::getRed(icol) / 255.0f;
 	grad->m_InnerColor[1] = ColorRGBA::getGreen(icol) / 255.0f;
 	grad->m_InnerColor[2] = ColorRGBA::getBlue(icol) / 255.0f;
@@ -1631,7 +1826,7 @@ GradientHandle Context::createBoxGradient(float x, float y, float w, float h, fl
 	grad->m_Params[0] = w * 0.5f;
 	grad->m_Params[1] = h * 0.5f;
 	grad->m_Params[2] = r;
-	grad->m_Params[3] = bx::fmax(1.0f, f);
+	grad->m_Params[3] = bx::max<float>(1.0f, f);
 	grad->m_InnerColor[0] = ColorRGBA::getRed(icol) / 255.0f;
 	grad->m_InnerColor[1] = ColorRGBA::getGreen(icol) / 255.0f;
 	grad->m_InnerColor[2] = ColorRGBA::getBlue(icol) / 255.0f;
@@ -1684,7 +1879,7 @@ GradientHandle Context::createRadialGradient(float cx, float cy, float inr, floa
 	grad->m_Params[0] = r;
 	grad->m_Params[1] = r;
 	grad->m_Params[2] = r;
-	grad->m_Params[3] = bx::fmax(1.0f, f);
+	grad->m_Params[3] = bx::max<float>(1.0f, f);
 	grad->m_InnerColor[0] = ColorRGBA::getRed(icol) / 255.0f;
 	grad->m_InnerColor[1] = ColorRGBA::getGreen(icol) / 255.0f;
 	grad->m_InnerColor[2] = ColorRGBA::getBlue(icol) / 255.0f;
@@ -1707,8 +1902,8 @@ ImagePatternHandle Context::createImagePattern(float cx, float cy, float w, floa
 
 	const State* state = getState();
 
-	const float cs = bx::fcos(angle);
-	const float sn = bx::fsin(angle);
+	const float cs = bx::cos(angle);
+	const float sn = bx::sin(angle);
 
 	float mtx[6];
 	mtx[0] = cs;
@@ -1764,15 +1959,17 @@ void Context::popState()
 	// If the new state has a different scissor rect than the last draw command 
 	// force creating a new command.
 	if (m_NumDrawCommands != 0) {
+		const State* state = getState();
 		const DrawCommand* lastDrawCommand = &m_DrawCommands[m_NumDrawCommands - 1];
 		const uint16_t* lastScissor = &lastDrawCommand->m_ScissorRect[0];
-		const float* stateScissor = &m_StateStack[m_CurStateID].m_ScissorRect[0];
+		const float* stateScissor = &state->m_ScissorRect[0];
 		if (lastScissor[0] != (uint16_t)stateScissor[0] ||
 			lastScissor[1] != (uint16_t)stateScissor[1] ||
 			lastScissor[2] != (uint16_t)stateScissor[2] ||
-			lastScissor[3] != (uint16_t)stateScissor[3]) 
+			lastScissor[3] != (uint16_t)stateScissor[3])
 		{
 			m_ForceNewDrawCommand = true;
+			m_ForceNewClipCommand = true;
 		}
 	}
 }
@@ -1784,6 +1981,7 @@ void Context::resetScissor()
 	state->m_ScissorRect[2] = (float)m_WinWidth;
 	state->m_ScissorRect[3] = (float)m_WinHeight;
 	m_ForceNewDrawCommand = true;
+	m_ForceNewClipCommand = true;
 }
 
 void Context::setScissor(float x, float y, float w, float h)
@@ -1792,11 +1990,18 @@ void Context::setScissor(float x, float y, float w, float h)
 	float pos[2], size[2];
 	transformPos2D(x, y, state->m_TransformMtx, &pos[0]);
 	transformVec2D(w, h, state->m_TransformMtx, &size[0]);
-	state->m_ScissorRect[0] = pos[0];
-	state->m_ScissorRect[1] = pos[1];
-	state->m_ScissorRect[2] = size[0];
-	state->m_ScissorRect[3] = size[1];
+
+	const float minx = bx::clamp<float>(pos[0], 0.0f, m_WinWidth);
+	const float miny = bx::clamp<float>(pos[1], 0.0f, m_WinHeight);
+	const float maxx = bx::clamp<float>(pos[0] + size[0], 0.0f, m_WinWidth);
+	const float maxy = bx::clamp<float>(pos[1] + size[1], 0.0f, m_WinHeight);
+
+	state->m_ScissorRect[0] = minx;
+	state->m_ScissorRect[1] = miny;
+	state->m_ScissorRect[2] = maxx - minx;
+	state->m_ScissorRect[3] = maxy - miny;
 	m_ForceNewDrawCommand = true;
+	m_ForceNewClipCommand = true;
 }
 
 bool Context::intersectScissor(float x, float y, float w, float h)
@@ -1808,17 +2013,18 @@ bool Context::intersectScissor(float x, float y, float w, float h)
 
 	const float* rect = state->m_ScissorRect;
 
-	float minx = bx::fmax(pos[0], rect[0]);
-	float miny = bx::fmax(pos[1], rect[1]);
-	float maxx = bx::fmin(pos[0] + size[0], rect[0] + rect[2]);
-	float maxy = bx::fmin(pos[1] + size[1], rect[1] + rect[3]);
+	float minx = bx::max<float>(pos[0], rect[0]);
+	float miny = bx::max<float>(pos[1], rect[1]);
+	float maxx = bx::min<float>(pos[0] + size[0], rect[0] + rect[2]);
+	float maxy = bx::min<float>(pos[1] + size[1], rect[1] + rect[3]);
 
 	state->m_ScissorRect[0] = minx;
 	state->m_ScissorRect[1] = miny;
-	state->m_ScissorRect[2] = bx::fmax(0.0f, maxx - minx);
-	state->m_ScissorRect[3] = bx::fmax(0.0f, maxy - miny);
+	state->m_ScissorRect[2] = bx::max<float>(0.0f, maxx - minx);
+	state->m_ScissorRect[3] = bx::max<float>(0.0f, maxy - miny);
 
 	m_ForceNewDrawCommand = true;
+	m_ForceNewClipCommand = true;
 
 	// Return false in case scissor rect is too small for bgfx to handle correctly
 	// NOTE: This was originally required in NanoVG because the scissor rectangle is passed
@@ -1869,8 +2075,8 @@ void Context::transformTranslate(float x, float y)
 
 void Context::transformRotate(float ang_rad)
 {
-	const float c = bx::fcos(ang_rad);
-	const float s = bx::fsin(ang_rad);
+	const float c = bx::cos(ang_rad);
+	const float s = bx::sin(ang_rad);
 
 	State* state = getState();
 	float mtx[6];
@@ -2058,12 +2264,12 @@ void Context::calcTextBoxBounds(const Font& font, uint32_t alignment, float x, f
 			rminx = x + row->minx + dx;
 			rmaxx = x + row->maxx + dx;
 
-			minx = bx::fmin(minx, rminx);
-			maxx = bx::fmax(maxx, rmaxx);
+			minx = bx::min<float>(minx, rminx);
+			maxx = bx::max<float>(maxx, rmaxx);
 
 			// Vertical bounds.
-			miny = bx::fmin(miny, y + rminy);
-			maxy = bx::fmax(maxy, y + rmaxy);
+			miny = bx::min<float>(miny, y + rminy);
+			maxy = bx::max<float>(maxy, y + rmaxy);
 
 			y += lineh; // Assume line height multiplier of 1.0
 		}
@@ -2357,8 +2563,8 @@ int Context::textGlyphPositions(const Font& font, uint32_t alignment, float x, f
 		prevIter = iter;
 		positions[npos].str = iter.str;
 		positions[npos].x = iter.x * invscale;
-		positions[npos].minx = bx::fmin(iter.x, q.x0) * invscale;
-		positions[npos].maxx = bx::fmax(iter.nextx, q.x1) * invscale;
+		positions[npos].minx = bx::min<float>(iter.x, q.x0) * invscale;
+		positions[npos].maxx = bx::max<float>(iter.nextx, q.x1) * invscale;
 		
 		npos++;
 		if (npos >= maxPositions) {
@@ -2452,6 +2658,7 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 	VG_CHECK(firstGradientID + shape->m_NumGradients <= VG_CONFIG_MAX_GRADIENTS, "Not enough free gradients to render shape. Increase VG_MAX_GRADIENTS");
 	VG_CHECK(firstImagePatternID + shape->m_NumImagePatterns <= VG_CONFIG_MAX_IMAGE_PATTERNS, "Not enough free image patterns to render shape. Increase VG_MAX_IMAGE_PATTERS");
 
+	bool skipCmds = false;
 	pushState();
 	while (cmdListReader.remaining()) {
 		ShapeCommand::Enum cmdType;
@@ -2460,61 +2667,88 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 		switch (cmdType) {
 		case ShapeCommand::BeginPath:
 		{
-			beginPath();
+			if (!skipCmds) {
+				beginPath();
+			}
 			break;
 		}
 		case ShapeCommand::ClosePath:
 		{
-			closePath();
+			if (!skipCmds) {
+				closePath();
+			}
 			break;
 		}
 		case ShapeCommand::MoveTo:
 		{
 			float coords[2];
 			bx::read(&cmdListReader, &coords[0], sizeof(float) * 2);
-			moveTo(coords[0], coords[1]);
+			if (!skipCmds) {
+				moveTo(coords[0], coords[1]);
+			}
 			break;
 		}
 		case ShapeCommand::LineTo:
 		{
 			float coords[2];
 			bx::read(&cmdListReader, &coords[0], sizeof(float) * 2);
-			lineTo(coords[0], coords[1]);
+			if (!skipCmds) {
+				lineTo(coords[0], coords[1]);
+			}
 			break;
 		}
 		case ShapeCommand::BezierTo:
 		{
 			float coords[6];
 			bx::read(&cmdListReader, &coords[0], sizeof(float) * 6);
-			bezierTo(coords[0], coords[1], coords[2], coords[3], coords[4], coords[5]);
+			if (!skipCmds) {
+				bezierTo(coords[0], coords[1], coords[2], coords[3], coords[4], coords[5]);
+			}
 			break;
 		}
 		case ShapeCommand::ArcTo:
 		{
 			float coords[5];
 			bx::read(&cmdListReader, &coords[0], sizeof(float) * 5);
-			arcTo(coords[0], coords[1], coords[2], coords[3], coords[4]);
+			if (!skipCmds) {
+				arcTo(coords[0], coords[1], coords[2], coords[3], coords[4]);
+			}
 			break;
 		}
 		case ShapeCommand::Rect:
 		{
 			float coords[4];
 			bx::read(&cmdListReader, &coords[0], sizeof(float) * 4);
-			rect(coords[0], coords[1], coords[2], coords[3]);
+			if (!skipCmds) {
+				rect(coords[0], coords[1], coords[2], coords[3]);
+			}
 			break;
 		}
 		case ShapeCommand::RoundedRect:
 		{
 			float coords[5];
 			bx::read(&cmdListReader, &coords[0], sizeof(float) * 5);
-			roundedRect(coords[0], coords[1], coords[2], coords[3], coords[4]);
+			if (!skipCmds) {
+				roundedRect(coords[0], coords[1], coords[2], coords[3], coords[4]);
+			}
+			break;
+		}
+		case ShapeCommand::RoundedRectVarying:
+		{
+			float coords[8];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 8);
+			if (!skipCmds) {
+				roundedRectVarying(coords[0], coords[1], coords[2], coords[3], coords[4], coords[5], coords[6], coords[7]);
+			}
 			break;
 		}
 		case ShapeCommand::Circle:
 		{
 			float coords[3];
 			bx::read(&cmdListReader, &coords[0], sizeof(float) * 3);
-			circle(coords[0], coords[1], coords[2]);
+			if (!skipCmds) {
+				circle(coords[0], coords[1], coords[2]);
+			}
 			break;
 		}
 		case ShapeCommand::FillConvexColor:
@@ -2535,7 +2769,9 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			bool aa;
 			bx::read(&cmdListReader, col);
 			bx::read(&cmdListReader, aa);
-			fillConvexPath(col, aa);
+			if (!skipCmds) {
+				fillConvexPath(col, aa);
+			}
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
 			if (canCache) {
@@ -2556,7 +2792,9 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			bx::read(&cmdListReader, aa);
 
 			handle.idx += firstGradientID;
-			fillConvexPath(handle, aa);
+			if (!skipCmds) {
+				fillConvexPath(handle, aa);
+			}
 			break;
 		}
 		case ShapeCommand::FillConvexImage:
@@ -2569,7 +2807,9 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			bx::read(&cmdListReader, aa);
 
 			handle.idx += firstImagePatternID;
-			fillConvexPath(handle, aa);
+			if (!skipCmds) {
+				fillConvexPath(handle, aa);
+			}
 			break;
 		}
 		case ShapeCommand::FillConcaveColor:
@@ -2588,7 +2828,9 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			bx::read(&cmdListReader, col);
 			bx::read(&cmdListReader, aa);
 
-			fillConcavePath(col, aa);
+			if (!skipCmds) {
+				fillConcavePath(col, aa);
+			}
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
 			if (canCache) {
@@ -2625,7 +2867,9 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			bx::read(&cmdListReader, lineCap);
 			bx::read(&cmdListReader, lineJoin);
 
-			strokePath(col, width, aa, lineCap, lineJoin);
+			if (!skipCmds) {
+				strokePath(col, width, aa, lineCap, lineJoin);
+			}
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
 			if (canCache) {
@@ -2639,41 +2883,37 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 		case ShapeCommand::LinearGradient:
 		{
 			float grad[4];
-			Color icol, ocol;
+			Color col[2];
 			bx::read(&cmdListReader, &grad[0], sizeof(float) * 4);
-			bx::read(&cmdListReader, icol);
-			bx::read(&cmdListReader, ocol);
-			createLinearGradient(grad[0], grad[1], grad[2], grad[3], icol, ocol);
+			bx::read(&cmdListReader, &col[0], sizeof(Color) * 2);
+			createLinearGradient(grad[0], grad[1], grad[2], grad[3], col[0], col[1]);
 			break;
 		}
 		case ShapeCommand::BoxGradient:
 		{
 			float grad[6];
-			Color icol, ocol;
+			Color col[2];
 			bx::read(&cmdListReader, &grad[0], sizeof(float) * 6);
-			bx::read(&cmdListReader, icol);
-			bx::read(&cmdListReader, ocol);
-			createBoxGradient(grad[0], grad[1], grad[2], grad[3], grad[4], grad[5], icol, ocol);
+			bx::read(&cmdListReader, &col[0], sizeof(Color) * 2);
+			createBoxGradient(grad[0], grad[1], grad[2], grad[3], grad[4], grad[5], col[0], col[1]);
 			break;
 		}
 		case ShapeCommand::RadialGradient:
 		{
 			float grad[4];
-			Color icol, ocol;
+			Color col[2];
 			bx::read(&cmdListReader, &grad[0], sizeof(float) * 4);
-			bx::read(&cmdListReader, icol);
-			bx::read(&cmdListReader, ocol);
-			createRadialGradient(grad[0], grad[1], grad[2], grad[3], icol, ocol);
+			bx::read(&cmdListReader, &col[0], sizeof(Color) * 2);
+			createRadialGradient(grad[0], grad[1], grad[2], grad[3], col[0], col[1]);
 			break;
 		}
 		case ShapeCommand::ImagePattern:
 		{
-			float params[5], alpha;
+			float params[6];
 			ImageHandle image;
-			bx::read(&cmdListReader, &params[0], sizeof(float) * 5);
+			bx::read(&cmdListReader, &params[0], sizeof(float) * 6);
 			bx::read(&cmdListReader, image);
-			bx::read(&cmdListReader, alpha);
-			createImagePattern(params[0], params[1], params[2], params[3], params[4], image, alpha);
+			createImagePattern(params[0], params[1], params[2], params[3], params[4], image, params[5]);
 			break;
 		}
 		case ShapeCommand::TextStatic:
@@ -2683,29 +2923,26 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 //				cachedShapeAddTextCommand(cachedShape, cmdList - sizeof(ShapeCommand::Enum));
 //			}
 //#endif
-			Font font;
-			uint32_t alignment, len;
-			Color col;
-			float coords[2];
-			bx::read(&cmdListReader, font);
-			bx::read(&cmdListReader, alignment);
-			bx::read(&cmdListReader, col);
-			bx::read(&cmdListReader, &coords[0], sizeof(float) * 2);
-			bx::read(&cmdListReader, len);
+			ShapeCommandText textCmd;
+			bx::read(&cmdListReader, textCmd);
 			
 			const char* str = (const char*)cmdListReader.getDataPtr();
-			cmdListReader.seek(len, bx::Whence::Current);
+			cmdListReader.seek(textCmd.len, bx::Whence::Current);
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
 			if (canCache) {
-				String* cachedString = createString(font, str, str + len);
-				cachedShapeAddTextCommand(cachedShape, cachedString, alignment, col, coords[0], coords[1]);
-				text(cachedString, alignment, col, coords[0], coords[1]);
+				String* cachedString = createString(textCmd.font, str, str + textCmd.len);
+				cachedShapeAddTextCommand(cachedShape, cachedString, textCmd.alignment, textCmd.col, textCmd.x, textCmd.y);
+				if (!skipCmds) {
+					text(cachedString, textCmd.alignment, textCmd.col, textCmd.x, textCmd.y);
+				}
 			} else {
-				text(font, alignment, col, coords[0], coords[1], str, str + len);
+				if (!skipCmds) {
+					text(textCmd.font, textCmd.alignment, textCmd.col, textCmd.x, textCmd.y, str, str + textCmd.len);
+				}
 			}
 #else
-			text(font, alignment, col, coords[0], coords[1], str, str + len);
+			text(textCmd.font, textCmd.alignment, textCmd.col, textCmd.x, textCmd.y, str, str + textCmd.len);
 #endif
 			break;
 		}
@@ -2717,23 +2954,17 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 				cachedShapeAddTextCommand(cachedShape, cmdListReader.getDataPtr() - sizeof(ShapeCommand::Enum));
 			}
 #endif
-			Font font;
-			uint32_t alignment, stringID;
-			Color col;
-			float coords[2];
-			bx::read(&cmdListReader, font);
-			bx::read(&cmdListReader, alignment);
-			bx::read(&cmdListReader, col);
-			bx::read(&cmdListReader, &coords[0], sizeof(float) * 2);
-			bx::read(&cmdListReader, stringID);
+			ShapeCommandText textCmd;
+			bx::read(&cmdListReader, textCmd);
 
 			VG_WARN(stringCallback, "Shape includes dynamic text commands but no string callback has been specified");
 			if (stringCallback) {
 				uint32_t len;
-				const char* str = (*stringCallback)(stringID, len, userData);
+				const char* str = (*stringCallback)(textCmd.len, len, userData);
 				const char* end = len != ~0u ? str + len : str + bx::strLen(str);
-
-				text(font, alignment, col, coords[0], coords[1], str, end);
+				if (!skipCmds) {
+					text(textCmd.font, textCmd.alignment, textCmd.col, textCmd.x, textCmd.y, str, end);
+				}
 			}
 
 			break;
@@ -2745,6 +2976,17 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			bx::read(&cmdListReader, &rect[0], sizeof(float) * 4);
 
 			setScissor(rect[0], rect[1], rect[2], rect[3]);
+			skipCmds = false;
+			break;
+		}
+		case ShapeCommand::IntersectScissor:
+		{
+			float rect[4];
+			bx::read(&cmdListReader, &rect[0], sizeof(float) * 4);
+
+			// TODO: Get the result and "cull" the following draw commands if it's false.
+			// Problem is I don't know how it will behave with cached shapes.
+			skipCmds = !intersectScissor(rect[0], rect[1], rect[2], rect[3]);
 			break;
 		}
 		case ShapeCommand::PushState:
@@ -2752,17 +2994,58 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			break;
 		case ShapeCommand::PopState:
 			popState();
+			skipCmds = false;
 			break;
+		case ShapeCommand::Rotate:
+		{
+			float ang_rad;
+			bx::read(&cmdListReader, ang_rad);
+			transformRotate(ang_rad);
+			break;
+		}
+		case ShapeCommand::Translate:
+		{
+			float coords[2];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 2);
+			transformTranslate(coords[0], coords[1]);
+			break;
+		}
+		case ShapeCommand::Scale:
+		{
+			float coords[2];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 2);
+			transformScale(coords[0], coords[1]);
+			break;
+		}
+		case ShapeCommand::BeginClip:
+		{
+			ClipRule::Enum rule;
+			bx::read(&cmdListReader, rule);
+			beginClip(rule);
+			break;
+		}
+		case ShapeCommand::EndClip:
+		{
+			endClip();
+			break;
+		}
+		case ShapeCommand::ResetClip:
+		{
+			resetClip();
+			break;
+		}
 		default:
 			VG_CHECK(false, "Unknown shape command");
 			break;
 		}
 	}
 	popState();
+	resetClip();
 
-	// Free shape gradients and image patterns
-	m_NextGradientID = firstGradientID;
-	m_NextImagePatternID = firstImagePatternID;
+	// TODO: Remove this. Don't free gradients or images because handles should last the whole frame.
+//	// Free shape gradients and image patterns
+//	m_NextGradientID = firstGradientID;
+//	m_NextImagePatternID = firstImagePatternID;
 }
 
 void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* stringCallback, void* userData)
@@ -3168,6 +3451,7 @@ DrawCommand* Context::allocDrawCommand_TexturedVertexColor(uint32_t numVertices,
 	cmd->m_ScissorRect[1] = (uint16_t)scissor[1];
 	cmd->m_ScissorRect[2] = (uint16_t)scissor[2];
 	cmd->m_ScissorRect[3] = (uint16_t)scissor[3];
+	bx::memCopy(&cmd->m_ClipState, &m_ClipState, sizeof(ClipState));
 
 	vb->m_Count += numVertices;
 	ib->m_Count += numIndices;
@@ -3238,11 +3522,79 @@ DrawCommand* Context::allocDrawCommand_ColorGradient(uint32_t numVertices, uint3
 	cmd->m_ScissorRect[1] = (uint16_t)scissor[1];
 	cmd->m_ScissorRect[2] = (uint16_t)scissor[2];
 	cmd->m_ScissorRect[3] = (uint16_t)scissor[3];
+	bx::memCopy(&cmd->m_ClipState, &m_ClipState, sizeof(ClipState));
 
 	vb->m_Count += numVertices;
 	ib->m_Count += numIndices;
 
 	m_ForceNewDrawCommand = false;
+
+	return cmd;
+}
+
+DrawCommand* Context::allocDrawCommand_Clip(uint32_t numVertices, uint32_t numIndices)
+{
+	State* state = getState();
+	const float* scissor = state->m_ScissorRect;
+
+	VertexBuffer* vb = getVertexBuffer();
+	if (vb->m_Count + numVertices > MAX_VB_VERTICES) {
+		vb = allocVertexBuffer();
+
+		// The currently active vertex buffer has changed so force a new draw command.
+		m_ForceNewClipCommand = true;
+	}
+
+	uint32_t vbID = (uint32_t)(vb - m_VertexBuffers);
+
+	IndexBuffer* ib = m_ActiveIndexBuffer;
+	if (ib->m_Count + numIndices > ib->m_Capacity) {
+		const uint32_t nextCapacity = ib->m_Capacity != 0 ? (ib->m_Capacity * 3) / 2 : 32;
+		ib->m_Capacity = bx::uint32_max(nextCapacity, ib->m_Count + numIndices);
+		ib->m_Indices = (uint16_t*)BX_ALIGNED_REALLOC(m_Allocator, ib->m_Indices, sizeof(uint16_t) * ib->m_Capacity, 16);
+	}
+
+	if (!m_ForceNewClipCommand && m_NumClipCommands != 0) {
+		DrawCommand* prevCmd = &m_ClipCommands[m_NumClipCommands - 1];
+
+		VG_CHECK(prevCmd->m_VertexBufferID == vbID, "Cannot merge clip commands with different vertex buffers");
+		VG_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0]
+			&& prevCmd->m_ScissorRect[1] == (uint16_t)scissor[1]
+			&& prevCmd->m_ScissorRect[2] == (uint16_t)scissor[2]
+			&& prevCmd->m_ScissorRect[3] == (uint16_t)scissor[3], "Invalid scissor rect");
+		VG_CHECK(prevCmd->m_Type == DrawCommand::Type_Clip, "Invalid draw command type");
+
+		vb->m_Count += numVertices;
+		ib->m_Count += numIndices;
+		return prevCmd;
+	}
+
+	// If we land here it means that the current draw command cannot be batched with the previous command.
+	// Create a new one.
+	if (m_NumClipCommands + 1 >= m_ClipCommandCapacity) {
+		m_ClipCommandCapacity = m_ClipCommandCapacity + 32;
+		m_ClipCommands = (DrawCommand*)BX_REALLOC(m_Allocator, m_ClipCommands, sizeof(DrawCommand) * m_ClipCommandCapacity);
+	}
+
+	DrawCommand* cmd = &m_ClipCommands[m_NumClipCommands++];
+	cmd->m_VertexBufferID = vbID;
+	cmd->m_FirstVertexID = vb->m_Count;
+	cmd->m_FirstIndexID = ib->m_Count;
+	cmd->m_NumVertices = 0;
+	cmd->m_NumIndices = 0;
+	cmd->m_Type = DrawCommand::Type_Clip;
+	cmd->m_HandleID = UINT16_MAX;
+	cmd->m_ScissorRect[0] = (uint16_t)scissor[0];
+	cmd->m_ScissorRect[1] = (uint16_t)scissor[1];
+	cmd->m_ScissorRect[2] = (uint16_t)scissor[2];
+	cmd->m_ScissorRect[3] = (uint16_t)scissor[3];
+	cmd->m_ClipState.m_FirstCmdID = ~0u;
+	cmd->m_ClipState.m_NumCmds = 0;
+
+	vb->m_Count += numVertices;
+	ib->m_Count += numIndices;
+
+	m_ForceNewClipCommand = false;
 
 	return cmd;
 }
@@ -3788,6 +4140,26 @@ void Context::createDrawCommand_Gradient(const float* vtx, uint32_t numVertices,
 	memset32(dstColor, numVertices, &color);
 #endif
 
+	uint16_t* dstIndex = &m_ActiveIndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+	batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);
+
+	cmd->m_NumVertices += numVertices;
+	cmd->m_NumIndices += numIndices;
+}
+
+void Context::createDrawCommand_Clip(const float* vtx, uint32_t numVertices, const uint16_t* indices, uint32_t numIndices)
+{
+	// Allocate the draw command
+	DrawCommand* cmd = allocDrawCommand_Clip(numVertices, numIndices);
+
+	// Vertex buffer
+	VertexBuffer* vb = &m_VertexBuffers[cmd->m_VertexBufferID];
+	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
+
+	float* dstPos = &vb->m_Pos[vbOffset << 1];
+	bx::memCopy(dstPos, vtx, sizeof(float) * 2 * numVertices);
+
+	// Index buffer
 	uint16_t* dstIndex = &m_ActiveIndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);
 

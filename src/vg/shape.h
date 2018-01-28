@@ -9,7 +9,7 @@ namespace vg
 {
 struct ShapeCommand
 {
-	enum Enum : uint32_t // Max 256 commands should be enough
+	enum Enum : uint32_t
 	{
 		BeginPath = 0,
 		ClosePath,
@@ -19,6 +19,7 @@ struct ShapeCommand
 		ArcTo,
 		Rect,
 		RoundedRect,
+		RoundedRectVarying,
 		Circle,
 
 		FillConvexColor,
@@ -35,6 +36,14 @@ struct ShapeCommand
 		PushState,
 		PopState,
 		Scissor,
+		IntersectScissor,
+		Rotate,
+		Translate,
+		Scale,
+
+		BeginClip,
+		EndClip,
+		ResetClip,
 
 		TextStatic, 
 #if VG_CONFIG_SHAPE_DYNAMIC_TEXT
@@ -54,6 +63,15 @@ struct ShapeFlag
 		AllowCommandReordering = 0x00000010,
 		EnableCaching = 0x00000020
 	};
+};
+
+struct ShapeCommandText
+{
+	Font font;
+	uint32_t alignment;
+	Color col;
+	float x, y;
+	uint32_t len; // or string id for dynamic text
 };
 
 struct Shape
@@ -87,6 +105,7 @@ struct Shape
 	void ArcTo(float x1, float y1, float x2, float y2, float radius);
 	void Rect(float x, float y, float w, float h);
 	void RoundedRect(float x, float y, float w, float h, float r);
+	void RoundedRectVarying(float x, float y, float w, float h, float rtl, float rbl, float rbr, float rtr);
 	void Circle(float cx, float cy, float radius);
 	void ClosePath();
 	void FillConvexPath(Color col, bool aa);
@@ -98,6 +117,14 @@ struct Shape
 	void PushState();
 	void PopState();
 	void Scissor(float x, float y, float w, float h);
+	void IntersectScissor(float x, float y, float w, float h);
+	void Rotate(float ang_rad);
+	void Translate(float x, float y);
+	void Scale(float x, float y);
+
+	void BeginClip(ClipRule::Enum rule);
+	void EndClip();
+	void ResetClip();
 
 	GradientHandle LinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol);
 	GradientHandle BoxGradient(float x, float y, float w, float h, float r, float f, Color icol, Color ocol);

@@ -103,8 +103,8 @@ void Path::cubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
 	while (!done) {
 		const float dx = x4 - x1;
 		const float dy = y4 - y1;
-		const float d2 = bx::fabs(((x2 - x4) * dy - (y2 - y4) * dx));
-		const float d3 = bx::fabs(((x3 - x4) * dy - (y3 - y4) * dx));
+		const float d2 = bx::abs(((x2 - x4) * dy - (y2 - y4) * dx));
+		const float d3 = bx::abs(((x3 - x4) * dy - (y3 - y4) * dx));
 		const float d23 = d2 + d3;
 
 		if (d23 * d23 <= tessTol * (dx * dx + dy * dy)) {
@@ -177,7 +177,7 @@ void Path::cubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y)
 
 void Path::rect(float x, float y, float w, float h)
 {
-	if (bx::fabs(w) < VG_EPSILON || bx::fabs(h) < VG_EPSILON) {
+	if (bx::abs(w) < VG_EPSILON || bx::abs(h) < VG_EPSILON) {
 		return;
 	}
 
@@ -195,18 +195,18 @@ void Path::roundedRect(float x, float y, float w, float h, float r)
 		return;
 	}
 	
-	const float rx = bx::fmin(r, bx::fabs(w) * 0.5f) * bx::fsign(w);
-	const float ry = bx::fmin(r, bx::fabs(h) * 0.5f) * bx::fsign(h);
+	const float rx = bx::min<float>(r, bx::abs(w) * 0.5f) * bx::sign(w);
+	const float ry = bx::min<float>(r, bx::abs(h) * 0.5f) * bx::sign(h);
 
-	r = bx::fmin(rx, ry);
+	r = bx::min<float>(rx, ry);
 
-	const float da = bx::facos((m_Scale * r) / ((m_Scale * r) + m_TesselationTolerance)) * 2.0f;
-	const uint32_t numPointsHalfCircle = bx::uint32_max(2, (uint32_t)bx::fceil(bx::kPi / da));
+	const float da = bx::acos((m_Scale * r) / ((m_Scale * r) + m_TesselationTolerance)) * 2.0f;
+	const uint32_t numPointsHalfCircle = bx::uint32_max(2, (uint32_t)bx::ceil(bx::kPi / da));
 	const uint32_t numPointsQuarterCircle = (numPointsHalfCircle >> 1) + 1;
 
 	const float dtheta = -bx::kPiHalf / (float)(numPointsQuarterCircle - 1);
-	const float cos_dtheta = bx::fcos(dtheta);
-	const float sin_dtheta = bx::fsin(dtheta);
+	const float cos_dtheta = bx::cos(dtheta);
+	const float sin_dtheta = bx::sin(dtheta);
 
 	moveTo(x, y + r);
 	lineTo(x, y + h - r);
@@ -304,11 +304,161 @@ void Path::roundedRect(float x, float y, float w, float h, float r)
 	close();
 }
 
+void Path::roundedRectVarying(float x, float y, float w, float h, float rTopLeft , float rBottomLeft, float rBottomRight, float rTopRight)
+{
+	if (rTopLeft < 0.1f && rBottomLeft < 0.1f && rBottomRight < 0.1f && rTopRight < 0.1f) {
+		rect(x, y, w, h);
+		return;
+	}
+
+	const float halfw = w * 0.5f;
+	const float halfh = h * 0.5f;
+	
+	const float rtl = bx::min<float>(bx::min<float>(rTopLeft, halfw), halfh);
+	const float rtr = bx::min<float>(bx::min<float>(rTopRight, halfw), halfh);
+	const float rbl = bx::min<float>(bx::min<float>(rBottomLeft, halfw), halfh);
+	const float rbr = bx::min<float>(bx::min<float>(rBottomRight, halfw), halfh);
+
+	// Top left corner
+	if (rtl < 0.1f) {
+		moveTo(x, y);
+	} else {
+		moveTo(x + rtl, y);
+
+		const float halfDa = bx::acos((m_Scale * rtl) / ((m_Scale * rtl) + m_TesselationTolerance));
+		const uint32_t numPointsHalfCircle = bx::uint32_max(2, (uint32_t)bx::ceil(bx::kPiHalf / halfDa));
+		const uint32_t numPointsQuarterCircle = (numPointsHalfCircle >> 1) + 1;
+
+		const float dtheta = -bx::kPiHalf / (float)(numPointsQuarterCircle - 1);
+		const float cos_dtheta = bx::cos(dtheta);
+		const float sin_dtheta = bx::sin(dtheta);
+
+		const float cx = x + rtl;
+		const float cy = y + rtl;
+		float* circleVertices = allocVertices(numPointsQuarterCircle - 1);
+
+		float ca = 0.0f;
+		float sa = -1.0f;
+		for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
+			const float ns = sin_dtheta * ca + cos_dtheta * sa;
+			const float nc = cos_dtheta * ca - sin_dtheta * sa;
+			ca = nc;
+			sa = ns;
+
+			circleVertices[0] = cx + rtl * ca;
+			circleVertices[1] = cy + rtl * sa;
+			circleVertices += 2;
+		}
+		m_CurSubPath->m_NumVertices += (numPointsQuarterCircle - 1);
+	}
+
+	// Bottom left corner
+	if (rbl < 0.1f) {
+		lineTo(x, y + h);
+	} else {
+		lineTo(x, y + h - rbl);
+
+		const float halfDa = bx::acos((m_Scale * rbl) / ((m_Scale * rbl) + m_TesselationTolerance));
+		const uint32_t numPointsHalfCircle = bx::uint32_max(2, (uint32_t)bx::ceil(bx::kPiHalf / halfDa));
+		const uint32_t numPointsQuarterCircle = (numPointsHalfCircle >> 1) + 1;
+
+		const float dtheta = -bx::kPiHalf / (float)(numPointsQuarterCircle - 1);
+		const float cos_dtheta = bx::cos(dtheta);
+		const float sin_dtheta = bx::sin(dtheta);
+
+		const float cx = x + rbl;
+		const float cy = y + h - rbl;
+		float* circleVertices = allocVertices(numPointsQuarterCircle - 1);
+
+		float ca = -1.0f;
+		float sa = 0.0f;
+		for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
+			const float ns = sin_dtheta * ca + cos_dtheta * sa;
+			const float nc = cos_dtheta * ca - sin_dtheta * sa;
+			ca = nc;
+			sa = ns;
+
+			circleVertices[0] = cx + rbl * ca;
+			circleVertices[1] = cy + rbl * sa;
+			circleVertices += 2;
+		}
+		m_CurSubPath->m_NumVertices += (numPointsQuarterCircle - 1);
+	}
+
+	// Bottom right corner
+	if (rbr < 0.1f) {
+		lineTo(x + w, y + h);
+	} else {
+		lineTo(x + w - rbr, y + h);
+
+		const float halfDa = bx::acos((m_Scale * rbr) / ((m_Scale * rbr) + m_TesselationTolerance));
+		const uint32_t numPointsHalfCircle = bx::uint32_max(2, (uint32_t)bx::ceil(bx::kPiHalf / halfDa));
+		const uint32_t numPointsQuarterCircle = (numPointsHalfCircle >> 1) + 1;
+
+		const float dtheta = -bx::kPiHalf / (float)(numPointsQuarterCircle - 1);
+		const float cos_dtheta = bx::cos(dtheta);
+		const float sin_dtheta = bx::sin(dtheta);
+
+		const float cx = x + w - rbr;
+		const float cy = y + h - rbr;
+		float* circleVertices = allocVertices(numPointsQuarterCircle - 1);
+
+		float ca = 0.0f; // cosf(-1.5f * PI);
+		float sa = 1.0f; // sinf(-1.5f * PI);
+		for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
+			const float ns = sin_dtheta * ca + cos_dtheta * sa;
+			const float nc = cos_dtheta * ca - sin_dtheta * sa;
+			ca = nc;
+			sa = ns;
+
+			circleVertices[0] = cx + rbr * ca;
+			circleVertices[1] = cy + rbr * sa;
+			circleVertices += 2;
+		}
+		m_CurSubPath->m_NumVertices += (numPointsQuarterCircle - 1);
+	}
+
+	// Top right corner
+	if (rtr < 0.1f) {
+		lineTo(x + w, y);
+	} else {
+		lineTo(x + w, y + rtr);
+
+		const float halfDa = bx::acos((m_Scale * rtr) / ((m_Scale * rtr) + m_TesselationTolerance));
+		const uint32_t numPointsHalfCircle = bx::uint32_max(2, (uint32_t)bx::ceil(bx::kPiHalf / halfDa));
+		const uint32_t numPointsQuarterCircle = (numPointsHalfCircle >> 1) + 1;
+
+		const float dtheta = -bx::kPiHalf / (float)(numPointsQuarterCircle - 1);
+		const float cos_dtheta = bx::cos(dtheta);
+		const float sin_dtheta = bx::sin(dtheta);
+
+		const float cx = x + w - rtr;
+		const float cy = y + rtr;
+		float* circleVertices = allocVertices(numPointsQuarterCircle - 1);
+
+		float ca = 1.0f;
+		float sa = 0.0f;
+		for (uint32_t i = 1; i < numPointsQuarterCircle; ++i) {
+			const float ns = sin_dtheta * ca + cos_dtheta * sa;
+			const float nc = cos_dtheta * ca - sin_dtheta * sa;
+			ca = nc;
+			sa = ns;
+
+			circleVertices[0] = cx + rtr * ca;
+			circleVertices[1] = cy + rtr * sa;
+			circleVertices += 2;
+		}
+		m_CurSubPath->m_NumVertices += (numPointsQuarterCircle - 1);
+	}
+
+	close();
+}
+
 void Path::circle(float cx, float cy, float r)
 {
 	const float da = acos((m_Scale * r) / ((m_Scale * r) + m_TesselationTolerance)) * 2.0f;
 
-	const uint32_t numPointsHalfCircle = bx::uint32_max(2, (uint32_t)bx::fceil(bx::kPi / da));
+	const uint32_t numPointsHalfCircle = bx::uint32_max(2, (uint32_t)bx::ceil(bx::kPi / da));
 	const uint32_t numPoints = (numPointsHalfCircle * 2);
 
 	moveTo(cx + r, cy);
@@ -317,8 +467,8 @@ void Path::circle(float cx, float cy, float r)
 
 	// http://www.iquilezles.org/www/articles/sincos/sincos.htm
 	const float dtheta = -bx::kPi2 / (float)numPoints;
-	const float cos_dtheta = bx::fcos(dtheta);
-	const float sin_dtheta = bx::fsin(dtheta);
+	const float cos_dtheta = bx::cos(dtheta);
+	const float sin_dtheta = bx::sin(dtheta);
 
 	float ca = 1.0f;
 	float sa = 0.0f;

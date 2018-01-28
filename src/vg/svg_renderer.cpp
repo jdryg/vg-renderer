@@ -280,6 +280,11 @@ void SVGRenderer::RoundedRect(float x, float y, float w, float h, float r)
 	m_Context->roundedRect(x, y, w, h, r);
 }
 
+void SVGRenderer::RoundedRectVarying(float x, float y, float w, float h, float rtl, float rbl, float rbr, float rtr)
+{
+	// TODO: 
+}
+
 void SVGRenderer::Circle(float cx, float cy, float r)
 {
 	m_Context->circle(cx, cy, r);
@@ -518,6 +523,21 @@ void SVGRenderer::DestroyString(String* str)
 void SVGRenderer::Text(String* str, uint32_t alignment, Color color, float x, float y)
 {
 	BX_UNUSED(str, alignment, color, x, y);
+}
+
+void SVGRenderer::BeginClip(ClipRule::Enum fillRule)
+{
+
+}
+
+void SVGRenderer::EndClip()
+{
+
+}
+
+void SVGRenderer::ResetClip()
+{
+
 }
 
 //////////////////////////////////////////////////////////////////////////

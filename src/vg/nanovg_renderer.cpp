@@ -486,202 +486,266 @@ void NanoVGRenderer::DestroyShape(Shape* shape)
 
 void NanoVGRenderer::SubmitShape(Shape* shape)
 {
-#define READ(type, buffer) *(type*)buffer; buffer += sizeof(type);
-
-	const uint8_t* cmdList = (uint8_t*)shape->m_CmdList->more(0);
-	const uint32_t cmdListSize = shape->m_CmdList->getSize();
-
-	const uint8_t* cmdListEnd = cmdList + cmdListSize;
+	bx::MemoryReader cmdListReader(shape->m_CmdList->more(0), (uint32_t)shape->m_CmdListWriter.seek(0, bx::Whence::Current));
 
 	const uint16_t firstGradientID = (uint16_t)m_NextGradientID;
 	const uint16_t firstImagePatternID = (uint16_t)m_NextImagePatternID;
-	BX_CHECK(firstGradientID + shape->m_NumGradients <= VG_CONFIG_MAX_GRADIENTS, "Not enough free gradients to render shape. Increase VG_MAX_GRADIENTS");
-	BX_CHECK(firstImagePatternID + shape->m_NumImagePatterns <= VG_CONFIG_MAX_IMAGE_PATTERNS, "Not enough free image patterns to render shape. Increase VG_MAX_IMAGE_PATTERNS");
+	VG_CHECK(firstGradientID + shape->m_NumGradients <= VG_CONFIG_MAX_GRADIENTS, "Not enough free gradients to render shape. Increase VG_MAX_GRADIENTS");
+	VG_CHECK(firstImagePatternID + shape->m_NumImagePatterns <= VG_CONFIG_MAX_IMAGE_PATTERNS, "Not enough free image patterns to render shape. Increase VG_MAX_IMAGE_PATTERS");
 
-	while (cmdList < cmdListEnd) {
-		ShapeCommand::Enum cmdType = *(ShapeCommand::Enum*)cmdList;
-		cmdList += sizeof(ShapeCommand::Enum);
+	bool skipCmds = false;
+	PushState();
+	while (cmdListReader.remaining()) {
+		ShapeCommand::Enum cmdType;
+		bx::read(&cmdListReader, cmdType);
 
 		switch (cmdType) {
 		case ShapeCommand::BeginPath:
 		{
-			BeginPath();
+			if (!skipCmds) {
+				BeginPath();
+			}
 			break;
 		}
 		case ShapeCommand::ClosePath:
 		{
-			ClosePath();
+			if (!skipCmds) {
+				ClosePath();
+			}
 			break;
 		}
 		case ShapeCommand::MoveTo:
 		{
-			float* coords = (float*)cmdList;
-			MoveTo(coords[0], coords[1]);
-			cmdList += sizeof(float) * 2;
+			float coords[2];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 2);
+			if (!skipCmds) {
+				MoveTo(coords[0], coords[1]);
+			}
 			break;
 		}
 		case ShapeCommand::LineTo:
 		{
-			float* coords = (float*)cmdList;
-			LineTo(coords[0], coords[1]);
-			cmdList += sizeof(float) * 2;
+			float coords[2];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 2);
+			if (!skipCmds) {
+				LineTo(coords[0], coords[1]);
+			}
 			break;
 		}
 		case ShapeCommand::BezierTo:
 		{
-			float* coords = (float*)cmdList;
-			BezierTo(coords[0], coords[1], coords[2], coords[3], coords[4], coords[5]);
-			cmdList += sizeof(float) * 6;
+			float coords[6];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 6);
+			if (!skipCmds) {
+				BezierTo(coords[0], coords[1], coords[2], coords[3], coords[4], coords[5]);
+			}
 			break;
 		}
 		case ShapeCommand::ArcTo:
 		{
-			float* coords = (float*)cmdList;
-			ArcTo(coords[0], coords[1], coords[2], coords[3], coords[4]);
-			cmdList += sizeof(float) * 5;
+			float coords[5];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 5);
+			if (!skipCmds) {
+				ArcTo(coords[0], coords[1], coords[2], coords[3], coords[4]);
+			}
 			break;
 		}
 		case ShapeCommand::Rect:
 		{
-			float* coords = (float*)cmdList;
-			Rect(coords[0], coords[1], coords[2], coords[3]);
-			cmdList += sizeof(float) * 4;
+			float coords[4];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 4);
+			if (!skipCmds) {
+				Rect(coords[0], coords[1], coords[2], coords[3]);
+			}
 			break;
 		}
 		case ShapeCommand::RoundedRect:
 		{
-			float* coords = (float*)cmdList;
-			RoundedRect(coords[0], coords[1], coords[2], coords[3], coords[4]);
-			cmdList += sizeof(float) * 5;
+			float coords[5];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 5);
+			if (!skipCmds) {
+				RoundedRect(coords[0], coords[1], coords[2], coords[3], coords[4]);
+			}
 			break;
 		}
 		case ShapeCommand::Circle:
 		{
-			float* coords = (float*)cmdList;
-			Circle(coords[0], coords[1], coords[2]);
-			cmdList += sizeof(float) * 3;
+			float coords[3];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 3);
+			if (!skipCmds) {
+				Circle(coords[0], coords[1], coords[2]);
+			}
 			break;
 		}
 		case ShapeCommand::FillConvexColor:
 		{
-			Color col = READ(Color, cmdList);
-			bool aa = READ(bool, cmdList);
-			FillConvexPath(col, aa);
+			Color col;
+			bool aa;
+			bx::read(&cmdListReader, col);
+			bx::read(&cmdListReader, aa);
+			if (!skipCmds) {
+				FillConvexPath(col, aa);
+			}
 			break;
 		}
 		case ShapeCommand::FillConvexGradient:
 		{
-			GradientHandle handle = READ(GradientHandle, cmdList);
-			bool aa = READ(bool, cmdList);
+			// TODO: Cache gradient fills.
+			GradientHandle handle;
+			bool aa;
+
+			bx::read(&cmdListReader, handle);
+			bx::read(&cmdListReader, aa);
 
 			handle.idx += firstGradientID;
-			FillConvexPath(handle, aa);
+			if (!skipCmds) {
+				FillConvexPath(handle, aa);
+			}
 			break;
 		}
 		case ShapeCommand::FillConvexImage:
 		{
-			ImagePatternHandle handle = READ(ImagePatternHandle, cmdList);
-			bool aa = READ(bool, cmdList);
+			// TODO: Cache image fills
+			ImagePatternHandle handle;
+			bool aa;
+
+			bx::read(&cmdListReader, handle);
+			bx::read(&cmdListReader, aa);
 
 			handle.idx += firstImagePatternID;
-			FillConvexPath(handle, aa);
+			if (!skipCmds) {
+				FillConvexPath(handle, aa);
+			}
 			break;
 		}
 		case ShapeCommand::FillConcaveColor:
 		{
-			Color col = READ(Color, cmdList);
-			bool aa = READ(bool, cmdList);
-			FillConcavePath(col, aa);
+			Color col;
+			bool aa;
+
+			bx::read(&cmdListReader, col);
+			bx::read(&cmdListReader, aa);
+
+			if (!skipCmds) {
+				FillConcavePath(col, aa);
+			}
 			break;
 		}
 		case ShapeCommand::Stroke:
 		{
-			Color col = READ(Color, cmdList);
-			float width = READ(float, cmdList);
-			bool aa = READ(bool, cmdList);
-			LineCap::Enum lineCap = READ(LineCap::Enum, cmdList);
-			LineJoin::Enum lineJoin = READ(LineJoin::Enum, cmdList);
-			StrokePath(col, width, aa, lineCap, lineJoin);
+			Color col;
+			float width;
+			bool aa;
+			LineCap::Enum lineCap;
+			LineJoin::Enum lineJoin;
+
+			bx::read(&cmdListReader, col);
+			bx::read(&cmdListReader, width);
+			bx::read(&cmdListReader, aa);
+			bx::read(&cmdListReader, lineCap);
+			bx::read(&cmdListReader, lineJoin);
+
+			if (!skipCmds) {
+				StrokePath(col, width, aa, lineCap, lineJoin);
+			}
 			break;
 		}
 		case ShapeCommand::LinearGradient:
 		{
-			float sx = READ(float, cmdList);
-			float sy = READ(float, cmdList);
-			float ex = READ(float, cmdList);
-			float ey = READ(float, cmdList);
-			Color icol = READ(Color, cmdList);
-			Color ocol = READ(Color, cmdList);
-			LinearGradient(sx, sy, ex, ey, icol, ocol);
+			float grad[4];
+			Color icol, ocol;
+			bx::read(&cmdListReader, &grad[0], sizeof(float) * 4);
+			bx::read(&cmdListReader, icol);
+			bx::read(&cmdListReader, ocol);
+			LinearGradient(grad[0], grad[1], grad[2], grad[3], icol, ocol);
 			break;
 		}
 		case ShapeCommand::BoxGradient:
 		{
-			float x = READ(float, cmdList);
-			float y = READ(float, cmdList);
-			float w = READ(float, cmdList);
-			float h = READ(float, cmdList);
-			float r = READ(float, cmdList);
-			float f = READ(float, cmdList);
-			Color icol = READ(Color, cmdList);
-			Color ocol = READ(Color, cmdList);
-			BoxGradient(x, y, w, h, r, f, icol, ocol);
+			float grad[6];
+			Color icol, ocol;
+			bx::read(&cmdListReader, &grad[0], sizeof(float) * 6);
+			bx::read(&cmdListReader, icol);
+			bx::read(&cmdListReader, ocol);
+			BoxGradient(grad[0], grad[1], grad[2], grad[3], grad[4], grad[5], icol, ocol);
 			break;
 		}
 		case ShapeCommand::RadialGradient:
 		{
-			float cx = READ(float, cmdList);
-			float cy = READ(float, cmdList);
-			float inr = READ(float, cmdList);
-			float outr = READ(float, cmdList);
-			Color icol = READ(Color, cmdList);
-			Color ocol = READ(Color, cmdList);
-			RadialGradient(cx, cy, inr, outr, icol, ocol);
+			float grad[4];
+			Color icol, ocol;
+			bx::read(&cmdListReader, &grad[0], sizeof(float) * 4);
+			bx::read(&cmdListReader, icol);
+			bx::read(&cmdListReader, ocol);
+			RadialGradient(grad[0], grad[1], grad[2], grad[3], icol, ocol);
 			break;
 		}
 		case ShapeCommand::ImagePattern:
 		{
-			float cx = READ(float, cmdList);
-			float cy = READ(float, cmdList);
-			float w = READ(float, cmdList);
-			float h = READ(float, cmdList);
-			float angle = READ(float, cmdList);
-			ImageHandle image = READ(ImageHandle, cmdList);
-			float alpha = READ(float, cmdList);
-			ImagePattern(cx, cy, w, h, angle, image, alpha);
+			float params[5], alpha;
+			ImageHandle image;
+			bx::read(&cmdListReader, &params[0], sizeof(float) * 5);
+			bx::read(&cmdListReader, image);
+			bx::read(&cmdListReader, alpha);
+			ImagePattern(params[0], params[1], params[2], params[3], params[4], image, alpha);
 			break;
 		}
 		case ShapeCommand::TextStatic:
 		{
-			Font font = READ(Font, cmdList);
-			uint32_t alignment = READ(uint32_t, cmdList);
-			Color col = READ(Color, cmdList);
-			float x = READ(float, cmdList);
-			float y = READ(float, cmdList);
-			uint32_t len = READ(uint32_t, cmdList);
-			const char* text = (const char*)cmdList;
-			cmdList += len;
-			Text(font, alignment, col, x, y, text, text + len);
+			Font font;
+			uint32_t alignment, len;
+			Color col;
+			float coords[2];
+			bx::read(&cmdListReader, font);
+			bx::read(&cmdListReader, alignment);
+			bx::read(&cmdListReader, col);
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 2);
+			bx::read(&cmdListReader, len);
+			
+			const char* str = (const char*)cmdListReader.getDataPtr();
+			cmdListReader.seek(len, bx::Whence::Current);
+			if (!skipCmds) {
+				Text(font, alignment, col, coords[0], coords[1], str, str + len);
+			}
 			break;
 		}
 #if VG_CONFIG_SHAPE_DYNAMIC_TEXT
 		case ShapeCommand::TextDynamic:
+			break;
+#endif
+		case ShapeCommand::Scissor:
 		{
-			BX_CHECK(false, "Do not call this version of SubmitShape if you are using Text templates.");
+			float rect[4];
+			bx::read(&cmdListReader, &rect[0], sizeof(float) * 4);
 
-			// Skip the command
-			cmdList += sizeof(Font) + sizeof(uint32_t) * 2 + sizeof(Color) + sizeof(float) * 2;
+			Scissor(rect[0], rect[1], rect[2], rect[3]);
+			skipCmds = false;
 			break;
 		}
-#endif
+		case ShapeCommand::IntersectScissor:
+		{
+			float rect[4];
+			bx::read(&cmdListReader, &rect[0], sizeof(float) * 4);
+			skipCmds = !IntersectScissor(rect[0], rect[1], rect[2], rect[3]);
+			break;
+		}
+		case ShapeCommand::PushState:
+			PushState();
+			break;
+		case ShapeCommand::PopState:
+			PopState();
+			skipCmds = false;
+			break;
+		default:
+			VG_CHECK(false, "Unknown shape command");
+			break;
 		}
 	}
+	PopState();
 
 	// Free shape gradients and image patterns
 	m_NextGradientID = firstGradientID;
 	m_NextImagePatternID = firstImagePatternID;
-
-#undef READ
 }
 
 #if VG_CONFIG_SHAPE_DYNAMIC_TEXT

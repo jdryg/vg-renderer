@@ -205,6 +205,15 @@ struct ImageFlags
 	};
 };
 
+struct ClipRule
+{
+	enum Enum : uint32_t
+	{
+		In = 0, // fillRule = "nonzero"?
+		Out = 1, // fillRule = "evenodd"?
+	};
+};
+
 VG_HANDLE(GradientHandle);
 VG_HANDLE(ImagePatternHandle);
 VG_HANDLE(ImageHandle);

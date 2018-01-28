@@ -2,6 +2,11 @@
 #include "vg.h"
 #include <bx/bx.h>
 
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+#include <xmmintrin.h>
+#include <immintrin.h>
+#endif
+
 namespace vg
 {
 void memset32(void* __restrict dst, uint32_t n, const void* __restrict src)
