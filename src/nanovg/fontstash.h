@@ -55,7 +55,26 @@
 
 // JD: Revert to original behavior with 1
 #ifndef FONS_SNAP_TO_GRID
-#	define FONS_SNAP_TO_GRID 0
+#	define FONS_SNAP_TO_GRID 1
+#endif
+
+// JD: If 1 builds an array for mapping ASCII chars between 0x20 and 0x7E to
+// glyph indices for the current font to avoid calling stbtt_FindGlyphIndex() 
+// for ASCII chars.
+#ifndef FONS_GLYPH_INDEX_ARRAY
+#	define FONS_GLYPH_INDEX_ARRAY 1
+#	define FONS_FIRST_GLYPH 0x20
+#	define FONS_LAST_GLYPH 0x7E
+#	define FONS_NUM_GLYPH_INDICES (FONS_LAST_GLYPH - FONS_FIRST_GLYPH + 1)
+#endif
+
+// JD: 
+#ifndef FONS_GLYPH_KERN_ARRAY
+#if FONS_GLYPH_INDEX_ARRAY
+#	define FONS_GLYPH_KERN_ARRAY 1
+#else
+#	define FONS_GLYPH_KERN_ARRAY 0
+#endif
 #endif
 
 #if !FONS_SEPARATE_CODEPOINT
@@ -343,6 +362,14 @@ static void fons__tmpfree(void* ptr, void* up);
 
 struct FONSttFontImpl {
 	stbtt_fontinfo font;
+#if FONS_GLYPH_INDEX_ARRAY
+	int glyphIndex[FONS_NUM_GLYPH_INDICES];
+#endif
+#if FONS_GLYPH_KERN_ARRAY
+	int* kern;
+	int minGlyphIndex;
+	int maxGlyphIndex;
+#endif
 };
 typedef struct FONSttFontImpl FONSttFontImpl;
 
@@ -359,6 +386,40 @@ int fons__tt_loadFont(FONScontext *context, FONSttFontImpl *font, unsigned char 
 
 	font->font.userdata = context;
 	stbError = stbtt_InitFont(&font->font, data, 0);
+
+	if (stbError) {
+#if FONS_GLYPH_INDEX_ARRAY
+		int minGlyphIndex = INT_MAX;
+		int maxGlyphIndex = INT_MIN;
+		for (int cp = FONS_FIRST_GLYPH; cp <= FONS_LAST_GLYPH; ++cp) {
+			const int gi = stbtt_FindGlyphIndex(&font->font, cp);
+			font->glyphIndex[cp - FONS_FIRST_GLYPH] = gi;
+
+			if (gi < minGlyphIndex) { 
+				minGlyphIndex = gi;
+			}
+			if (gi > maxGlyphIndex) {
+				maxGlyphIndex = gi;
+			}
+		}
+#endif
+
+#if FONS_GLYPH_KERN_ARRAY
+		font->minGlyphIndex = minGlyphIndex;
+		font->maxGlyphIndex = maxGlyphIndex;
+
+		const int numGlyphs = maxGlyphIndex - minGlyphIndex + 1;
+		const int totalPairs = numGlyphs * numGlyphs;
+		font->kern = (int*)FONSmalloc(sizeof(int) * totalPairs);
+		for (int second = minGlyphIndex; second <= maxGlyphIndex; ++second) {
+			const int mult = (second - minGlyphIndex) * numGlyphs;
+			for (int first = minGlyphIndex; first <= maxGlyphIndex; ++first) {
+				font->kern[first - minGlyphIndex + mult] = stbtt_GetGlyphKernAdvance(&font->font, first, second);
+			}
+		}
+#endif
+	}
+
 	return stbError;
 }
 
@@ -374,6 +435,12 @@ float fons__tt_getPixelHeightScale(FONSttFontImpl *font, float size)
 
 int fons__tt_getGlyphIndex(FONSttFontImpl *font, int codepoint)
 {
+#if FONS_GLYPH_INDEX_ARRAY
+	if (codepoint >= FONS_FIRST_GLYPH && codepoint <= FONS_LAST_GLYPH) {
+		return font->glyphIndex[codepoint - FONS_FIRST_GLYPH];
+	}
+#endif
+
 	return stbtt_FindGlyphIndex(&font->font, codepoint);
 }
 
@@ -394,6 +461,17 @@ void fons__tt_renderGlyphBitmap(FONSttFontImpl *font, unsigned char *output, int
 
 int fons__tt_getGlyphKernAdvance(FONSttFontImpl *font, int glyph1, int glyph2)
 {
+#if FONS_GLYPH_KERN_ARRAY
+	const int minID = font->minGlyphIndex;
+	const int maxID = font->maxGlyphIndex;
+	if(glyph1 >= minID && glyph1 <= maxID && glyph2 >= minID && glyph2 <= maxID) {
+		const int g1 = glyph1 - minID;
+		const int g2 = glyph2 - minID;
+		const int combo = g1 + g2 * (maxID - minID + 1);
+		return font->kern[combo];
+	}
+#endif
+
 	return stbtt_GetGlyphKernAdvance(&font->font, glyph1, glyph2);
 }
 
@@ -1180,7 +1258,7 @@ static FONSglyph* fons__getGlyph(FONScontext* stash, FONSfont* font, unsigned in
 
 	// Find code point and size.
 #if FONS_SEPARATE_CODEPOINT
-	h = fons__hashint(codepoint, isize, iblur) & (FONS_HASH_LUT_SIZE-1);
+	h = fons__hashint(codepoint) & (FONS_HASH_LUT_SIZE-1);
 #else
 	const uint64_t glyphCode = MAKE_GLYPH_CODE(codepoint, isize, iblur);
 	h = fons__hashGlyphCode(glyphCode) & (FONS_HASH_LUT_SIZE - 1);
@@ -1984,7 +2062,7 @@ static FONSglyph* fons__bakeGlyph(FONScontext* stash, FONSfont* font, int glyphI
 
 	// Find code point and size.
 #if FONS_SEPARATE_CODEPOINT
-	const unsigned int h = fons__hashint(codepoint, isize, iblur) & (FONS_HASH_LUT_SIZE-1);
+	const unsigned int h = fons__hashint(codepoint) & (FONS_HASH_LUT_SIZE-1);
 #else
 	const uint64_t glyphCode = MAKE_GLYPH_CODE(codepoint, isize, iblur);
 	const unsigned int h = fons__hashGlyphCode(glyphCode) & (FONS_HASH_LUT_SIZE - 1);
