@@ -63,6 +63,12 @@ static const bgfx::EmbeddedShader s_EmbeddedShaders[] =
 
 #define CMD_READ(type, buffer) *(type*)buffer; buffer += sizeof(type);
 
+#if VG_CONFIG_UV_INT16
+typedef int16_t uv_t;
+#else
+typedef float uv_t;
+#endif
+
 struct State
 {
 	float m_TransformMtx[6];
@@ -75,11 +81,7 @@ struct State
 struct VertexBuffer
 {
 	float* m_Pos;
-#if VG_CONFIG_UV_INT16
-	int16_t* m_UV;
-#else
-	float* m_UV;
-#endif
+	uv_t* m_UV;
 	uint32_t* m_Color;
 	uint32_t m_Count;
 	bgfx::DynamicVertexBufferHandle m_PosBufferHandle;
@@ -158,11 +160,7 @@ struct DrawCommand
 struct CachedDrawCommand
 {
 	float* m_Pos;
-#if VG_CONFIG_UV_INT16
-	int16_t* m_UV;
-#else
-	float* m_UV;
-#endif
+	uv_t* m_UV;
 	uint32_t* m_Color;
 	uint16_t* m_Indices;
 	uint16_t m_NumVertices;
@@ -214,13 +212,13 @@ struct Context
 	uint32_t m_VertexBufferCapacity;
 
 	float** m_Vec2DataPool;
+	uint32_t m_Vec2DataPoolCapacity;
+
 	uint32_t** m_Uint32DataPool;
+	uint32_t m_Uint32DataPoolCapacity;
+
 #if VG_CONFIG_UV_INT16
 	int16_t** m_UVDataPool;
-#endif
-	uint32_t m_Vec2DataPoolCapacity;
-	uint32_t m_Uint32DataPoolCapacity;
-#if VG_CONFIG_UV_INT16
 	uint32_t m_UVDataPoolCapacity;
 #endif
 #if BX_CONFIG_SUPPORTS_THREADING
@@ -416,7 +414,6 @@ struct Context
 	void cachedShapeReset(CachedShape* shape);
 	void cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* cmd);
 	void cachedShapeAddTextCommand(CachedShape* shape, const uint8_t* cmdData);
-	void cachedShapeAddTextCommand(CachedShape* shape, String* str, uint32_t alignment, Color col, float x, float y);
 	void cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* stringCallback, void* userData);
 
 	// Strings
@@ -497,13 +494,8 @@ inline void multiplyMatrix3(const float* __restrict a, const float* __restrict b
 inline float getAverageScale(const float* t)
 {
 	// nvg__getAverageScale
-#if 0
 	float sx = bx::sqrt(t[0] * t[0] + t[2] * t[2]);
 	float sy = bx::sqrt(t[1] * t[1] + t[3] * t[3]);
-#else
-	float sx = sqrtf(t[0] * t[0] + t[2] * t[2]);
-	float sy = sqrtf(t[1] * t[1] + t[3] * t[3]);
-#endif
 	return (sx + sy) * 0.5f;
 }
 
@@ -925,6 +917,7 @@ Context::Context(bx::AllocatorI* allocator, uint8_t viewID)
 	, m_NextFontID(0)
 	, m_NextGradientID(0)
 	, m_NextImagePatternID(0)
+	, m_RecordClipCommands(false)
 {
 	for (uint32_t i = 0; i < MAX_FONT_IMAGES; ++i) {
 		m_FontImages[i] = VG_INVALID_HANDLE;
@@ -1028,6 +1021,22 @@ Context::~Context()
 	}
 	BX_FREE(m_Allocator, m_Uint32DataPool);
 	m_Uint32DataPoolCapacity = 0;
+
+#if VG_CONFIG_UV_INT16
+	for (uint32_t i = 0; i < m_UVDataPoolCapacity; ++i) {
+		int16_t* buffer = m_UVDataPool[i];
+		if (!buffer) {
+			continue;
+		}
+
+		if ((uintptr_t)buffer & 1) {
+			buffer = (int16_t*)((uintptr_t)buffer & ~1);
+			BX_ALIGNED_FREE(m_Allocator, buffer, 16);
+		}
+	}
+	BX_FREE(m_Allocator, m_UVDataPool);
+	m_UVDataPoolCapacity = 0;
+#endif
 
 	BX_FREE(m_Allocator, m_DrawCommands);
 	m_DrawCommands = nullptr;
@@ -1736,11 +1745,7 @@ GradientHandle Context::createLinearGradient(float sx, float sy, float ex, float
 	const float large = 1e5;
 	float dx = ex - sx;
 	float dy = ey - sy;
-#if 0
 	float d = bx::sqrt(dx * dx + dy * dy);
-#else
-	float d = sqrtf(dx * dx + dy * dy);
-#endif
 	if (d > 0.0001f) {
 		dx /= d;
 		dy /= d;
@@ -2592,6 +2597,7 @@ void Context::destroyShape(Shape* shape)
 {
 	if (shape->m_RendererData) {
 		CachedShape* cachedShape = (CachedShape*)shape->m_RendererData;
+		cachedShapeReset(cachedShape);
 		BX_DELETE(m_Allocator, cachedShape);
 		shape->m_RendererData = nullptr;
 	}
@@ -2918,11 +2924,11 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 		}
 		case ShapeCommand::TextStatic:
 		{
-//#if VG_CONFIG_ENABLE_SHAPE_CACHING
-//			if (canCache) {
-//				cachedShapeAddTextCommand(cachedShape, cmdList - sizeof(ShapeCommand::Enum));
-//			}
-//#endif
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
+			if (canCache) {
+				cachedShapeAddTextCommand(cachedShape, cmdListReader.getDataPtr() - sizeof(ShapeCommand::Enum));
+			}
+#endif
 			ShapeCommandText textCmd;
 			bx::read(&cmdListReader, textCmd);
 			
@@ -2930,19 +2936,33 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			cmdListReader.seek(textCmd.len, bx::Whence::Current);
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
-			if (canCache) {
-				String* cachedString = createString(textCmd.font, str, str + textCmd.len);
-				cachedShapeAddTextCommand(cachedShape, cachedString, textCmd.alignment, textCmd.col, textCmd.x, textCmd.y);
-				if (!skipCmds) {
-					text(cachedString, textCmd.alignment, textCmd.col, textCmd.x, textCmd.y);
-				}
-			} else {
-				if (!skipCmds) {
-					text(textCmd.font, textCmd.alignment, textCmd.col, textCmd.x, textCmd.y, str, str + textCmd.len);
-				}
+			if (!skipCmds) {
+				text(textCmd.font, textCmd.alignment, textCmd.col, textCmd.x, textCmd.y, str, str + textCmd.len);
 			}
 #else
 			text(textCmd.font, textCmd.alignment, textCmd.col, textCmd.x, textCmd.y, str, str + textCmd.len);
+#endif
+			break;
+		}
+		case ShapeCommand::TextBoxStatic:
+		{
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
+			if (canCache) {
+				cachedShapeAddTextCommand(cachedShape, cmdListReader.getDataPtr() - sizeof(ShapeCommand::Enum));
+			}
+#endif
+			ShapeCommandText textCmd;
+			bx::read(&cmdListReader, textCmd);
+
+			const char* str = (const char*)cmdListReader.getDataPtr();
+			cmdListReader.seek(textCmd.len, bx::Whence::Current);
+
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
+			if (!skipCmds) {
+				textBox(textCmd.font, textCmd.alignment, textCmd.col, textCmd.x, textCmd.y, textCmd.breakWidth, str, str + textCmd.len);
+			}
+#else
+			textBox(textCmd.font, textCmd.alignment, textCmd.col, textCmd.x, textCmd.y, textCmd.breakWidth, str, str + textCmd.len);
 #endif
 			break;
 		}
@@ -3017,6 +3037,13 @@ void Context::submitShape(Shape* shape, GetStringByIDFunc* stringCallback, void*
 			transformScale(coords[0], coords[1]);
 			break;
 		}
+		case ShapeCommand::ApplyTransform:
+		{
+			float coords[6];
+			bx::read(&cmdListReader, &coords[0], sizeof(float) * 6);
+			transformMult(coords, false);
+			break;
+		}
 		case ShapeCommand::BeginClip:
 		{
 			ClipRule::Enum rule;
@@ -3066,22 +3093,14 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 		IndexBuffer* ib = m_ActiveIndexBuffer;
 		const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 		float* dstPos = &vb->m_Pos[vbOffset << 1];
-#if VG_CONFIG_UV_INT16
-		int16_t* dstUV = &vb->m_UV[vbOffset << 1];
-#else
-		float* dstUV = &vb->m_UV[vbOffset << 1];
-#endif
+		uv_t* dstUV = &vb->m_UV[vbOffset << 1];
 		uint32_t* dstColor = &vb->m_Color[vbOffset];
 		uint16_t* dstIndex = &ib->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 
 		const uint16_t startVertexID = (uint16_t)cmd->m_NumVertices;
 
 		batchTransformPositions_Unaligned(cachedCmd->m_Pos, cachedCmd->m_NumVertices, dstPos, mtx);
-#if VG_CONFIG_UV_INT16
-		bx::memCopy(dstUV, cachedCmd->m_UV, sizeof(int16_t) * 2 * cachedCmd->m_NumVertices);
-#else
-		bx::memCopy(dstUV, cachedCmd->m_UV, sizeof(float) * 2 * cachedCmd->m_NumVertices);
-#endif
+		bx::memCopy(dstUV, cachedCmd->m_UV, sizeof(uv_t) * 2 * cachedCmd->m_NumVertices);
 		bx::memCopy(dstColor, cachedCmd->m_Color, sizeof(uint32_t) * cachedCmd->m_NumVertices);
 		batchTransformDrawIndices(cachedCmd->m_Indices, cachedCmd->m_NumIndices, dstIndex, startVertexID);
 
@@ -3111,10 +3130,28 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 			Color col = CMD_READ(Color, cmdData);
 			float x = CMD_READ(float, cmdData);
 			float y = CMD_READ(float, cmdData);
+			float breakWidth = CMD_READ(float, cmdData);
 			uint32_t len = CMD_READ(uint32_t, cmdData);
 			const char* str = (const char*)cmdData;
 			cmdData += len;
+
+			BX_UNUSED(breakWidth);
 			text(font, alignment, col, x, y, str, str + len);
+			break;
+		}
+		case ShapeCommand::TextBoxStatic:
+		{
+			Font font = CMD_READ(Font, cmdData);
+			uint32_t alignment = CMD_READ(uint32_t, cmdData);
+			Color col = CMD_READ(Color, cmdData);
+			float x = CMD_READ(float, cmdData);
+			float y = CMD_READ(float, cmdData);
+			float breakWidth = CMD_READ(float, cmdData);
+			uint32_t len = CMD_READ(uint32_t, cmdData);
+			const char* str = (const char*)cmdData;
+			cmdData += len;
+
+			textBox(font, alignment, col, x, y, breakWidth, str, str + len);
 			break;
 		}
 #if VG_CONFIG_SHAPE_DYNAMIC_TEXT
@@ -3125,8 +3162,10 @@ void Context::cachedShapeRender(const CachedShape* shape, GetStringByIDFunc* str
 			Color col = CMD_READ(Color, cmdData);
 			float x = CMD_READ(float, cmdData);
 			float y = CMD_READ(float, cmdData);
+			float breakWidth = CMD_READ(float, cmdData);
 			uint32_t stringID = CMD_READ(uint32_t, cmdData);
 
+			BX_UNUSED(breakWidth);
 			VG_WARN(stringCallback, "Shape includes dynamic text commands but not string callback has been specified");
 			if (stringCallback) {
 				uint32_t len;
@@ -3198,26 +3237,14 @@ void Context::cachedShapeAddDrawCommand(CachedShape* shape, const DrawCommand* c
 	VG_CHECK(cachedCmd->m_NumIndices + cmd->m_NumIndices < 65536, "Not enough space in current cached command");
 	cachedCmd->m_NumVertices += (uint16_t)cmd->m_NumVertices;
 	cachedCmd->m_Pos = (float*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Pos, sizeof(float) * 2 * cachedCmd->m_NumVertices, 16);
-#if VG_CONFIG_UV_INT16
-	cachedCmd->m_UV = (int16_t*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_UV, sizeof(int16_t) * 2 * cachedCmd->m_NumVertices, 16);
-#else
-	cachedCmd->m_UV = (float*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_UV, sizeof(float) * 2 * cachedCmd->m_NumVertices, 16);
-#endif
+	cachedCmd->m_UV = (uv_t*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_UV, sizeof(uv_t) * 2 * cachedCmd->m_NumVertices, 16);
 	cachedCmd->m_Color = (uint32_t*)BX_ALIGNED_REALLOC(m_Allocator, cachedCmd->m_Color, sizeof(uint32_t) * cachedCmd->m_NumVertices, 16);
 
 	const float* srcPos = &m_VertexBuffers[cmd->m_VertexBufferID].m_Pos[cmd->m_FirstVertexID << 1];
-#if VG_CONFIG_UV_INT16
-	const int16_t* srcUV = &m_VertexBuffers[cmd->m_VertexBufferID].m_UV[cmd->m_FirstVertexID << 1];
-#else
-	const float* srcUV = &m_VertexBuffers[cmd->m_VertexBufferID].m_UV[cmd->m_FirstVertexID << 1];
-#endif
+	const uv_t* srcUV = &m_VertexBuffers[cmd->m_VertexBufferID].m_UV[cmd->m_FirstVertexID << 1];
 	const uint32_t* srcColor = &m_VertexBuffers[cmd->m_VertexBufferID].m_Color[cmd->m_FirstVertexID];
 	bx::memCopy(&cachedCmd->m_Pos[firstVertexID << 1], srcPos, sizeof(float) * 2 * cmd->m_NumVertices);
-#if VG_CONFIG_UV_INT16
-	bx::memCopy(&cachedCmd->m_UV[firstVertexID << 1], srcUV, sizeof(int16_t) * 2 * cmd->m_NumVertices);
-#else
-	bx::memCopy(&cachedCmd->m_UV[firstVertexID << 1], srcUV, sizeof(float) * 2 * cmd->m_NumVertices);
-#endif
+	bx::memCopy(&cachedCmd->m_UV[firstVertexID << 1], srcUV, sizeof(uv_t) * 2 * cmd->m_NumVertices);
 	bx::memCopy(&cachedCmd->m_Color[firstVertexID], srcColor, sizeof(uint32_t) * cmd->m_NumVertices);
 
 	// Copy the indices...
@@ -3237,19 +3264,6 @@ void Context::cachedShapeAddTextCommand(CachedShape* shape, const uint8_t* cmdDa
 	shape->m_NumTextCommands++;
 	shape->m_TextCommands = (const uint8_t**)BX_REALLOC(m_Allocator, shape->m_TextCommands, sizeof(uint8_t*) * shape->m_NumTextCommands);
 	shape->m_TextCommands[shape->m_NumTextCommands - 1] = cmdData;
-}
-
-void Context::cachedShapeAddTextCommand(CachedShape* shape, String* str, uint32_t alignment, Color col, float x, float y)
-{
-	shape->m_NumStaticTextCommands++;
-	shape->m_StaticTextCommands = (CachedTextCommand*)BX_REALLOC(m_Allocator, shape->m_StaticTextCommands, sizeof(CachedTextCommand) * shape->m_NumStaticTextCommands);
-
-	CachedTextCommand* cmd = &shape->m_StaticTextCommands[shape->m_NumStaticTextCommands - 1];
-	cmd->m_Text = str;
-	cmd->m_Alignment = alignment;
-	cmd->m_Color = col;
-	cmd->m_Pos[0] = x;
-	cmd->m_Pos[1] = y;
 }
 
 void Context::getImageSize(ImageHandle image, int* w, int* h)
@@ -4053,17 +4067,13 @@ void Context::createDrawCommand_VertexColor(const float* vtx, uint32_t numVertic
 	float* dstPos = &vb->m_Pos[vbOffset << 1];
 	bx::memCopy(dstPos, vtx, sizeof(float) * 2 * numVertices);
 
-#if VG_CONFIG_UV_INT16
-	int16_t uv[2];
+	uv_t uv[2];
 	getWhitePixelUV(&uv[0]);
 
-	int16_t* dstUV = &vb->m_UV[vbOffset << 1];
+	uv_t* dstUV = &vb->m_UV[vbOffset << 1];
+#if VG_CONFIG_UV_INT16
 	memset32(dstUV, numVertices, &uv[0]);
 #else
-	float uv[2];
-	getWhitePixelUV(&uv[0]);
-
-	float* dstUV = &vb->m_UV[vbOffset << 1];
 	memset64(dstUV, numVertices, &uv[0]);
 #endif
 
@@ -4125,20 +4135,6 @@ void Context::createDrawCommand_Gradient(const float* vtx, uint32_t numVertices,
 
 	float* dstPos = &vb->m_Pos[vbOffset << 1];
 	bx::memCopy(dstPos, vtx, sizeof(float) * 2 * numVertices);
-
-#if 0
-#if VG_CONFIG_UV_INT16
-	int16_t* dstUV = &vb->m_UV[vbOffset << 1];
-	bx::memSet(dstUV, 0, sizeof(int16_t) * 2 * numVertices);
-#else
-	float* dstUV = &vb->m_UV[vbOffset << 1];
-	bx::memSet(dstUV, 0, sizeof(float) * 2 * numVertices); // UVs not used by the shader.
-#endif
-
-	const uint32_t color = ColorRGBA::White;
-	uint32_t* dstColor = &vb->m_Color[vbOffset];
-	memset32(dstColor, numVertices, &color);
-#endif
 
 	uint16_t* dstIndex = &m_ActiveIndexBuffer->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);

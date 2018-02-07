@@ -40,12 +40,14 @@ struct ShapeCommand
 		Rotate,
 		Translate,
 		Scale,
+		ApplyTransform,
 
 		BeginClip,
 		EndClip,
 		ResetClip,
 
-		TextStatic, 
+		TextStatic,
+		TextBoxStatic,
 #if VG_CONFIG_SHAPE_DYNAMIC_TEXT
 		TextDynamic,
 #endif
@@ -71,6 +73,7 @@ struct ShapeCommandText
 	uint32_t alignment;
 	Color col;
 	float x, y;
+	float breakWidth;
 	uint32_t len; // or string id for dynamic text
 };
 
@@ -121,6 +124,7 @@ struct Shape
 	void Rotate(float ang_rad);
 	void Translate(float x, float y);
 	void Scale(float x, float y);
+	void ApplyTransform(const float* transform);
 
 	void BeginClip(ClipRule::Enum rule);
 	void EndClip();
@@ -132,6 +136,7 @@ struct Shape
 	ImagePatternHandle ImagePattern(float cx, float cy, float w, float h, float angle, ImageHandle image, float alpha);
 
 	void Text(const Font& font, uint32_t alignment, Color color, float x, float y, const char* text, const char* end);
+	void TextBox(const Font& font, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* text, const char* end);
 
 #if VG_CONFIG_SHAPE_DYNAMIC_TEXT
 	void TextDynamic(const Font& font, uint32_t alignment, Color color, float x, float y, uint32_t stringID);

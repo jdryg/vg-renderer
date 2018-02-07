@@ -183,9 +183,30 @@ void Shape::Text(const Font& font, uint32_t alignment, Color color, float x, flo
 	cmd.col = color;
 	cmd.x = x;
 	cmd.y = y;
+	cmd.breakWidth = FLT_MAX;
 	cmd.len = len;
 
 	bx::write(&m_CmdListWriter, ShapeCommand::TextStatic);
+	bx::write(&m_CmdListWriter, cmd);
+	bx::write(&m_CmdListWriter, text, len);
+
+	m_Flags |= ShapeFlag::HasText;
+}
+
+void Shape::TextBox(const Font& font, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* text, const char* end)
+{
+	uint32_t len = (uint32_t)(end != nullptr ? end - text : bx::strLen(text));
+
+	ShapeCommandText cmd;
+	cmd.font = font;
+	cmd.alignment = alignment;
+	cmd.col = color;
+	cmd.x = x;
+	cmd.y = y;
+	cmd.breakWidth = breakWidth;
+	cmd.len = len;
+
+	bx::write(&m_CmdListWriter, ShapeCommand::TextBoxStatic);
 	bx::write(&m_CmdListWriter, cmd);
 	bx::write(&m_CmdListWriter, text, len);
 
@@ -252,6 +273,12 @@ void Shape::Scale(float x, float y)
 	const float coords[] = { x, y };
 	bx::write(&m_CmdListWriter, ShapeCommand::Scale);
 	bx::write(&m_CmdListWriter, &coords[0], sizeof(float) * 2);
+}
+
+void Shape::ApplyTransform(const float* transform)
+{
+	bx::write(&m_CmdListWriter, ShapeCommand::ApplyTransform);
+	bx::write(&m_CmdListWriter, transform, sizeof(float) * 6);
 }
 
 void Shape::BeginClip(ClipRule::Enum rule)

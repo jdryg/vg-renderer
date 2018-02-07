@@ -12,8 +12,6 @@ struct AllocatorI;
 
 namespace vg
 {
-class StrokerImpl;
-
 class Stroker
 {
 public:

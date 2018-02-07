@@ -30,11 +30,7 @@ inline Vec2 vec2Dir(const Vec2& a, const Vec2& b)
 	const float dx = b.x - a.x;
 	const float dy = b.y - a.y;
 	const float lenSqr = dx * dx + dy * dy;
-#if 0
 	const float invLen = lenSqr < VG_EPSILON ? 0.0f : bx::rsqrt(lenSqr);
-#else
-	const float invLen = lenSqr < VG_EPSILON ? 0.0f : (1.0f / sqrtf(lenSqr));
-#endif
 	return{ dx * invLen, dy * invLen };
 }
 
@@ -1567,6 +1563,7 @@ void StrokerImpl::polylineStrokeAAThin(Mesh* mesh, const Vec2* vtx, uint32_t num
 				uint16_t id[3] = {
 					(uint16_t)(firstFanVertexID + 1), (uint16_t)(firstFanVertexID + 3), (uint16_t)(firstFanVertexID + 2)
 				};
+				expandIB(3);
 				addIndices(&id[0], 3);
 
 				prevSegmentLeftAAID = firstFanVertexID + 3;
