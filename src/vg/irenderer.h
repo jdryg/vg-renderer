@@ -33,6 +33,7 @@ public:
 	virtual void FillConvexPath(ImagePatternHandle img, bool aa) = 0;
 	virtual void FillConcavePath(Color col, bool aa) = 0;
 	virtual void StrokePath(Color col, float width, bool aa, LineCap::Enum lineCap = LineCap::Butt, LineJoin::Enum lineJoin = LineJoin::Miter) = 0;
+	virtual void StrokePath(vg::GradientHandle gradient, float width, bool aa, LineCap::Enum lineCap = LineCap::Butt, LineJoin::Enum lineJoin = LineJoin::Miter) = 0;
 	virtual void BeginClip(ClipRule::Enum rule) = 0;
 	virtual void EndClip() = 0;
 	virtual void ResetClip() = 0;

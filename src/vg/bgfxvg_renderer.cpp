@@ -333,6 +333,7 @@ struct Context
 	void fillConvexPath(ImagePatternHandle img, bool aa);
 	void fillConcavePath(Color col, bool aa);
 	void strokePath(Color col, float width, bool aa, LineCap::Enum lineCap, LineJoin::Enum lineJoin);
+	void strokePath(vg::GradientHandle gradient, float width, bool aa, LineCap::Enum lineCap, LineJoin::Enum lineJoin);
 	GradientHandle createLinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol);
 	GradientHandle createBoxGradient(float x, float y, float w, float h, float r, float f, Color icol, Color ocol);
 	GradientHandle createRadialGradient(float cx, float cy, float inr, float outr, Color icol, Color ocol);
@@ -655,6 +656,15 @@ void BGFXVGRenderer::StrokePath(Color col, float width, bool aa, LineCap::Enum l
 #endif
 
 	m_Context->strokePath(col, width, aa, lineCap, lineJoin);
+}
+
+void BGFXVGRenderer::StrokePath(vg::GradientHandle gradient, float width, bool aa, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
+{
+#if VG_CONFIG_FORCE_AA_OFF
+	aa = false;
+#endif
+
+	m_Context->strokePath(gradient, width, aa, lineCap, lineJoin);
 }
 
 void BGFXVGRenderer::BeginClip(ClipRule::Enum rule)
@@ -1703,6 +1713,61 @@ void Context::strokePath(Color color, float width, bool aa, LineCap::Enum lineCa
 			const bool hasColors = mesh.m_ColorBuffer != nullptr;
 			createDrawCommand_VertexColor(mesh.m_PosBuffer, mesh.m_NumVertices, hasColors ? mesh.m_ColorBuffer : &c, hasColors ? mesh.m_NumVertices : 1, mesh.m_IndexBuffer, mesh.m_NumIndices);
 		}
+	}
+}
+
+void Context::strokePath(vg::GradientHandle gradientHandle, float width, bool aa, LineCap::Enum lineCap, LineJoin::Enum lineJoin)
+{
+	VG_CHECK(!m_RecordClipCommands, "Only strokePath(Color) is supported inside BeginClip()/EndClip()");
+	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
+
+	// TODO: AA
+	BX_UNUSED(aa);
+
+	transformPath();
+
+	const float* pathVertices = m_TransformedPathVertices;
+
+	const State* state = getState();
+	const float avgScale = state->m_AvgScale;
+	float strokeWidth = bx::clamp<float>(width * avgScale, 0.0f, 200.0f);
+	bool isThin = false;
+	if (strokeWidth <= m_FringeWidth) {
+		strokeWidth = m_FringeWidth;
+		isThin = true;
+	}
+
+	const uint32_t numPaths = m_Path->getNumSubPaths();
+	const SubPath* subPaths = m_Path->getSubPaths();
+	for (uint32_t iSubPath = 0; iSubPath < numPaths; ++iSubPath) {
+		const SubPath* path = &subPaths[iSubPath];
+		if (path->m_NumVertices < 2) {
+			continue;
+		}
+
+		const float* vtx = &pathVertices[path->m_FirstVertexID << 1];
+		const uint32_t numPathVertices = path->m_NumVertices;
+		const bool isClosed = path->m_IsClosed;
+
+		Mesh mesh;
+#if 0
+		if (aa) {
+			if (isThin) {
+				m_Stroker->polylineStrokeAAThin(&mesh, vtx, numPathVertices, isClosed, vg::ColorRGBA::White, lineCap, lineJoin);
+			} else {
+				m_Stroker->polylineStrokeAA(&mesh, vtx, numPathVertices, isClosed, vg::ColorRGBA::White, strokeWidth, lineCap, lineJoin);
+			}
+		} else {
+			m_Stroker->polylineStroke(&mesh, vtx, numPathVertices, isClosed, strokeWidth, lineCap, lineJoin);
+		}
+
+		// TODO: Create gradient draw command with per-vertex colors (required for AA alpha).
+		createDrawCommand_Gradient(mesh.m_PosBuffer, mesh.m_NumVertices, gradientHandle, mesh.m_IndexBuffer, mesh.m_NumIndices);
+#else
+		m_Stroker->polylineStroke(&mesh, vtx, numPathVertices, isClosed, strokeWidth, lineCap, lineJoin);
+
+		createDrawCommand_Gradient(mesh.m_PosBuffer, mesh.m_NumVertices, gradientHandle, mesh.m_IndexBuffer, mesh.m_NumIndices);
+#endif
 	}
 }
 
