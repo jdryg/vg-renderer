@@ -258,7 +258,6 @@ struct CommandList
 	uint32_t m_Flags;
 	uint16_t m_NumGradients;
 	uint16_t m_NumImagePatterns;
-	bool m_HasClipCommands;
 
 	CommandListCache* m_Cache;
 };
@@ -3205,8 +3204,6 @@ void clBeginClip(Context* ctx, CommandListHandle handle, ClipRule::Enum rule)
 
 	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::BeginClip, sizeof(ClipRule::Enum));
 	CMD_WRITE(ptr, ClipRule::Enum, rule);
-
-	cl->m_HasClipCommands = true;
 }
 
 void clEndClip(Context* ctx, CommandListHandle handle)
