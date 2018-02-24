@@ -1,36 +1,40 @@
 # vg-renderer
 
-A vector graphics renderer for bgfx, based on ideas from both NanoVG and ImDrawList (Dear ImGUI)
+A vector graphics renderer for bgfx, based on ideas from NanoVG and ImDrawList (Dear ImGUI)
 
-**WIP** and doesn't compile as is! Requires structs and functions from my codebase which aren't present in this repo. Nothing too complicated (it needs a Vec2 struct and several math/utility functions) so if you really want to make it compile, you can try writing/using your own version of those.
+Includes some small changes to FontStash. Optionally uses libtess2 for concave polygon decomposition.
 
-Also includes some small changes to FontStash.
+### Path and Stroker classes
 
-Based on NanoVG and FontStash versions included in bgfx repo.
+Paths are tesselated using the Path struct (`src/vg/path.cpp, .h`). You can use vg::pathXXX() functions to convert your SVG commands to a polyline for uses outside this renderer.
+
+Strokes and fills are generated using the Stroker struct (`src/vg/stroker.cpp, .h`). You can use vg::strokerXXX() functions to generate strokes and fills for your polylines for uses outside this renderer.
 
 ### Compared to NanoVG/FontStash
 
-1. Generates fewer draw calls, by batching multiple paths together, and using indexed triangle lists (like ImDrawList)
-2. Separate shader program for gradients to reduce uniform usage (NanoVG's bgfx backend uses a single program for all cases)
-3. Circle() and RoundedRect() are implemented without Beziers
-4. All textures are RGBA (even the font altas)
-5. Concave polygons are decomposed into convex parts and rendered normally instead of using the stencil buffer (not tested extensively; might have issues with AA) (uses algorithm from https://mpen.ca/406/bayazit)
-6. Stack-based Bezier tesselation
-7. FontStash glyph hashing uses BKDR for better distribution of glyphs in the LUT (fewer collisions when searching for cached glyphs)
-8. Shapes (aka prebaked command lists, aka display lists) with dynamic text support (i.e. the actual text string is retrieved at the time the shape is submitted for rendering, via a callback) (can be disabled with a compile-time flag (VG_SHAPE_DYNAMIC_TEXT)).
-9. Caching of tessellated shapes.
+1. Generates fewer draw calls by batching multiple paths together (if they share the same state)
+2. Separate shader programs for gradients and image patterns to reduce uniform usage (NanoVG's bgfx backend uses a single program for all cases)
+3. Concave polygons are decomposed on the CPU.
+4. Command lists with support for tesselation caching.
+5. Clip in/out with the stencil buffer
+6. User-specified indexed triangle list rendering (i.e. for complex gradients and sprite atlases).
+7. Fills with image patterns can be colored.
+8. FontStash: glyph hashing uses BKDR (seems to give better distribution of glyphs in the LUT; fewer collisions when searching for cached glyphs)
+9. FontStash: optional (compile-time flag) caching of glyph indices and kerning info for ASCII chars in order to avoid repeated calls to stbtt functions.
 
 ### What's not supported compared to NanoVG
 
-1. Miter limit
-2. Arbitrary polygon winding
-3. Polygon holes
-4. Variable text line height
-5. Skew transformation matrix
+1. Miter limit (i.e miter joins never convert to bevel joins)
+2. Polygon holes (they can be emulated using clip in/out regions)
+3. Variable text line height
+4. Skew transformation matrix
 
-### Comparison screenshots
+### Images
 
-The code is currently used in [DLS](http://makingartstudios.itch.io/dls) for rendering both the schematic and the UI. Below are two screenshots comparing NanoVG's output with vg-renderer's output.
+[![DLS](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/dls.png)](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/dls.png)
 
-[![NanoVG](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/i8080_nanovg.png)](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/i8080_nanovg.png)
-[![vg-renderer](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/i8080_vg_renderer.png)](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/i8080_vg_renderer.png)
+[![Tiger](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/vgrenderer_tiger.png)](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/vgrenderer_tiger.png)
+
+[![Demo](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/vgrenderer_demo.png)](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/vgrenderer_demo.png)
+
+[![Gradients](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/vgrenderer_colorwheel.png)](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/vgrenderer_colorwheel.png)
