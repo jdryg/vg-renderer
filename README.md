@@ -31,10 +31,14 @@ Strokes and fills are generated using the Stroker struct (`src/vg/stroker.cpp, .
 
 ### Images
 
+[DLS](https://makingartstudios.itch.io/dls)
 [![DLS](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/dls.png)](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/dls.png)
 
+SVG (using [simple-svg](https://github.com/jdryg/simple-svg) for loading)
 [![Tiger](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/vgrenderer_tiger.png)](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/vgrenderer_tiger.png)
 
+Demo
 [![Demo](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/vgrenderer_demo.png)](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/vgrenderer_demo.png)
 
+Custom gradients (indexed triangle lists w/ per-vertex colors)
 [![Gradients](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/vgrenderer_colorwheel.png)](https://raw.githubusercontent.com/jdryg/vg-renderer/master/img/vgrenderer_colorwheel.png)
