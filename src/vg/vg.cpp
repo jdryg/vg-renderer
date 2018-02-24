@@ -3034,7 +3034,7 @@ void clIndexedTriList(Context* ctx, CommandListHandle handle, const float* pos, 
 	const uint32_t dataSize = 0
 		+ sizeof(uint32_t) // num positions
 		+ sizeof(float) * 2 * numVertices // positions
-		+ (uv != nullptr ? sizeof(uint32_t) : 0) // num UVs
+		+ sizeof(uint32_t) // num UVs
 		+ (uv != nullptr ? (sizeof(uv_t) * 2 * numVertices) : 0) // UVs
 		+ sizeof(uint32_t) // num colors
 		+ sizeof(Color) * numColors // colors
@@ -4656,15 +4656,7 @@ static void freeCommandListCache(Context* ctx, CommandListCache* cache)
 {
 	bx::AllocatorI* allocator = ctx->m_Allocator;
 
-	const uint32_t numMeshes = cache->m_NumMeshes;
-	for (uint32_t i = 0; i < numMeshes; ++i) {
-		CachedMesh* mesh = &cache->m_Meshes[i];
-		BX_ALIGNED_FREE(allocator, mesh->m_Pos, 16);
-		BX_ALIGNED_FREE(allocator, mesh->m_Colors, 16);
-		BX_ALIGNED_FREE(allocator, mesh->m_Indices, 16);
-	}
-	BX_FREE(allocator, cache->m_Meshes);
-	BX_FREE(allocator, cache->m_Commands);
+	clCacheReset(ctx, cache);
 	BX_FREE(allocator, cache);
 }
 #endif
@@ -4751,7 +4743,6 @@ static void endCachedCommand(Context* ctx)
 	lastCmd->m_NumMeshes = (uint16_t)(cache->m_NumMeshes - lastCmd->m_FirstMeshID);
 }
 
-// TODO: Single allocation for all buffers?
 static void addCachedCommand(Context* ctx, const float* pos, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
 {
 	CommandListCache* cache = ctx->m_CommandListCache;
@@ -4763,8 +4754,16 @@ static void addCachedCommand(Context* ctx, const float* pos, uint32_t numVertice
 	cache->m_Meshes = (CachedMesh*)BX_REALLOC(allocator, cache->m_Meshes, sizeof(CachedMesh) * cache->m_NumMeshes);
 
 	CachedMesh* mesh = &cache->m_Meshes[cache->m_NumMeshes - 1];
+
+	const uint32_t totalMem = 0
+		+ alignSize(sizeof(float) * 2 * numVertices, 16)
+		+ ((numColors != 1) ? alignSize(sizeof(uint32_t) * numVertices, 16) : 0)
+		+ alignSize(sizeof(uint16_t) * numIndices, 16);
+
+	uint8_t* mem = (uint8_t*)BX_ALIGNED_ALLOC(allocator, totalMem, 16);
+	mesh->m_Pos = (float*)mem;
+	mem += alignSize(sizeof(float) * 2 * numVertices, 16);
 	
-	mesh->m_Pos = (float*)BX_ALIGNED_ALLOC(allocator, sizeof(float) * 2 * numVertices, 16);
 	bx::memCopy(mesh->m_Pos, pos, sizeof(float) * 2 * numVertices);
 	mesh->m_NumVertices = numVertices;
 
@@ -4772,16 +4771,18 @@ static void addCachedCommand(Context* ctx, const float* pos, uint32_t numVertice
 		mesh->m_Colors = nullptr;
 	} else {
 		VG_CHECK(numColors == numVertices, "Invalid number of colors");
-		mesh->m_Colors = (uint32_t*)BX_ALIGNED_ALLOC(allocator, sizeof(uint32_t) * numColors, 16);
+		mesh->m_Colors = (uint32_t*)mem;
+		mem += alignSize(sizeof(uint32_t) * numVertices, 16);
+
 		bx::memCopy(mesh->m_Colors, colors, sizeof(uint32_t) * numColors);
 	}
 
-	mesh->m_Indices = (uint16_t*)BX_ALIGNED_ALLOC(allocator, sizeof(uint16_t) * numIndices, 16);
+	mesh->m_Indices = (uint16_t*)mem;
 	bx::memCopy(mesh->m_Indices, indices, sizeof(uint16_t) * numIndices);
 	mesh->m_NumIndices = numIndices;
 }
 
-// Walk the command list; avoid Path commands and used CachedMesh(es) on Stroker commands. 
+// Walk the command list; avoid Path commands and use CachedMesh(es) on Stroker commands. 
 // Everything else (state, clip, text) is executed similarly to the uncached version (see submitCommandList).
 static void clCacheRender(Context* ctx, CommandList* cl)
 {
@@ -5037,8 +5038,6 @@ static void clCacheReset(Context* ctx, CommandListCache* cache)
 	for (uint32_t i = 0; i < numMeshes; ++i) {
 		CachedMesh* mesh = &cache->m_Meshes[i];
 		BX_ALIGNED_FREE(allocator, mesh->m_Pos, 16);
-		BX_ALIGNED_FREE(allocator, mesh->m_Colors, 16);
-		BX_ALIGNED_FREE(allocator, mesh->m_Indices, 16);
 	}
 	BX_FREE(allocator, cache->m_Meshes);
 	BX_FREE(allocator, cache->m_Commands);

@@ -243,14 +243,14 @@ void batchTransformTextQuads(const float* __restrict quads, uint32_t n, const fl
 		bx::simd128_t y0123_m2 = bx::simd_mul(y0123, mtx2); // (y0, y1, y2, y3) * mtx[2]
 		bx::simd128_t y0123_m3 = bx::simd_mul(y0123, mtx3); // (y0, y1, y2, y3) * mtx[3]
 
-															// v0.x = x0_m0 + y0_m2 + m4
-															// v1.x = x1_m0 + y0_m2 + m4
-															// v2.x = x1_m0 + y1_m2 + m4
-															// v3.x = x0_m0 + y1_m2 + m4
-															// v0.y = x0_m1 + y0_m3 + m5
-															// v1.y = x1_m1 + y0_m3 + m5
-															// v2.y = x1_m1 + y1_m3 + m5
-															// v3.y = x0_m1 + y1_m3 + m5
+		// v0.x = x0_m0 + y0_m2 + m4
+		// v1.x = x1_m0 + y0_m2 + m4
+		// v2.x = x1_m0 + y1_m2 + m4
+		// v3.x = x0_m0 + y1_m2 + m4
+		// v0.y = x0_m1 + y0_m3 + m5
+		// v1.y = x1_m1 + y0_m3 + m5
+		// v2.y = x1_m1 + y1_m3 + m5
+		// v3.y = x0_m1 + y1_m3 + m5
 		bx::simd128_t x0110_m0 = bx::simd_swiz_xyyx(x0123_m0);
 		bx::simd128_t x0110_m1 = bx::simd_swiz_xyyx(x0123_m1);
 		bx::simd128_t y0011_m2 = bx::simd_swiz_xxyy(y0123_m2);
@@ -302,14 +302,14 @@ void batchTransformTextQuads(const float* __restrict quads, uint32_t n, const fl
 		bx::simd128_t y0101_m2 = bx::simd_mul(y0101, mtx2); // (y0, y1, y0, y1) * mtx[2]
 		bx::simd128_t y0101_m3 = bx::simd_mul(y0101, mtx3); // (y0, y1, y0, y1) * mtx[3]
 
-															// v0.x = x0_m0 + y0_m2 + m4
-															// v1.x = x1_m0 + y0_m2 + m4
-															// v2.x = x1_m0 + y1_m2 + m4
-															// v3.x = x0_m0 + y1_m2 + m4
-															// v0.y = x0_m1 + y0_m3 + m5
-															// v1.y = x1_m1 + y0_m3 + m5
-															// v2.y = x1_m1 + y1_m3 + m5
-															// v3.y = x0_m1 + y1_m3 + m5
+		// v0.x = x0_m0 + y0_m2 + m4
+		// v1.x = x1_m0 + y0_m2 + m4
+		// v2.x = x1_m0 + y1_m2 + m4
+		// v3.x = x0_m0 + y1_m2 + m4
+		// v0.y = x0_m1 + y0_m3 + m5
+		// v1.y = x1_m1 + y0_m3 + m5
+		// v2.y = x1_m1 + y1_m3 + m5
+		// v3.y = x0_m1 + y1_m3 + m5
 		bx::simd128_t x0110_m0 = bx::simd_swiz_xyyx(x0101_m0);
 		bx::simd128_t x0110_m1 = bx::simd_swiz_xyyx(x0101_m1);
 		bx::simd128_t y0011_m2 = bx::simd_swiz_xxyy(y0101_m2);
@@ -338,12 +338,7 @@ void batchTransformTextQuads(const float* __restrict quads, uint32_t n, const fl
 
 void batchTransformPositions(const float* __restrict v, uint32_t n, float* __restrict p, const float* __restrict mtx)
 {
-#if !VG_CONFIG_ENABLE_SIMD
-	for (uint32_t i = 0; i < n; ++i) {
-		const uint32_t id = i << 1;
-		transformPos2D(v[id], v[id + 1], mtx, &p[id]);
-	}
-#else
+#if VG_CONFIG_ENABLE_SIMD
 	const float* src = v;
 	float* dst = p;
 
@@ -390,17 +385,17 @@ void batchTransformPositions(const float* __restrict v, uint32_t n, float* __res
 		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
 		src += 2;
 	}
+#else
+	for (uint32_t i = 0; i < n; ++i) {
+		const uint32_t id = i << 1;
+		transformPos2D(v[id], v[id + 1], mtx, &p[id]);
+	}
 #endif
 }
 
 void batchTransformPositions_Unaligned(const float* __restrict v, uint32_t n, float* __restrict p, const float* __restrict mtx)
 {
-#if !VG_CONFIG_ENABLE_SIMD
-	for (uint32_t i = 0; i < n; ++i) {
-		const uint32_t id = i << 1;
-		transformPos2D(v[id], v[id + 1], mtx, &p[id]);
-	}
-#else
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
 	const float* src = v;
 	float* dst = p;
 
@@ -447,31 +442,36 @@ void batchTransformPositions_Unaligned(const float* __restrict v, uint32_t n, fl
 		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
 		src += 2;
 	}
+#else
+	for (uint32_t i = 0; i < n; ++i) {
+		const uint32_t id = i << 1;
+		transformPos2D(v[id], v[id + 1], mtx, &p[id]);
+	}
 #endif
 }
 
 // NOTE: Assumes src is 16-byte aligned. Don't care about dst (unaligned stores)
 void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint16_t* __restrict dst, uint16_t delta)
 {
-#if !VG_CONFIG_ENABLE_SIMD
-	for (uint32_t i = 0; i < n; ++i) {
-		*dst++ = *src + delta;
-		src++;
+	if (delta == 0) {
+		bx::memCopy(dst, src, sizeof(uint16_t) * n);
+		return;
 	}
-#else
+
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
 	const __m128i xmm_delta = _mm_set1_epi16(delta);
 
 	const uint32_t iter32 = n >> 5;
 	for (uint32_t i = 0; i < iter32; ++i) {
-		__m128i s0 = _mm_load_si128((const __m128i*)src);
-		__m128i s1 = _mm_load_si128((const __m128i*)(src + 8));
-		__m128i s2 = _mm_load_si128((const __m128i*)(src + 16));
-		__m128i s3 = _mm_load_si128((const __m128i*)(src + 24));
+		const __m128i s0 = _mm_load_si128((const __m128i*)src);
+		const __m128i s1 = _mm_load_si128((const __m128i*)(src + 8));
+		const __m128i s2 = _mm_load_si128((const __m128i*)(src + 16));
+		const __m128i s3 = _mm_load_si128((const __m128i*)(src + 24));
 
-		__m128i d0 = _mm_add_epi16(s0, xmm_delta);
-		__m128i d1 = _mm_add_epi16(s1, xmm_delta);
-		__m128i d2 = _mm_add_epi16(s2, xmm_delta);
-		__m128i d3 = _mm_add_epi16(s3, xmm_delta);
+		const __m128i d0 = _mm_add_epi16(s0, xmm_delta);
+		const __m128i d1 = _mm_add_epi16(s1, xmm_delta);
+		const __m128i d2 = _mm_add_epi16(s2, xmm_delta);
+		const __m128i d3 = _mm_add_epi16(s3, xmm_delta);
 
 		// NOTE: Proper alignment of dst buffer isn't guaranteed because it's part of the global IndexBuffer.
 		_mm_storeu_si128((__m128i*)dst, d0);
@@ -485,10 +485,12 @@ void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint1
 
 	uint32_t rem = n & 31;
 	if (rem >= 16) {
-		__m128i s0 = _mm_load_si128((const __m128i*)src);
-		__m128i s1 = _mm_load_si128((const __m128i*)(src + 8));
-		__m128i d0 = _mm_add_epi16(s0, xmm_delta);
-		__m128i d1 = _mm_add_epi16(s1, xmm_delta);
+		const __m128i s0 = _mm_load_si128((const __m128i*)src);
+		const __m128i s1 = _mm_load_si128((const __m128i*)(src + 8));
+
+		const __m128i d0 = _mm_add_epi16(s0, xmm_delta);
+		const __m128i d1 = _mm_add_epi16(s1, xmm_delta);
+
 		_mm_storeu_si128((__m128i*)dst, d0);
 		_mm_storeu_si128((__m128i*)(dst + 8), d1);
 
@@ -516,23 +518,13 @@ void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint1
 	case 2: *dst++ = *src++ + delta;
 	case 1: *dst = *src + delta;
 	}
-#endif
-}
-
-#if VG_CONFIG_UV_INT16
-void generateUVs(const float* __restrict v, uint32_t n, int16_t* __restrict uv, const float* __restrict mtx)
-{
+#else
 	for (uint32_t i = 0; i < n; ++i) {
-		const uint32_t id = i << 1;
-
-		float p[2];
-		transformPos2D(v[id], v[id + 1], mtx, &p[0]);
-
-		uv[id + 0] = (int16_t)(p[0] * INT16_MAX);
-		uv[id + 1] = (int16_t)(p[1] * INT16_MAX);
+		*dst++ = *src + delta;
+		src++;
 	}
-}
 #endif
+}
 
 void convertA8_to_RGBA8(uint32_t* rgba, const uint8_t* a8, uint32_t w, uint32_t h, uint32_t rgbColor)
 {
