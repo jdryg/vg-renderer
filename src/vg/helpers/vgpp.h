@@ -5,7 +5,7 @@
 #ifndef VG_VGPP_H
 #define VG_VGPP_H
 
-#include "vg.h"
+#include <vg/vg.h>
 #include <bx/allocator.h>
 
 namespace vg
@@ -260,7 +260,7 @@ inline void Renderer::FillConvexPath(GradientHandle gradient, bool aa)
 
 inline void Renderer::FillConvexPath(ImagePatternHandle img, bool aa)
 {
-	fillPath(m_Context, img, ColorRGBA::White, VG_FILL_FLAGS(PathType::Convex, aa));
+	fillPath(m_Context, img, Colors::White, VG_FILL_FLAGS(PathType::Convex, aa));
 }
 
 inline void Renderer::FillConcavePath(Color col, bool aa)
@@ -473,7 +473,7 @@ inline int Renderer::TextGlyphPositions(const Font& font, uint32_t alignment, fl
 inline Shape* Renderer::CreateShape(uint32_t flags)
 {
 	CommandListHandle handle = createCommandList(m_Context, flags);
-	return BX_NEW(m_Allocator, Shape)(createCommandListRef(m_Context, handle));
+	return BX_NEW(m_Allocator, Shape)(makeCommandListRef(m_Context, handle));
 }
 
 inline void Renderer::DestroyShape(Shape* shape)
@@ -565,7 +565,7 @@ inline void Shape::FillConvexPath(LocalGradientHandle gradient, bool aa)
 
 inline void Shape::FillConvexPath(LocalImagePatternHandle img, bool aa)
 {
-	clFillPath(m_CommandListRef, img, ColorRGBA::White, VG_FILL_FLAGS(PathType::Convex, aa));
+	clFillPath(m_CommandListRef, img, Colors::White, VG_FILL_FLAGS(PathType::Convex, aa));
 }
 
 inline void Shape::FillConcavePath(Color col, bool aa)

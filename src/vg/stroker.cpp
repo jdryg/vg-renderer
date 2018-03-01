@@ -1,4 +1,4 @@
-#include "stroker.h"
+#include <vg/stroker.h>
 #include "vg_util.h"
 #if VG_CONFIG_USE_LIBTESS2
 #include "libtess2/tesselator.h"
@@ -291,7 +291,7 @@ void strokerConvexFillAA(Stroker* stroker, Mesh* mesh, const float* vertexList, 
 	const float cross = vec2Cross(vec2Sub(vtx[1], vtx[0]), vec2Sub(vtx[2], vtx[0]));
 
 	const float aa = stroker->m_FringeWidth * 0.5f * bx::sign(cross);
-	const uint32_t c0 = ColorRGBA::setAlpha(color, 0);
+	const uint32_t c0 = colorSetAlpha(color, 0);
 
 	const uint32_t numTris =
 		(numVertices - 2) + // Triangle fan
@@ -588,7 +588,7 @@ bool strokerConcaveFillAA(Stroker* stroker, Mesh* mesh, const float* vertexList,
 		}
 
 		// Copy color with alpha = 0 to all fringe vertices.
-		const Color c0 = ColorRGBA::setAlpha(color, 0);
+		const Color c0 = colorSetAlpha(color, 0);
 		vgutil::memset32(&stroker->m_ColorBuffer[numTessVertices], numVertices, &c0);
 
 		stroker->m_NumVertices += numVertices;
@@ -1120,7 +1120,7 @@ template<bool _Closed, LineCap::Enum _LineCap, LineJoin::Enum _LineJoin>
 void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numPathVertices, float strokeWidth, Color color)
 {
 	const uint32_t numSegments = numPathVertices - (_Closed ? 0 : 1);
-	const uint32_t c0 = ColorRGBA::setAlpha(color, 0);
+	const uint32_t c0 = colorSetAlpha(color, 0);
 	const uint32_t c0_c_c_c0[4] = { c0, color, color, c0 };
 	const float hsw = (strokeWidth - stroker->m_FringeWidth) * 0.5f;
 	const float hsw_aa = hsw + stroker->m_FringeWidth;
@@ -1723,7 +1723,7 @@ template<LineCap::Enum _LineCap, LineJoin::Enum _LineJoin>
 void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numPathVertices, Color color, bool closed)
 {
 	const uint32_t numSegments = numPathVertices - (closed ? 0 : 1);
-	const uint32_t c0 = ColorRGBA::setAlpha(color, 0);
+	const uint32_t c0 = colorSetAlpha(color, 0);
 	const uint32_t c0_c_c0_c0[4] = { c0, color, c0, c0 };
 	const float hsw_aa = stroker->m_FringeWidth;
 

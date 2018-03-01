@@ -2,9 +2,9 @@
 // - More than 254 clip regions: Either use another view (extra parameter in createContext)
 // or draw a fullscreen quad to reset the stencil buffer to 0.
 // 
-#include "vg.h"
-#include "path.h"
-#include "stroker.h"
+#include <vg/vg.h>
+#include <vg/path.h>
+#include <vg/stroker.h>
 #include "vg_util.h"
 #include "libs/fontstash.h"
 #include <bx/allocator.h>
@@ -1122,8 +1122,8 @@ void fillPath(Context* ctx, Color color, uint32_t flags)
 
 	const State* state = getState(ctx);
 	const float globalAlpha = hasCache ? 1.0f : state->m_GlobalAlpha;
-	const Color col = recordClipCommands ? ColorRGBA::Black : ColorRGBA::setAlpha(color, (uint8_t)(globalAlpha * ColorRGBA::getAlpha(color)));
-	if (ColorRGBA::getAlpha(col) == 0) {
+	const Color col = recordClipCommands ? Colors::Black : colorSetAlpha(color, (uint8_t)(globalAlpha * colorGetAlpha(color)));
+	if (colorGetAlpha(col) == 0) {
 		return;
 	}
 
@@ -1266,12 +1266,12 @@ void fillPath(Context* ctx, GradientHandle gradientHandle, uint32_t flags)
 			const uint32_t numPathVertices = subPath->m_NumVertices;
 
 			Mesh mesh;
-			const uint32_t black = ColorRGBA::Black;
+			const uint32_t black = Colors::Black;
 			const uint32_t* colors = &black;
 			uint32_t numColors = 1;
 
 			if (aa) {
-				strokerConvexFillAA(stroker, &mesh, vtx, numPathVertices, ColorRGBA::Black);
+				strokerConvexFillAA(stroker, &mesh, vtx, numPathVertices, Colors::Black);
 				colors = mesh.m_ColorBuffer;
 				numColors = mesh.m_NumVertices;
 			} else {
@@ -1296,7 +1296,7 @@ void fillPath(Context* ctx, GradientHandle gradientHandle, uint32_t flags)
 			const float* vtx = &pathVertices[subPath->m_FirstVertexID << 1];
 			const uint32_t numPathVertices = subPath->m_NumVertices;
 
-			const Color black = ColorRGBA::Black;
+			const Color black = Colors::Black;
 
 			Mesh mesh;
 			const uint32_t* colors = &black;
@@ -1304,7 +1304,7 @@ void fillPath(Context* ctx, GradientHandle gradientHandle, uint32_t flags)
 
 			bool decomposed = false;
 			if (aa) {
-				decomposed = strokerConcaveFillAA(stroker, &mesh, vtx, numPathVertices, vg::ColorRGBA::Black);
+				decomposed = strokerConcaveFillAA(stroker, &mesh, vtx, numPathVertices, vg::Colors::Black);
 				colors = mesh.m_ColorBuffer;
 				numColors = mesh.m_NumVertices;
 			} else {
@@ -1340,8 +1340,8 @@ void fillPath(Context* ctx, ImagePatternHandle imgPatternHandle, Color color, ui
 
 	const State* state = getState(ctx);
 	const float globalAlpha = hasCache ? 1.0f : state->m_GlobalAlpha;
-	const Color col = ColorRGBA::setAlpha(color, (uint8_t)(globalAlpha * ColorRGBA::getAlpha(color)));
-	if (ColorRGBA::getAlpha(col) == 0) {
+	const Color col = colorSetAlpha(color, (uint8_t)(globalAlpha * colorGetAlpha(color)));
+	if (colorGetAlpha(col) == 0) {
 		return;
 	}
 
@@ -1452,8 +1452,8 @@ void strokePath(Context* ctx, Color color, float width, uint32_t flags)
 	const bool isThin = scaledStrokeWidth <= fringeWidth;
 
 	const float alphaScale = !isThin ? globalAlpha : globalAlpha * bx::square(bx::clamp<float>(scaledStrokeWidth, 0.0f, fringeWidth));
-	const Color col = recordClipCommands ? ColorRGBA::Black : ColorRGBA::setAlpha(color, (uint8_t)(alphaScale * ColorRGBA::getAlpha(color)));
-	if (ColorRGBA::getAlpha(col) == 0) {
+	const Color col = recordClipCommands ? Colors::Black : colorSetAlpha(color, (uint8_t)(alphaScale * colorGetAlpha(color)));
+	if (colorGetAlpha(col) == 0) {
 		return;
 	}
 
@@ -1574,15 +1574,15 @@ void strokePath(Context* ctx, GradientHandle gradientHandle, float width, uint32
 		const bool isClosed = subPath->m_IsClosed;
 
 		Mesh mesh;
-		const uint32_t black = ColorRGBA::Black;
+		const uint32_t black = Colors::Black;
 		const uint32_t* colors = &black;
 		uint32_t numColors = 1;
 
 		if (aa) {
 			if (isThin) {
-				strokerPolylineStrokeAAThin(stroker, &mesh, vtx, numPathVertices, isClosed, vg::ColorRGBA::Black, lineCap, lineJoin);
+				strokerPolylineStrokeAAThin(stroker, &mesh, vtx, numPathVertices, isClosed, vg::Colors::Black, lineCap, lineJoin);
 			} else {
-				strokerPolylineStrokeAA(stroker, &mesh, vtx, numPathVertices, isClosed, vg::ColorRGBA::Black, strokeWidth, lineCap, lineJoin);
+				strokerPolylineStrokeAA(stroker, &mesh, vtx, numPathVertices, isClosed, vg::Colors::Black, strokeWidth, lineCap, lineJoin);
 			}
 
 			colors = mesh.m_ColorBuffer;
@@ -1623,8 +1623,8 @@ void strokePath(Context* ctx, ImagePatternHandle imgPatternHandle, Color color, 
 	const bool isThin = scaledStrokeWidth <= fringeWidth;
 
 	const float alphaScale = isThin ? globalAlpha : globalAlpha * bx::square(bx::clamp<float>(scaledStrokeWidth, 0.0f, fringeWidth));
-	const Color col = ColorRGBA::setAlpha(color, (uint8_t)(alphaScale * ColorRGBA::getAlpha(color)));
-	if (ColorRGBA::getAlpha(col) == 0) {
+	const Color col = colorSetAlpha(color, (uint8_t)(alphaScale * colorGetAlpha(color)));
+	if (colorGetAlpha(col) == 0) {
 		return;
 	}
 
@@ -1787,14 +1787,14 @@ GradientHandle createLinearGradient(Context* ctx, float sx, float sy, float ex, 
 	grad->m_Params[1] = large + d * 0.5f;
 	grad->m_Params[2] = 0.0f;
 	grad->m_Params[3] = bx::max<float>(1.0f, d);
-	grad->m_InnerColor[0] = ColorRGBA::getRed(icol) / 255.0f;
-	grad->m_InnerColor[1] = ColorRGBA::getGreen(icol) / 255.0f;
-	grad->m_InnerColor[2] = ColorRGBA::getBlue(icol) / 255.0f;
-	grad->m_InnerColor[3] = ColorRGBA::getAlpha(icol) / 255.0f;
-	grad->m_OuterColor[0] = ColorRGBA::getRed(ocol) / 255.0f;
-	grad->m_OuterColor[1] = ColorRGBA::getGreen(ocol) / 255.0f;
-	grad->m_OuterColor[2] = ColorRGBA::getBlue(ocol) / 255.0f;
-	grad->m_OuterColor[3] = ColorRGBA::getAlpha(ocol) / 255.0f;
+	grad->m_InnerColor[0] = colorGetRed(icol) / 255.0f;
+	grad->m_InnerColor[1] = colorGetGreen(icol) / 255.0f;
+	grad->m_InnerColor[2] = colorGetBlue(icol) / 255.0f;
+	grad->m_InnerColor[3] = colorGetAlpha(icol) / 255.0f;
+	grad->m_OuterColor[0] = colorGetRed(ocol) / 255.0f;
+	grad->m_OuterColor[1] = colorGetGreen(ocol) / 255.0f;
+	grad->m_OuterColor[2] = colorGetBlue(ocol) / 255.0f;
+	grad->m_OuterColor[3] = colorGetAlpha(ocol) / 255.0f;
 
 	return handle;
 }
@@ -1838,14 +1838,14 @@ GradientHandle createBoxGradient(Context* ctx, float x, float y, float w, float 
 	grad->m_Params[1] = h * 0.5f;
 	grad->m_Params[2] = r;
 	grad->m_Params[3] = bx::max<float>(1.0f, f);
-	grad->m_InnerColor[0] = ColorRGBA::getRed(icol) / 255.0f;
-	grad->m_InnerColor[1] = ColorRGBA::getGreen(icol) / 255.0f;
-	grad->m_InnerColor[2] = ColorRGBA::getBlue(icol) / 255.0f;
-	grad->m_InnerColor[3] = ColorRGBA::getAlpha(icol) / 255.0f;
-	grad->m_OuterColor[0] = ColorRGBA::getRed(ocol) / 255.0f;
-	grad->m_OuterColor[1] = ColorRGBA::getGreen(ocol) / 255.0f;
-	grad->m_OuterColor[2] = ColorRGBA::getBlue(ocol) / 255.0f;
-	grad->m_OuterColor[3] = ColorRGBA::getAlpha(ocol) / 255.0f;
+	grad->m_InnerColor[0] = colorGetRed(icol) / 255.0f;
+	grad->m_InnerColor[1] = colorGetGreen(icol) / 255.0f;
+	grad->m_InnerColor[2] = colorGetBlue(icol) / 255.0f;
+	grad->m_InnerColor[3] = colorGetAlpha(icol) / 255.0f;
+	grad->m_OuterColor[0] = colorGetRed(ocol) / 255.0f;
+	grad->m_OuterColor[1] = colorGetGreen(ocol) / 255.0f;
+	grad->m_OuterColor[2] = colorGetBlue(ocol) / 255.0f;
+	grad->m_OuterColor[3] = colorGetAlpha(ocol) / 255.0f;
 
 	return handle;
 }
@@ -1892,14 +1892,14 @@ GradientHandle createRadialGradient(Context* ctx, float cx, float cy, float inr,
 	grad->m_Params[1] = r;
 	grad->m_Params[2] = r;
 	grad->m_Params[3] = bx::max<float>(1.0f, f);
-	grad->m_InnerColor[0] = ColorRGBA::getRed(icol) / 255.0f;
-	grad->m_InnerColor[1] = ColorRGBA::getGreen(icol) / 255.0f;
-	grad->m_InnerColor[2] = ColorRGBA::getBlue(icol) / 255.0f;
-	grad->m_InnerColor[3] = ColorRGBA::getAlpha(icol) / 255.0f;
-	grad->m_OuterColor[0] = ColorRGBA::getRed(ocol) / 255.0f;
-	grad->m_OuterColor[1] = ColorRGBA::getGreen(ocol) / 255.0f;
-	grad->m_OuterColor[2] = ColorRGBA::getBlue(ocol) / 255.0f;
-	grad->m_OuterColor[3] = ColorRGBA::getAlpha(ocol) / 255.0f;
+	grad->m_InnerColor[0] = colorGetRed(icol) / 255.0f;
+	grad->m_InnerColor[1] = colorGetGreen(icol) / 255.0f;
+	grad->m_InnerColor[2] = colorGetBlue(icol) / 255.0f;
+	grad->m_InnerColor[3] = colorGetAlpha(icol) / 255.0f;
+	grad->m_OuterColor[0] = colorGetRed(ocol) / 255.0f;
+	grad->m_OuterColor[1] = colorGetGreen(ocol) / 255.0f;
+	grad->m_OuterColor[2] = colorGetBlue(ocol) / 255.0f;
+	grad->m_OuterColor[3] = colorGetAlpha(ocol) / 255.0f;
 
 	return handle;
 }
@@ -2378,7 +2378,7 @@ void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float
 	TextRow rows[2];
 	int nrows = 0;
 
-	const TextConfig newTextCfg = { cfg.m_FontHandle, cfg.m_FontSize, newAlignment, vg::ColorRGBA::Transparent };
+	const TextConfig newTextCfg = { cfg.m_FontHandle, cfg.m_FontSize, newAlignment, vg::Colors::Transparent };
 	while ((nrows = textBreakLines(ctx, newTextCfg, text, end, breakWidth, rows, 2, flags))) {
 		for (uint32_t i = 0; i < (uint32_t)nrows; i++) {
 			const TextRow* row = &rows[i];
@@ -4504,8 +4504,8 @@ static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color)
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
 
-	const uint32_t c = ColorRGBA::setAlpha(color, (uint8_t)(state->m_GlobalAlpha * ColorRGBA::getAlpha(color)));
-	if (ColorRGBA::getAlpha(c) == 0) {
+	const uint32_t c = colorSetAlpha(color, (uint8_t)(state->m_GlobalAlpha * colorGetAlpha(color)));
+	if (colorGetAlpha(c) == 0) {
 		return;
 	}
 
@@ -5087,7 +5087,7 @@ static void submitCachedMesh(Context* ctx, GradientHandle gradientHandle, const 
 	float mtx[6];
 	vgutil::multiplyMatrix3(stateTransform, invTransform, mtx);
 
-	const uint32_t black = ColorRGBA::Black;
+	const uint32_t black = Colors::Black;
 	for (uint32_t i = 0; i < numMeshes; ++i) {
 		const CachedMesh* mesh = &meshList[i];
 		const uint32_t numVertices = mesh->m_NumVertices;

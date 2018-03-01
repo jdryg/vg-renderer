@@ -1,5 +1,5 @@
 #include "vg_util.h"
-#include "vg.h"
+#include <vg/vg.h>
 #include <bx/bx.h>
 
 #if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
