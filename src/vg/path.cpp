@@ -409,10 +409,10 @@ void pathRoundedRectVarying(Path* path, float x, float y, float w, float h, floa
 	const float halfw = w * 0.5f;
 	const float halfh = h * 0.5f;
 
-	const float rtl = bx::min<float>(bx::min<float>(rTopLeft, halfw), halfh);
-	const float rtr = bx::min<float>(bx::min<float>(rTopRight, halfw), halfh);
-	const float rbl = bx::min<float>(bx::min<float>(rBottomLeft, halfw), halfh);
-	const float rbr = bx::min<float>(bx::min<float>(rBottomRight, halfw), halfh);
+	const float rtl = bx::min<float>(rTopLeft, halfw, halfh);
+	const float rtr = bx::min<float>(rTopRight, halfw, halfh);
+	const float rbl = bx::min<float>(rBottomLeft, halfw, halfh);
+	const float rbr = bx::min<float>(rBottomRight, halfw, halfh);
 
 	// Top left corner
 	if (rtl < 0.1f) {
@@ -551,7 +551,7 @@ void pathRoundedRectVarying(Path* path, float x, float y, float w, float h, floa
 
 void pathCircle(Path* path, float cx, float cy, float r)
 {
-#if 0
+#if 1
 	pathEllipse(path, cx, cy, r, r);
 #else
 	const float da = bx::acos((path->m_Scale * r) / ((path->m_Scale * r) + path->m_TesselationTolerance)) * 2.0f;
@@ -633,9 +633,7 @@ void pathArc(Path* path, float cx, float cy, float r, float a0, float a1, Windin
 	}
 
 	if (a1 < a0) {
-		float tmp = a0;
-		a0 = a1;
-		a1 = tmp;
+		bx::xchg<float>(a0, a1);
 	}
 
 	if (dir == Winding::CCW) {
@@ -643,9 +641,7 @@ void pathArc(Path* path, float cx, float cy, float r, float a0, float a1, Windin
 			a0 += bx::kPi2;
 		}
 
-		float tmp = a0;
-		a0 = a1;
-		a1 = tmp;
+		bx::xchg<float>(a0, a1);
 	} else {
 		// CW order should be taken care from the common code at the top.
 	}
@@ -743,7 +739,6 @@ uint32_t pathGetNumSubPaths(const Path* path)
 {
 	return path->m_NumSubPaths;
 }
-
 
 static float* pathAllocVertices(Path* path, uint32_t n)
 {

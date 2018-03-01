@@ -506,6 +506,9 @@ bool strokerConcaveFill(Stroker* stroker, Mesh* mesh, const float* vertexList, u
 #endif
 }
 
+// TODO: Currently AA fringes are placed only on the outside of the original path (expanded by 0.5f * fringeWidth).
+// Ideally, the original path should be shrinked by 0.5f * fringeWidth before triangulating it and then expand it
+// by fringeWidth.
 bool strokerConcaveFillAA(Stroker* stroker, Mesh* mesh, const float* vertexList, uint32_t numVertices, uint32_t color)
 {
 #if VG_CONFIG_USE_LIBTESS2

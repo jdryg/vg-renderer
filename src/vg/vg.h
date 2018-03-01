@@ -161,18 +161,27 @@ struct TextAlign
 	// Values identical to FontStash's alignment flags
 	enum Enum : uint32_t
 	{
-		Left = 1 << 0,
-		Center = 1 << 1,
-		Right = 1 << 2,
-		Top = 1 << 3,
-		Middle = 1 << 4,
-		Bottom = 1 << 5,
+		Left     = 1 << 0,
+		Center   = 1 << 1,
+		Right    = 1 << 2,
+		Top      = 1 << 3,
+		Middle   = 1 << 4,
+		Bottom   = 1 << 5,
 		Baseline = 1 << 6,
 
 		// Shortcuts
-		TopLeft = Top | Left,
-		MiddleCenter = Middle | Center,
-		BottomCenter = Bottom | Center
+		TopLeft        = Top | Left,
+		TopCenter      = Top | Center,
+		TopRight       = Top | Right,
+		MiddleLeft     = Middle | Left,
+		MiddleCenter   = Middle | Center,
+		MiddleRight    = Middle | Right,
+		BottomLeft     = Bottom | Left,
+		BottomCenter   = Bottom | Center,
+		BottomRight    = Bottom | Right,
+		BaselineLeft   = Baseline | Left,
+		BaselineCenter = Baseline | Center,
+		BaselineRight  = Baseline | Right
 	};
 };
 
@@ -180,8 +189,8 @@ struct LineCap
 {
 	enum Enum : uint32_t
 	{
-		Butt = 0,
-		Round = 1,
+		Butt   = 0,
+		Round  = 1,
 		Square = 2,
 	};
 };
@@ -206,23 +215,23 @@ struct StrokeFlags
 	enum Enum : uint32_t
 	{
 		// w/o AA
-		ButtMiter = VG_STROKE_FLAGS(LineCap::Butt, LineJoin::Miter, 0),
-		ButtRound = VG_STROKE_FLAGS(LineCap::Butt, LineJoin::Round, 0),
-		ButtBevel = VG_STROKE_FLAGS(LineCap::Butt, LineJoin::Bevel, 0),
-		RoundMiter = VG_STROKE_FLAGS(LineCap::Round, LineJoin::Miter, 0),
-		RoundRound = VG_STROKE_FLAGS(LineCap::Round, LineJoin::Round, 0),
-		RoundBevel = VG_STROKE_FLAGS(LineCap::Round, LineJoin::Bevel, 0),
+		ButtMiter   = VG_STROKE_FLAGS(LineCap::Butt, LineJoin::Miter, 0),
+		ButtRound   = VG_STROKE_FLAGS(LineCap::Butt, LineJoin::Round, 0),
+		ButtBevel   = VG_STROKE_FLAGS(LineCap::Butt, LineJoin::Bevel, 0),
+		RoundMiter  = VG_STROKE_FLAGS(LineCap::Round, LineJoin::Miter, 0),
+		RoundRound  = VG_STROKE_FLAGS(LineCap::Round, LineJoin::Round, 0),
+		RoundBevel  = VG_STROKE_FLAGS(LineCap::Round, LineJoin::Bevel, 0),
 		SquareMiter = VG_STROKE_FLAGS(LineCap::Square, LineJoin::Miter, 0),
 		SquareRound = VG_STROKE_FLAGS(LineCap::Square, LineJoin::Round, 0),
 		SquareBevel = VG_STROKE_FLAGS(LineCap::Square, LineJoin::Bevel, 0),
 
 		// w/ AA
-		ButtMiterAA = VG_STROKE_FLAGS(LineCap::Butt, LineJoin::Miter, 1),
-		ButtRoundAA = VG_STROKE_FLAGS(LineCap::Butt, LineJoin::Round, 1),
-		ButtBevelAA = VG_STROKE_FLAGS(LineCap::Butt, LineJoin::Bevel, 1),
-		RoundMiterAA = VG_STROKE_FLAGS(LineCap::Round, LineJoin::Miter, 1),
-		RoundRoundAA = VG_STROKE_FLAGS(LineCap::Round, LineJoin::Round, 1),
-		RoundBevelAA = VG_STROKE_FLAGS(LineCap::Round, LineJoin::Bevel, 1),
+		ButtMiterAA   = VG_STROKE_FLAGS(LineCap::Butt, LineJoin::Miter, 1),
+		ButtRoundAA   = VG_STROKE_FLAGS(LineCap::Butt, LineJoin::Round, 1),
+		ButtBevelAA   = VG_STROKE_FLAGS(LineCap::Butt, LineJoin::Bevel, 1),
+		RoundMiterAA  = VG_STROKE_FLAGS(LineCap::Round, LineJoin::Miter, 1),
+		RoundRoundAA  = VG_STROKE_FLAGS(LineCap::Round, LineJoin::Round, 1),
+		RoundBevelAA  = VG_STROKE_FLAGS(LineCap::Round, LineJoin::Bevel, 1),
 		SquareMiterAA = VG_STROKE_FLAGS(LineCap::Square, LineJoin::Miter, 1),
 		SquareRoundAA = VG_STROKE_FLAGS(LineCap::Square, LineJoin::Round, 1),
 		SquareBevelAA = VG_STROKE_FLAGS(LineCap::Square, LineJoin::Bevel, 1),
@@ -233,7 +242,7 @@ struct PathType
 {
 	enum Enum : uint32_t
 	{
-		Convex = 0,
+		Convex  = 0,
 		Concave = 1,
 	};
 };
@@ -247,11 +256,11 @@ struct FillFlags
 	enum Enum : uint32_t
 	{
 		// w/o AA
-		Convex = VG_FILL_FLAGS(PathType::Convex, 0),
+		Convex  = VG_FILL_FLAGS(PathType::Convex, 0),
 		Concave = VG_FILL_FLAGS(PathType::Concave, 0),
 
 		// w/ AA
-		ConvexAA = VG_FILL_FLAGS(PathType::Convex, 1),
+		ConvexAA  = VG_FILL_FLAGS(PathType::Convex, 1),
 		ConcaveAA = VG_FILL_FLAGS(PathType::Concave, 1),
 	};
 };
@@ -261,7 +270,7 @@ struct Winding
 	enum Enum : uint32_t
 	{
 		CCW = 0,
-		CW = 1,
+		CW  = 1,
 	};
 };
 
@@ -269,7 +278,7 @@ struct TextBreakFlags
 {
 	enum Enum : uint32_t
 	{
-		SpacesAsChars = 0x00000001
+		SpacesAsChars = 1 << 0
 	};
 };
 
@@ -277,10 +286,10 @@ struct ImageFlags
 {
 	enum Enum : uint32_t
 	{
-		Filter_NearestUV = 0x00000001,
-		Filter_NearestW = 0x00000002,
-		Filter_LinearUV = 0x00000004,
-		Filter_LinearW = 0x00000008,
+		Filter_NearestUV = 1 << 0,
+		Filter_NearestW  = 1 << 1,
+		Filter_LinearUV  = 1 << 2,
+		Filter_LinearW   = 1 << 3,
 
 		// Shortcuts
 		Filter_Nearest = Filter_NearestUV | Filter_NearestW,
@@ -293,7 +302,7 @@ struct ClipRule
 {
 	enum Enum : uint32_t
 	{
-		In = 0,  // fillRule = "nonzero"?
+		In  = 0, // fillRule = "nonzero"?
 		Out = 1, // fillRule = "evenodd"?
 	};
 };
@@ -373,8 +382,8 @@ struct CommandListFlags
 {
 	enum Enum : uint32_t
 	{
-		Cacheable = 0x00000001,           // Cache the generated geometry in order to avoid retesselation every frame; uses extra memory
-		AllowCommandCulling = 0x00000002, // If the scissor rect ends up being zero-sized, don't execute fill/stroke commands.
+		Cacheable           = 1 << 0, // Cache the generated geometry in order to avoid retesselation every frame; uses extra memory
+		AllowCommandCulling = 1 << 1, // If the scissor rect ends up being zero-sized, don't execute fill/stroke commands.
 	};
 };
 
@@ -382,7 +391,7 @@ struct FontFlags
 {
 	enum Enum : uint32_t
 	{
-		DontCopyData = 0x00000001, // The calling code will keep the font data alive for as long as the Context is alive so there's no need to copy the data internally.
+		DontCopyData = 1 << 0, // The calling code will keep the font data alive for as long as the Context is alive so there's no need to copy the data internally.
 	};
 };
 
