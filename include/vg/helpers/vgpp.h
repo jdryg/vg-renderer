@@ -122,8 +122,8 @@ struct Shape
 	void Circle(float cx, float cy, float radius);
 	void ClosePath();
 	void FillConvexPath(Color col, bool aa);
-	void FillConvexPath(LocalGradientHandle gradient, bool aa);
-	void FillConvexPath(LocalImagePatternHandle img, bool aa);
+	void FillConvexPath(GradientHandle gradient, bool aa);
+	void FillConvexPath(ImagePatternHandle img, bool aa);
 	void FillConcavePath(Color col, bool aa);
 	void StrokePath(Color col, float width, bool aa, LineCap::Enum lineCap = LineCap::Butt, LineJoin::Enum lineJoin = LineJoin::Miter);
 
@@ -140,10 +140,10 @@ struct Shape
 	void EndClip();
 	void ResetClip();
 
-	LocalGradientHandle LinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol);
-	LocalGradientHandle BoxGradient(float x, float y, float w, float h, float r, float f, Color icol, Color ocol);
-	LocalGradientHandle RadialGradient(float cx, float cy, float inr, float outr, Color icol, Color ocol);
-	LocalImagePatternHandle ImagePattern(float cx, float cy, float w, float h, float angle, ImageHandle image, float alpha);
+	GradientHandle LinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol);
+	GradientHandle BoxGradient(float x, float y, float w, float h, float r, float f, Color icol, Color ocol);
+	GradientHandle RadialGradient(float cx, float cy, float inr, float outr, Color icol, Color ocol);
+	ImagePatternHandle ImagePattern(float cx, float cy, float w, float h, float angle, ImageHandle image, float alpha);
 
 	void Text(const Font& font, uint32_t alignment, Color color, float x, float y, const char* text, const char* end);
 	void TextBox(const Font& font, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* text, const char* end);
@@ -558,12 +558,12 @@ inline void Shape::FillConvexPath(Color col, bool aa)
 	clFillPath(m_CommandListRef, col, VG_FILL_FLAGS(PathType::Convex, aa));
 }
 
-inline void Shape::FillConvexPath(LocalGradientHandle gradient, bool aa)
+inline void Shape::FillConvexPath(GradientHandle gradient, bool aa)
 {
 	clFillPath(m_CommandListRef, gradient, VG_FILL_FLAGS(PathType::Convex, aa));
 }
 
-inline void Shape::FillConvexPath(LocalImagePatternHandle img, bool aa)
+inline void Shape::FillConvexPath(ImagePatternHandle img, bool aa)
 {
 	clFillPath(m_CommandListRef, img, Colors::White, VG_FILL_FLAGS(PathType::Convex, aa));
 }
@@ -633,22 +633,22 @@ inline void Shape::ResetClip()
 	clResetClip(m_CommandListRef);
 }
 
-inline LocalGradientHandle Shape::LinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol)
+inline GradientHandle Shape::LinearGradient(float sx, float sy, float ex, float ey, Color icol, Color ocol)
 {
 	return clCreateLinearGradient(m_CommandListRef, sx, sy, ex, ey, icol, ocol);
 }
 
-inline LocalGradientHandle Shape::BoxGradient(float x, float y, float w, float h, float r, float f, Color icol, Color ocol)
+inline GradientHandle Shape::BoxGradient(float x, float y, float w, float h, float r, float f, Color icol, Color ocol)
 {
 	return clCreateBoxGradient(m_CommandListRef, x, y, w, h, r, f, icol, ocol);
 }
 
-inline LocalGradientHandle Shape::RadialGradient(float cx, float cy, float inr, float outr, Color icol, Color ocol)
+inline GradientHandle Shape::RadialGradient(float cx, float cy, float inr, float outr, Color icol, Color ocol)
 {
 	return clCreateRadialGradient(m_CommandListRef, cx, cy, inr, outr, icol, ocol);
 }
 
-inline LocalImagePatternHandle Shape::ImagePattern(float cx, float cy, float w, float h, float angle, ImageHandle image, float alpha)
+inline ImagePatternHandle Shape::ImagePattern(float cx, float cy, float w, float h, float angle, ImageHandle image, float alpha)
 {
 	BX_UNUSED(alpha);
 	return clCreateImagePattern(m_CommandListRef, cx, cy, w, h, angle, image);

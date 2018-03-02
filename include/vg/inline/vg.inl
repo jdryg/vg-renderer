@@ -224,16 +224,6 @@ inline void clFillPath(CommandListRef& ref, ImagePatternHandle img, Color color,
 	clFillPath(ref.m_Context, ref.m_Handle, img, color, flags);
 }
 
-inline void clFillPath(CommandListRef& ref, LocalGradientHandle gradient, uint32_t flags)
-{
-	clFillPath(ref.m_Context, ref.m_Handle, gradient, flags);
-}
-
-inline void clFillPath(CommandListRef& ref, LocalImagePatternHandle img, Color color, uint32_t flags)
-{
-	clFillPath(ref.m_Context, ref.m_Handle, img, color, flags);
-}
-
 inline void clStrokePath(CommandListRef& ref, Color color, float width, uint32_t flags)
 {
 	clStrokePath(ref.m_Context, ref.m_Handle, color, width, flags);
@@ -245,16 +235,6 @@ inline void clStrokePath(CommandListRef& ref, GradientHandle gradient, float wid
 }
 
 inline void clStrokePath(CommandListRef& ref, ImagePatternHandle img, Color color, float width, uint32_t flags)
-{
-	clStrokePath(ref.m_Context, ref.m_Handle, img, color, width, flags);
-}
-
-inline void clStrokePath(CommandListRef& ref, LocalGradientHandle gradient, float width, uint32_t flags)
-{
-	clStrokePath(ref.m_Context, ref.m_Handle, gradient, width, flags);
-}
-
-inline void clStrokePath(CommandListRef& ref, LocalImagePatternHandle img, Color color, float width, uint32_t flags)
 {
 	clStrokePath(ref.m_Context, ref.m_Handle, img, color, width, flags);
 }
@@ -274,22 +254,22 @@ inline void clResetClip(CommandListRef& ref)
 	clResetClip(ref.m_Context, ref.m_Handle);
 }
 
-inline LocalGradientHandle clCreateLinearGradient(CommandListRef& ref, float sx, float sy, float ex, float ey, Color icol, Color ocol)
+inline GradientHandle clCreateLinearGradient(CommandListRef& ref, float sx, float sy, float ex, float ey, Color icol, Color ocol)
 {
 	return clCreateLinearGradient(ref.m_Context, ref.m_Handle, sx, sy, ex, ey, icol, ocol);
 }
 
-inline LocalGradientHandle clCreateBoxGradient(CommandListRef& ref, float x, float y, float w, float h, float r, float f, Color icol, Color ocol)
+inline GradientHandle clCreateBoxGradient(CommandListRef& ref, float x, float y, float w, float h, float r, float f, Color icol, Color ocol)
 {
 	return clCreateBoxGradient(ref.m_Context, ref.m_Handle, x, y, w, h, r, f, icol, ocol);
 }
 
-inline LocalGradientHandle clCreateRadialGradient(CommandListRef& ref, float cx, float cy, float inr, float outr, Color icol, Color ocol)
+inline GradientHandle clCreateRadialGradient(CommandListRef& ref, float cx, float cy, float inr, float outr, Color icol, Color ocol)
 {
 	return clCreateRadialGradient(ref.m_Context, ref.m_Handle, cx, cy, inr, outr, icol, ocol);
 }
 
-inline LocalImagePatternHandle clCreateImagePattern(CommandListRef& ref, float cx, float cy, float w, float h, float angle, ImageHandle image)
+inline ImagePatternHandle clCreateImagePattern(CommandListRef& ref, float cx, float cy, float w, float h, float angle, ImageHandle image)
 {
 	return clCreateImagePattern(ref.m_Context, ref.m_Handle, cx, cy, w, h, angle, image);
 }
