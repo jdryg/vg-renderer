@@ -391,6 +391,9 @@ void transformTranslate(Context* ctx, float x, float y);
 void transformRotate(Context* ctx, float ang_rad);
 void transformMult(Context* ctx, const float* mtx, bool pre);
 
+void getTransform(Context* ctx, float* mtx);
+void getScissor(Context* ctx, float* rect);
+
 FontHandle createFont(Context* ctx, const char* name, uint8_t* data, uint32_t size, uint32_t flags);
 FontHandle getFontByName(Context* ctx, const char* name);
 bool setFallbackFont(Context* ctx, FontHandle base, FontHandle fallback);

@@ -2132,6 +2132,18 @@ void transformMult(Context* ctx, const float* mtx, bool pre)
 	updateState(state);
 }
 
+void getTransform(Context* ctx, float* mtx)
+{
+	const State* state = getState(ctx);
+	bx::memCopy(mtx, state->m_TransformMtx, sizeof(float) * 6);
+}
+
+void getScissor(Context* ctx, float* rect)
+{
+	const State* state = getState(ctx);
+	bx::memCopy(rect, state->m_ScissorRect, sizeof(float) * 4);
+}
+
 void indexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
 {
 	if (!isValid(img)) {
