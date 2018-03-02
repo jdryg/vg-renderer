@@ -26,7 +26,7 @@ void pathQuadraticTo(Path* path, float cx, float cy, float x, float y);
 void pathArcTo(Path* path, float x1, float y1, float x2, float y2, float r);
 void pathRect(Path* path, float x, float y, float w, float h);
 void pathRoundedRect(Path* path, float x, float y, float w, float h, float r);
-void pathRoundedRectVarying(Path* path, float x, float y, float w, float h, float rtl, float rbl, float rbr, float rtr);
+void pathRoundedRectVarying(Path* path, float x, float y, float w, float h, float rtl, float rtr, float rbr, float rbl);
 void pathCircle(Path* path, float x, float y, float r);
 void pathEllipse(Path* path, float x, float y, float rx, float ry);
 void pathArc(Path* path, float x, float y, float r, float a0, float a1, Winding::Enum dir);

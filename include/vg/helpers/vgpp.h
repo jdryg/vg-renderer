@@ -230,7 +230,7 @@ inline void Renderer::RoundedRect(float x, float y, float w, float h, float r)
 
 inline void Renderer::RoundedRectVarying(float x, float y, float w, float h, float rtl, float rbl, float rbr, float rtr)
 {
-	roundedRectVarying(m_Context, x, y, w, h, rtl, rbl, rbr, rtr);
+	roundedRectVarying(m_Context, x, y, w, h, rtl, rtr, rbr, rbl);
 }
 
 inline void Renderer::Circle(float cx, float cy, float radius)
@@ -540,7 +540,7 @@ inline void Shape::RoundedRect(float x, float y, float w, float h, float r)
 
 inline void Shape::RoundedRectVarying(float x, float y, float w, float h, float rtl, float rbl, float rbr, float rtr)
 {
-	clRoundedRectVarying(m_CommandListRef, x, y, w, h, rtl, rbl, rbr, rtr);
+	clRoundedRectVarying(m_CommandListRef, x, y, w, h, rtl, rtr, rbr, rbl);
 }
 
 inline void Shape::Circle(float cx, float cy, float radius)

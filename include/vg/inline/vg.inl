@@ -184,9 +184,9 @@ inline void clRoundedRect(CommandListRef& ref, float x, float y, float w, float 
 	clRoundedRect(ref.m_Context, ref.m_Handle, x, y, w, h, r);
 }
 
-inline void clRoundedRectVarying(CommandListRef& ref, float x, float y, float w, float h, float rtl, float rbl, float rbr, float rtr)
+inline void clRoundedRectVarying(CommandListRef& ref, float x, float y, float w, float h, float rtl, float rtr, float rbr, float rbl)
 {
-	clRoundedRectVarying(ref.m_Context, ref.m_Handle, x, y, w, h, rtl, rbl, rbr, rtr);
+	clRoundedRectVarying(ref.m_Context, ref.m_Handle, x, y, w, h, rtl, rtr, rbr, rbl);
 }
 
 inline void clCircle(CommandListRef& ref, float cx, float cy, float radius)

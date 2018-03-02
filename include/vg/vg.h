@@ -359,7 +359,7 @@ void arcTo(Context* ctx, float x1, float y1, float x2, float y2, float r);
 void arc(Context* ctx, float cx, float cy, float r, float a0, float a1, Winding::Enum dir);
 void rect(Context* ctx, float x, float y, float w, float h);
 void roundedRect(Context* ctx, float x, float y, float w, float h, float r);
-void roundedRectVarying(Context* ctx, float x, float y, float w, float h, float rtl, float rbl, float rbr, float rtr);
+void roundedRectVarying(Context* ctx, float x, float y, float w, float h, float rtl, float rtr, float rbr, float rbl);
 void circle(Context* ctx, float cx, float cy, float radius);
 void ellipse(Context* ctx, float cx, float cy, float rx, float ry);
 void polyline(Context* ctx, const float* coords, uint32_t numPoints);
@@ -438,7 +438,7 @@ void clArcTo(Context* ctx, CommandListHandle handle, float x1, float y1, float x
 void clArc(Context* ctx, CommandListHandle handle, float cx, float cy, float r, float a0, float a1, Winding::Enum dir);
 void clRect(Context* ctx, CommandListHandle handle, float x, float y, float w, float h);
 void clRoundedRect(Context* ctx, CommandListHandle handle, float x, float y, float w, float h, float r);
-void clRoundedRectVarying(Context* ctx, CommandListHandle handle, float x, float y, float w, float h, float rtl, float rbl, float rbr, float rtr);
+void clRoundedRectVarying(Context* ctx, CommandListHandle handle, float x, float y, float w, float h, float rtl, float rtr, float rbr, float rbl);
 void clCircle(Context* ctx, CommandListHandle handle, float cx, float cy, float radius);
 void clEllipse(Context* ctx, CommandListHandle handle, float cx, float cy, float rx, float ry);
 void clPolyline(Context* ctx, CommandListHandle handle, const float* coords, uint32_t numPoints);
@@ -508,7 +508,7 @@ void clArc(CommandListRef& ref, float cx, float cy, float r, float a0, float a1,
 void clArcTo(CommandListRef& ref, float x1, float y1, float x2, float y2, float r);
 void clRect(CommandListRef& ref, float x, float y, float w, float h);
 void clRoundedRect(CommandListRef& ref, float x, float y, float w, float h, float r);
-void clRoundedRectVarying(CommandListRef& ref, float x, float y, float w, float h, float rtl, float rbl, float rbr, float rtr);
+void clRoundedRectVarying(CommandListRef& ref, float x, float y, float w, float h, float rtl, float rtr, float rbr, float rbl);
 void clCircle(CommandListRef& ref, float cx, float cy, float radius);
 void clEllipse(CommandListRef& ref, float cx, float cy, float rx, float ry);
 void clPolyline(CommandListRef& ref, const float* coords, uint32_t numPoints);

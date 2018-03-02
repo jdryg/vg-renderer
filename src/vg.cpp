@@ -1080,11 +1080,11 @@ void roundedRect(Context* ctx, float x, float y, float w, float h, float r)
 	pathRoundedRect(path, x, y, w, h, r);
 }
 
-void roundedRectVarying(Context* ctx, float x, float y, float w, float h, float rtl, float rbl, float rbr, float rtr)
+void roundedRectVarying(Context* ctx, float x, float y, float w, float h, float rtl, float rtr, float rbr, float rbl)
 {
 	VG_CHECK(!ctx->m_PathTransformed, "Call beginPath() before starting a new path");
 	Path* path = ctx->m_Path;
-	pathRoundedRectVarying(path, x, y, w, h, rtl, rbl, rbr, rtr);
+	pathRoundedRectVarying(path, x, y, w, h, rtl, rtr, rbr, rbl);
 }
 
 void circle(Context* ctx, float cx, float cy, float radius)
@@ -2981,7 +2981,7 @@ void clRoundedRect(Context* ctx, CommandListHandle handle, float x, float y, flo
 	CMD_WRITE(ptr, float, r);
 }
 
-void clRoundedRectVarying(Context* ctx, CommandListHandle handle, float x, float y, float w, float h, float rtl, float rbl, float rbr, float rtr)
+void clRoundedRectVarying(Context* ctx, CommandListHandle handle, float x, float y, float w, float h, float rtl, float rtr, float rbr, float rbl)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
 	CommandList* cl = &ctx->m_CommandLists[handle.idx];
@@ -2992,9 +2992,9 @@ void clRoundedRectVarying(Context* ctx, CommandListHandle handle, float x, float
 	CMD_WRITE(ptr, float, w);
 	CMD_WRITE(ptr, float, h);
 	CMD_WRITE(ptr, float, rtl);
-	CMD_WRITE(ptr, float, rbl);
-	CMD_WRITE(ptr, float, rbr);
 	CMD_WRITE(ptr, float, rtr);
+	CMD_WRITE(ptr, float, rbr);
+	CMD_WRITE(ptr, float, rbl);
 }
 
 void clCircle(Context* ctx, CommandListHandle handle, float cx, float cy, float radius)

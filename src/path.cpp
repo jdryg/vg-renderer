@@ -399,7 +399,7 @@ void pathRoundedRect(Path* path, float x, float y, float w, float h, float r)
 	pathClose(path);
 }
 
-void pathRoundedRectVarying(Path* path, float x, float y, float w, float h, float rTopLeft, float rBottomLeft, float rBottomRight, float rTopRight)
+void pathRoundedRectVarying(Path* path, float x, float y, float w, float h, float rTopLeft, float rTopRight, float rBottomRight, float rBottomLeft)
 {
 	if (rTopLeft < 0.1f && rBottomLeft < 0.1f && rBottomRight < 0.1f && rTopRight < 0.1f) {
 		pathRect(path, x, y, w, h);
