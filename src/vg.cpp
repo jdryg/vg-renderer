@@ -3718,6 +3718,9 @@ void submitCommandList(Context* ctx, CommandListHandle handle)
 				skipCmds = (scissorRect[2] < 1.0f) || (scissorRect[3] < 1.0f);
 			}
 		} break;
+		case CommandType::TransformIdentity: {
+			transformIdentity(ctx);
+		} break;
 		case CommandType::TransformRotate: {
 			const float ang_rad = CMD_READ(cmd, float);
 			transformRotate(ctx, ang_rad);
