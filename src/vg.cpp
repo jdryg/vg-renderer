@@ -496,8 +496,13 @@ static void submitCachedMesh(Context* ctx, ImagePatternHandle imgPatter, Color c
 inline uint32_t alignSize(uint32_t sz, uint32_t alignment)
 {
 	VG_CHECK(bx::isPowerOf2<uint32_t>(alignment), "Invalid alignment value");
-	return (sz & (~(alignment - 1))) + ((sz & (alignment - 1)) != 0 ? alignment : 0);
+	const uint32_t mask = alignment - 1;
+	return (sz & (~mask)) + ((sz & mask) != 0 ? alignment : 0);
 }
+
+inline bool isLocal(uint16_t handleFlags)      { return (handleFlags & HandleFlags::LocalHandle) != 0; }
+inline bool isLocal(GradientHandle handle)     { return isLocal(handle.flags); }
+inline bool isLocal(ImagePatternHandle handle) { return isLocal(handle.flags); }
 
 //////////////////////////////////////////////////////////////////////////
 // Public interface
@@ -1398,7 +1403,7 @@ void fillPath(Context* ctx, GradientHandle gradientHandle, uint32_t flags)
 
 	VG_CHECK(!ctx->m_RecordClipCommands, "Only fillPath(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
-	VG_CHECK(gradientHandle.flags == 0, "Invalid gradient handle");
+	VG_CHECK(!isLocal(gradientHandle), "Invalid gradient handle");
 
 	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
 
@@ -1507,7 +1512,7 @@ void fillPath(Context* ctx, ImagePatternHandle imgPatternHandle, Color color, ui
 
 	VG_CHECK(!ctx->m_RecordClipCommands, "Only fillPath(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(imgPatternHandle), "Invalid image pattern handle");
-	VG_CHECK(imgPatternHandle.flags == 0, "Invalid gradient handle");
+	VG_CHECK(!isLocal(imgPatternHandle), "Invalid gradient handle");
 
 	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
 
@@ -1713,7 +1718,7 @@ void strokePath(Context* ctx, GradientHandle gradientHandle, float width, uint32
 
 	VG_CHECK(!ctx->m_RecordClipCommands, "Only strokePath(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
-	VG_CHECK(gradientHandle.flags == 0, "Invalid gradient handle");
+	VG_CHECK(!isLocal(gradientHandle), "Invalid gradient handle");
 
 	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
 
@@ -1800,7 +1805,7 @@ void strokePath(Context* ctx, ImagePatternHandle imgPatternHandle, Color color, 
 
 	VG_CHECK(!ctx->m_RecordClipCommands, "Only strokePath(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(imgPatternHandle), "Invalid image pattern handle");
-	VG_CHECK(imgPatternHandle.flags == 0, "Invalid gradient handle");
+	VG_CHECK(!isLocal(imgPatternHandle), "Invalid gradient handle");
 
 	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
 
@@ -3662,7 +3667,7 @@ void submitCommandList(Context* ctx, CommandListHandle handle)
 			const uint16_t gradientHandle = CMD_READ(cmd, uint16_t);
 			const uint16_t gradientFlags = CMD_READ(cmd, uint16_t);
 
-			const GradientHandle gradient = { ((gradientFlags & HandleFlags::LocalHandle) != 0) ? (uint16_t)(gradientHandle + firstGradientID) : gradientHandle, 0 };
+			const GradientHandle gradient = { isLocal(gradientFlags) ? (uint16_t)(gradientHandle + firstGradientID) : gradientHandle, 0 };
 			fillPath(ctx, gradient, flags);
 		} break;
 		case CommandType::FillPathImagePattern: {
@@ -3671,7 +3676,7 @@ void submitCommandList(Context* ctx, CommandListHandle handle)
 			const uint16_t imgPatternHandle = CMD_READ(cmd, uint16_t);
 			const uint16_t imgPatternFlags = CMD_READ(cmd, uint16_t);
 
-			const ImagePatternHandle imgPattern = { ((imgPatternFlags & HandleFlags::LocalHandle) != 0) ? (uint16_t)(imgPatternHandle + firstImagePatternID) : imgPatternHandle, 0 };
+			const ImagePatternHandle imgPattern = { isLocal(imgPatternFlags) ? (uint16_t)(imgPatternHandle + firstImagePatternID) : imgPatternHandle, 0 };
 			fillPath(ctx, imgPattern, color, flags);
 		} break;
 		case CommandType::StrokePathColor: {
@@ -3687,7 +3692,7 @@ void submitCommandList(Context* ctx, CommandListHandle handle)
 			const uint16_t gradientHandle = CMD_READ(cmd, uint16_t);
 			const uint16_t gradientFlags = CMD_READ(cmd, uint16_t);
 
-			const GradientHandle gradient = { ((gradientFlags & HandleFlags::LocalHandle) != 0) ? (uint16_t)(gradientHandle + firstGradientID) : gradientHandle, 0 };
+			const GradientHandle gradient = { isLocal(gradientFlags) ? (uint16_t)(gradientHandle + firstGradientID) : gradientHandle, 0 };
 			strokePath(ctx, gradient, width, flags);
 		} break;
 		case CommandType::StrokePathImagePattern: {
@@ -3697,7 +3702,7 @@ void submitCommandList(Context* ctx, CommandListHandle handle)
 			const uint16_t imgPatternHandle = CMD_READ(cmd, uint16_t);
 			const uint16_t imgPatternFlags = CMD_READ(cmd, uint16_t);
 
-			const ImagePatternHandle imgPattern = { ((imgPatternFlags & HandleFlags::LocalHandle) != 0) ? (uint16_t)(imgPatternHandle + firstImagePatternID) : imgPatternHandle, 0 };
+			const ImagePatternHandle imgPattern = { isLocal(imgPatternFlags) ? (uint16_t)(imgPatternHandle + firstImagePatternID) : imgPatternHandle, 0 };
 			strokePath(ctx, imgPattern, color, width, flags);
 		} break;
 		case CommandType::IndexedTriList: {
@@ -4960,7 +4965,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			const uint16_t gradientHandle = CMD_READ(cmd, uint16_t);
 			const uint16_t gradientFlags = CMD_READ(cmd, uint16_t);
 
-			const GradientHandle gradient = { ((gradientFlags & HandleFlags::LocalHandle) != 0) ? (uint16_t)(gradientHandle + firstGradientID) : gradientHandle, 0 };
+			const GradientHandle gradient = { isLocal(gradientFlags) ? (uint16_t)(gradientHandle + firstGradientID) : gradientHandle, 0 };
 			submitCachedMesh(ctx, gradient, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
@@ -4970,7 +4975,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			const uint16_t imgPatternHandle = CMD_READ(cmd, uint16_t);
 			const uint16_t imgPatternFlags = CMD_READ(cmd, uint16_t);
 
-			const ImagePatternHandle imgPattern = { ((imgPatternFlags & HandleFlags::LocalHandle) != 0) ? (uint16_t)(imgPatternHandle + firstImagePatternID) : imgPatternHandle, 0 };
+			const ImagePatternHandle imgPattern = { isLocal(imgPatternFlags) ? (uint16_t)(imgPatternHandle + firstImagePatternID) : imgPatternHandle, 0 };
 			submitCachedMesh(ctx, imgPattern, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
@@ -4987,7 +4992,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			const uint16_t gradientHandle = CMD_READ(cmd, uint16_t);
 			const uint16_t gradientFlags = CMD_READ(cmd, uint16_t);
 
-			const GradientHandle gradient = { ((gradientFlags & HandleFlags::LocalHandle) != 0) ? (uint16_t)(gradientHandle + firstGradientID) : gradientHandle, 0 };
+			const GradientHandle gradient = { isLocal(gradientFlags) ? (uint16_t)(gradientHandle + firstGradientID) : gradientHandle, 0 };
 			submitCachedMesh(ctx, gradient, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
@@ -4998,7 +5003,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			const uint16_t imgPatternHandle = CMD_READ(cmd, uint16_t);
 			const uint16_t imgPatternFlags = CMD_READ(cmd, uint16_t);
 
-			const ImagePatternHandle imgPattern = { ((imgPatternFlags & HandleFlags::LocalHandle) != 0) ? (uint16_t)(imgPatternHandle + firstImagePatternID) : imgPatternHandle, 0 };
+			const ImagePatternHandle imgPattern = { isLocal(imgPatternFlags) ? (uint16_t)(imgPatternHandle + firstImagePatternID) : imgPatternHandle, 0 };
 			submitCachedMesh(ctx, imgPattern, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
@@ -5214,7 +5219,7 @@ static void submitCachedMesh(Context* ctx, GradientHandle gradientHandle, const 
 {
 	VG_CHECK(!ctx->m_RecordClipCommands, "Only submitCachedMesh(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
-	VG_CHECK(gradientHandle.flags == 0, "Invalid gradient handle");
+	VG_CHECK(!isLocal(gradientHandle), "Invalid gradient handle");
 
 	const State* state = getState(ctx);
 	const float* stateTransform = state->m_TransformMtx;
@@ -5240,7 +5245,7 @@ static void submitCachedMesh(Context* ctx, ImagePatternHandle imgPattern, Color 
 {
 	VG_CHECK(!ctx->m_RecordClipCommands, "Only submitCachedMesh(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(imgPattern), "Invalid image pattern handle");
-	VG_CHECK(imgPattern.flags == 0, "Invalid image pattern handle");
+	VG_CHECK(!isLocal(imgPattern), "Invalid image pattern handle");
 
 	const State* state = getState(ctx);
 	const float* stateTransform = state->m_TransformMtx;
