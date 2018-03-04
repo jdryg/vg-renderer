@@ -6,7 +6,6 @@
 // called switch to a vtable which will redirect all path/stroker calls to the cmd list. 
 // When beginClip() is called, switch to a vtable which will redirect all stroker calls to
 // be stored as clip commands.
-// - Preallocate all command lists up front?
 // - Recycle the memory of cached meshes so resetting a cached mesh is faster.
 // - Find a way to move stroker operations into separate functions (i.e. all strokePath 
 // functions differ only on the createDrawCommand_XXX() call; strokerXXX calls are the same
@@ -330,7 +329,6 @@ struct Context
 	bx::HandleAlloc* m_ImageHandleAlloc;
 
 	CommandList* m_CmdLists;
-	uint32_t m_CmdListCapacity;
 	bx::HandleAlloc* m_CmdListHandleAlloc;
 	uint32_t m_SubmitCmdListRecursionDepth;
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
@@ -525,27 +523,30 @@ Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const Context
 
 	VG_CHECK(cfg->m_MaxVBVertices <= 65536, "Vertex buffers cannot be larger than 64k vertices because indices are always uint16");
 
-	const uint32_t defaultAlignment = 8;
+	const uint32_t alignment = 8;
 	const uint32_t totalMem = 0
-		+ alignSize(sizeof(Context), defaultAlignment)
-		+ alignSize(sizeof(Gradient) * cfg->m_MaxGradients, defaultAlignment)
-		+ alignSize(sizeof(ImagePattern) * cfg->m_MaxImagePatterns, defaultAlignment)
-		+ alignSize(sizeof(State) * cfg->m_MaxStateStackSize, defaultAlignment)
-		+ alignSize(sizeof(FontData) * cfg->m_MaxFonts, defaultAlignment);
+		+ alignSize(sizeof(Context), alignment)
+		+ alignSize(sizeof(Gradient) * cfg->m_MaxGradients, alignment)
+		+ alignSize(sizeof(ImagePattern) * cfg->m_MaxImagePatterns, alignment)
+		+ alignSize(sizeof(State) * cfg->m_MaxStateStackSize, alignment)
+		+ alignSize(sizeof(FontData) * cfg->m_MaxFonts, alignment)
+		+ alignSize(sizeof(CommandList) * cfg->m_MaxCommandLists, alignment);
 
-	uint8_t* mem = (uint8_t*)BX_ALIGNED_ALLOC(allocator, totalMem, defaultAlignment);
+	uint8_t* mem = (uint8_t*)BX_ALIGNED_ALLOC(allocator, totalMem, alignment);
 	bx::memSet(mem, 0, totalMem);
 
 	Context* ctx = (Context*)mem;
-	mem += alignSize(sizeof(Context), defaultAlignment);
+	mem += alignSize(sizeof(Context), alignment);
 	ctx->m_Gradients = (Gradient*)mem;
-	mem += alignSize(sizeof(Gradient) * cfg->m_MaxGradients, defaultAlignment);
+	mem += alignSize(sizeof(Gradient) * cfg->m_MaxGradients, alignment);
 	ctx->m_ImagePatterns = (ImagePattern*)mem;
-	mem += alignSize(sizeof(ImagePattern) * cfg->m_MaxImagePatterns, defaultAlignment);
+	mem += alignSize(sizeof(ImagePattern) * cfg->m_MaxImagePatterns, alignment);
 	ctx->m_StateStack = (State*)mem;
-	mem += alignSize(sizeof(State) * cfg->m_MaxStateStackSize, defaultAlignment);
+	mem += alignSize(sizeof(State) * cfg->m_MaxStateStackSize, alignment);
 	ctx->m_FontData = (FontData*)mem;
-	mem += alignSize(sizeof(FontData) * cfg->m_MaxFonts, defaultAlignment);
+	mem += alignSize(sizeof(FontData) * cfg->m_MaxFonts, alignment);
+	ctx->m_CmdLists = (CommandList*)mem;
+	mem += alignSize(sizeof(CommandList) * cfg->m_MaxCommandLists, alignment);
 
 	bx::memCopy(&ctx->m_Config, cfg, sizeof(ContextConfig));
 	ctx->m_Allocator = allocator;
@@ -786,9 +787,6 @@ void destroyContext(Context* ctx)
 
 	bx::destroyHandleAlloc(allocator, ctx->m_ImageHandleAlloc);
 	ctx->m_ImageHandleAlloc = nullptr;
-
-	BX_FREE(allocator, ctx->m_CmdLists);
-	ctx->m_CmdLists = nullptr;
 
 	bx::destroyHandleAlloc(allocator, ctx->m_CmdListHandleAlloc);
 	ctx->m_CmdListHandleAlloc = nullptr;
@@ -4728,18 +4726,7 @@ static CommandListHandle allocCommandList(Context* ctx)
 		return VG_INVALID_HANDLE;
 	}
 
-	if (handle.idx >= ctx->m_CmdListCapacity) {
-		const uint32_t oldCapacity = ctx->m_CmdListCapacity;
-
-		ctx->m_CmdListCapacity += 8;
-		ctx->m_CmdLists = (CommandList*)BX_REALLOC(ctx->m_Allocator, ctx->m_CmdLists, sizeof(CommandList) * ctx->m_CmdListCapacity);
-		if (!ctx->m_CmdLists) {
-			VG_WARN(false, "Failed to allocator command list memory");
-			return VG_INVALID_HANDLE;
-		}
-	}
-
-	VG_CHECK(handle.idx < ctx->m_CmdListCapacity, "Allocated invalid command list handle");
+	VG_CHECK(handle.idx < ctx->m_Config.m_MaxCommandLists, "Allocated invalid command list handle");
 	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 	bx::memSet(cl, 0, sizeof(CommandList));
 
