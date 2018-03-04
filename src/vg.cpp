@@ -1,7 +1,19 @@
 // TODO:
 // - More than 254 clip regions: Either use another view (extra parameter in createContext)
 // or draw a fullscreen quad to reset the stencil buffer to 0.
-// 
+// - Try keeping a table of function pointers which will change depending on the current
+// state of the context to avoid repeatedly checking bools. E.g. when beginCommandList() is
+// called switch to a vtable which will redirect all path/stroker calls to the cmd list. 
+// When beginClip() is called, switch to a vtable which will redirect all stroker calls to
+// be stored as clip commands.
+// - Preallocate all command lists up front?
+// - Recycle the memory of cached meshes so resetting a cached mesh is faster.
+// - Find a way to move stroker operations into separate functions (i.e. all strokePath 
+// functions differ only on the createDrawCommand_XXX() call; strokerXXX calls are the same
+// and the code is duplicated).
+// - Allow strokes and fills with gradients and image patterns to be used as clip masks (might
+// be useful if the same command list is used both inside and outside a beginClip()/endClip() 
+// block)
 #include <vg/vg.h>
 #include <vg/path.h>
 #include <vg/stroker.h>
@@ -445,12 +457,10 @@ static void clStrokePath(Context* ctx, CommandList* cl, ImagePatternHandle img, 
 static void clBeginClip(Context* ctx, CommandList* cl, ClipRule::Enum rule);
 static void clEndClip(Context* ctx, CommandList* cl);
 static void clResetClip(Context* ctx, CommandList* cl);
-
 static GradientHandle clCreateLinearGradient(Context* ctx, CommandList* cl, float sx, float sy, float ex, float ey, Color icol, Color ocol);
 static GradientHandle clCreateBoxGradient(Context* ctx, CommandList* cl, float x, float y, float w, float h, float r, float f, Color icol, Color ocol);
 static GradientHandle clCreateRadialGradient(Context* ctx, CommandList* cl, float cx, float cy, float inr, float outr, Color icol, Color ocol);
 static ImagePatternHandle clCreateImagePattern(Context* ctx, CommandList* cl, float cx, float cy, float w, float h, float angle, ImageHandle image);
-
 static void clPushState(Context* ctx, CommandList* cl);
 static void clPopState(Context* ctx, CommandList* cl);
 static void clResetScissor(Context* ctx, CommandList* cl);
@@ -461,10 +471,8 @@ static void clTransformScale(Context* ctx, CommandList* cl, float x, float y);
 static void clTransformTranslate(Context* ctx, CommandList* cl, float x, float y);
 static void clTransformRotate(Context* ctx, CommandList* cl, float ang_rad);
 static void clTransformMult(Context* ctx, CommandList* cl, const float* mtx, bool pre);
-
 static void clText(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void clTextBox(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end);
-
 static void clSubmitCommandList(Context* ctx, CommandList* cl, CommandListHandle childList);
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
