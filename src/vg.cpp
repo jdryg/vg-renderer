@@ -317,13 +317,13 @@ struct Context
 	uint32_t m_ImageCapacity;
 	bx::HandleAlloc* m_ImageHandleAlloc;
 
-	CommandList* m_CommandLists;
-	uint32_t m_CommandListCapacity;
-	bx::HandleAlloc* m_CommandListHandleAlloc;
+	CommandList* m_CmdLists;
+	uint32_t m_CmdListCapacity;
+	bx::HandleAlloc* m_CmdListHandleAlloc;
 	uint32_t m_SubmitCmdListRecursionDepth;
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
-	CommandListCache* m_CommandListCacheStack[VG_CONFIG_COMMAND_LIST_CACHE_STACK_SIZE];
-	uint32_t m_CommandListCacheStackTop;
+	CommandListCache* m_CmdListCacheStack[VG_CONFIG_COMMAND_LIST_CACHE_STACK_SIZE];
+	uint32_t m_CmdListCacheStackTop;
 #endif
 
 	float* m_TransformedVertices;
@@ -546,7 +546,7 @@ Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const Context
 	transformIdentity(ctx);
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
-	ctx->m_CommandListCacheStackTop = ~0u;
+	ctx->m_CmdListCacheStackTop = ~0u;
 #endif
 
 #if BX_CONFIG_SUPPORTS_THREADING
@@ -556,7 +556,7 @@ Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const Context
 	ctx->m_Stroker = createStroker(allocator);
 
 	ctx->m_ImageHandleAlloc = bx::createHandleAlloc(allocator, cfg->m_MaxImages);
-	ctx->m_CommandListHandleAlloc = bx::createHandleAlloc(allocator, cfg->m_MaxCommandLists);
+	ctx->m_CmdListHandleAlloc = bx::createHandleAlloc(allocator, cfg->m_MaxCommandLists);
 
 	// bgfx setup
 	ctx->m_PosVertexDecl.begin().add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float).end();
@@ -774,11 +774,11 @@ void destroyContext(Context* ctx)
 	bx::destroyHandleAlloc(allocator, ctx->m_ImageHandleAlloc);
 	ctx->m_ImageHandleAlloc = nullptr;
 
-	BX_FREE(allocator, ctx->m_CommandLists);
-	ctx->m_CommandLists = nullptr;
+	BX_FREE(allocator, ctx->m_CmdLists);
+	ctx->m_CmdLists = nullptr;
 
-	bx::destroyHandleAlloc(allocator, ctx->m_CommandListHandleAlloc);
-	ctx->m_CommandListHandleAlloc = nullptr;
+	bx::destroyHandleAlloc(allocator, ctx->m_CmdListHandleAlloc);
+	ctx->m_CmdListHandleAlloc = nullptr;
 
 	destroyPath(ctx->m_Path);
 	ctx->m_Path = nullptr;
@@ -811,7 +811,7 @@ void beginFrame(Context* ctx, uint16_t canvasWidth, uint16_t canvasHeight, float
 	ctx->m_SubmitCmdListRecursionDepth = 0;
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
-	ctx->m_CommandListCacheStackTop = ~0u;
+	ctx->m_CmdListCacheStackTop = ~0u;
 #endif
 
 	VG_CHECK(ctx->m_StateStackTop == 0, "State stack hasn't been properly reset in the previous frame");
@@ -3119,7 +3119,7 @@ CommandListHandle createCommandList(Context* ctx, uint32_t flags)
 		return VG_INVALID_HANDLE;
 	}
 
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 	cl->m_Flags = flags;
 
 	return handle;
@@ -3132,7 +3132,7 @@ void destroyCommandList(Context* ctx, CommandListHandle handle)
 
 	bx::AllocatorI* allocator = ctx->m_Allocator;
 
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
 	if (cl->m_Cache) {
@@ -3144,13 +3144,13 @@ void destroyCommandList(Context* ctx, CommandListHandle handle)
 	BX_FREE(allocator, cl->m_StringBuffer);
 	bx::memSet(cl, 0, sizeof(CommandList));
 
-	ctx->m_CommandListHandleAlloc->free(handle.idx);
+	ctx->m_CmdListHandleAlloc->free(handle.idx);
 }
 
 void resetCommandList(Context* ctx, CommandListHandle handle)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clReset(ctx, cl);
 }
@@ -3160,7 +3160,7 @@ void beginCommandList(Context* ctx, CommandListHandle handle)
 	VG_CHECK(ctx->m_ActiveCommandList == nullptr, "Cannot call beginCommandList() while inside a beginCommandList()/endCommandList() block");
 	VG_CHECK(isValid(handle), "Invalid command list handle");
 
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 	ctx->m_ActiveCommandList = cl;
 }
 
@@ -3173,7 +3173,7 @@ void endCommandList(Context* ctx)
 void clReset(Context* ctx, CommandListHandle handle)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clReset(ctx, cl);
 }
@@ -3181,7 +3181,7 @@ void clReset(Context* ctx, CommandListHandle handle)
 void clBeginPath(Context* ctx, CommandListHandle handle)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 	
 	clBeginPath(ctx, cl);
 }
@@ -3189,7 +3189,7 @@ void clBeginPath(Context* ctx, CommandListHandle handle)
 void clMoveTo(Context* ctx, CommandListHandle handle, float x, float y)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clMoveTo(ctx, cl, x, y);
 }
@@ -3197,7 +3197,7 @@ void clMoveTo(Context* ctx, CommandListHandle handle, float x, float y)
 void clLineTo(Context* ctx, CommandListHandle handle, float x, float y)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clLineTo(ctx, cl, x, y);
 }
@@ -3205,7 +3205,7 @@ void clLineTo(Context* ctx, CommandListHandle handle, float x, float y)
 void clCubicTo(Context* ctx, CommandListHandle handle, float c1x, float c1y, float c2x, float c2y, float x, float y)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clCubicTo(ctx, cl, c1x, c1y, c2x, c2y, x, y);
 }
@@ -3213,7 +3213,7 @@ void clCubicTo(Context* ctx, CommandListHandle handle, float c1x, float c1y, flo
 void clQuadraticTo(Context* ctx, CommandListHandle handle, float cx, float cy, float x, float y)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clQuadraticTo(ctx, cl, cx, cy, x, y);
 }
@@ -3221,7 +3221,7 @@ void clQuadraticTo(Context* ctx, CommandListHandle handle, float cx, float cy, f
 void clArc(Context* ctx, CommandListHandle handle, float cx, float cy, float r, float a0, float a1, Winding::Enum dir)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clArc(ctx, cl, cx, cy, r, a0, a1, dir);
 }
@@ -3229,7 +3229,7 @@ void clArc(Context* ctx, CommandListHandle handle, float cx, float cy, float r, 
 void clArcTo(Context* ctx, CommandListHandle handle, float x1, float y1, float x2, float y2, float r)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clArcTo(ctx, cl, x1, y1, x2, y2, r);
 }
@@ -3237,7 +3237,7 @@ void clArcTo(Context* ctx, CommandListHandle handle, float x1, float y1, float x
 void clRect(Context* ctx, CommandListHandle handle, float x, float y, float w, float h)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clRect(ctx, cl, x, y, w, h);
 }
@@ -3245,7 +3245,7 @@ void clRect(Context* ctx, CommandListHandle handle, float x, float y, float w, f
 void clRoundedRect(Context* ctx, CommandListHandle handle, float x, float y, float w, float h, float r)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clRoundedRect(ctx, cl, x, y, w, h, r);
 }
@@ -3253,7 +3253,7 @@ void clRoundedRect(Context* ctx, CommandListHandle handle, float x, float y, flo
 void clRoundedRectVarying(Context* ctx, CommandListHandle handle, float x, float y, float w, float h, float rtl, float rtr, float rbr, float rbl)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clRoundedRectVarying(ctx, cl, x, y, w, h, rtl, rtr, rbr, rbl);
 }
@@ -3261,7 +3261,7 @@ void clRoundedRectVarying(Context* ctx, CommandListHandle handle, float x, float
 void clCircle(Context* ctx, CommandListHandle handle, float cx, float cy, float radius)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clCircle(ctx, cl, cx, cy, radius);
 }
@@ -3269,7 +3269,7 @@ void clCircle(Context* ctx, CommandListHandle handle, float cx, float cy, float 
 void clEllipse(Context* ctx, CommandListHandle handle, float cx, float cy, float rx, float ry)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clEllipse(ctx, cl, cx, cy, rx, ry);
 }
@@ -3277,7 +3277,7 @@ void clEllipse(Context* ctx, CommandListHandle handle, float cx, float cy, float
 void clPolyline(Context* ctx, CommandListHandle handle, const float* coords, uint32_t numPoints)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clPolyline(ctx, cl, coords, numPoints);
 }
@@ -3285,7 +3285,7 @@ void clPolyline(Context* ctx, CommandListHandle handle, const float* coords, uin
 void clClosePath(Context* ctx, CommandListHandle handle)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clClosePath(ctx, cl);
 }
@@ -3293,7 +3293,7 @@ void clClosePath(Context* ctx, CommandListHandle handle)
 void clIndexedTriList(Context* ctx, CommandListHandle handle, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* color, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clIndexedTriList(ctx, cl, pos, uv, numVertices, color, numColors, indices, numIndices, img);
 }
@@ -3301,7 +3301,7 @@ void clIndexedTriList(Context* ctx, CommandListHandle handle, const float* pos, 
 void clFillPath(Context* ctx, CommandListHandle handle, Color color, uint32_t flags)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clFillPath(ctx, cl, color, flags);
 }
@@ -3310,7 +3310,7 @@ void clFillPath(Context* ctx, CommandListHandle handle, GradientHandle gradient,
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
 	VG_CHECK(isValid(gradient), "Invalid gradient handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clFillPath(ctx, cl, gradient, flags);
 }
@@ -3319,7 +3319,7 @@ void clFillPath(Context* ctx, CommandListHandle handle, ImagePatternHandle img, 
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
 	VG_CHECK(isValid(img), "Invalid image pattern handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clFillPath(ctx, cl, img, color, flags);
 }
@@ -3327,7 +3327,7 @@ void clFillPath(Context* ctx, CommandListHandle handle, ImagePatternHandle img, 
 void clStrokePath(Context* ctx, CommandListHandle handle, Color color, float width, uint32_t flags)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clStrokePath(ctx, cl, color, width, flags);
 }
@@ -3336,7 +3336,7 @@ void clStrokePath(Context* ctx, CommandListHandle handle, GradientHandle gradien
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
 	VG_CHECK(isValid(gradient), "Invalid gradient handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clStrokePath(ctx, cl, gradient, width, flags);
 }
@@ -3345,7 +3345,7 @@ void clStrokePath(Context* ctx, CommandListHandle handle, ImagePatternHandle img
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
 	VG_CHECK(isValid(img), "Invalid image pattern handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clStrokePath(ctx, cl, img, color, width, flags);
 }
@@ -3353,7 +3353,7 @@ void clStrokePath(Context* ctx, CommandListHandle handle, ImagePatternHandle img
 void clBeginClip(Context* ctx, CommandListHandle handle, ClipRule::Enum rule)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clBeginClip(ctx, cl, rule);
 }
@@ -3361,7 +3361,7 @@ void clBeginClip(Context* ctx, CommandListHandle handle, ClipRule::Enum rule)
 void clEndClip(Context* ctx, CommandListHandle handle)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clEndClip(ctx, cl);
 }
@@ -3369,7 +3369,7 @@ void clEndClip(Context* ctx, CommandListHandle handle)
 void clResetClip(Context* ctx, CommandListHandle handle)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clResetClip(ctx, cl);
 }
@@ -3377,7 +3377,7 @@ void clResetClip(Context* ctx, CommandListHandle handle)
 GradientHandle clCreateLinearGradient(Context* ctx, CommandListHandle handle, float sx, float sy, float ex, float ey, Color icol, Color ocol)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	return clCreateLinearGradient(ctx, cl, sx, sy, ex, ey, icol, ocol);
 }
@@ -3385,7 +3385,7 @@ GradientHandle clCreateLinearGradient(Context* ctx, CommandListHandle handle, fl
 GradientHandle clCreateBoxGradient(Context* ctx, CommandListHandle handle, float x, float y, float w, float h, float r, float f, Color icol, Color ocol)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	return clCreateBoxGradient(ctx, cl, x, y, w, h, r, f, icol, ocol);
 }
@@ -3393,7 +3393,7 @@ GradientHandle clCreateBoxGradient(Context* ctx, CommandListHandle handle, float
 GradientHandle clCreateRadialGradient(Context* ctx, CommandListHandle handle, float cx, float cy, float inr, float outr, Color icol, Color ocol)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	return clCreateRadialGradient(ctx, cl, cx, cy, inr, outr, icol, ocol);
 }
@@ -3403,7 +3403,7 @@ ImagePatternHandle clCreateImagePattern(Context* ctx, CommandListHandle handle, 
 	VG_CHECK(isValid(handle), "Invalid command list handle");
 	VG_CHECK(isValid(image), "Invalid image handle");
 
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	return clCreateImagePattern(ctx, cl, cx, cy, w, h, angle, image);
 }
@@ -3411,7 +3411,7 @@ ImagePatternHandle clCreateImagePattern(Context* ctx, CommandListHandle handle, 
 void clPushState(Context* ctx, CommandListHandle handle)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clPushState(ctx, cl);
 }
@@ -3419,7 +3419,7 @@ void clPushState(Context* ctx, CommandListHandle handle)
 void clPopState(Context* ctx, CommandListHandle handle)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clPopState(ctx, cl);
 }
@@ -3427,7 +3427,7 @@ void clPopState(Context* ctx, CommandListHandle handle)
 void clResetScissor(Context* ctx, CommandListHandle handle)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clResetScissor(ctx, cl);
 }
@@ -3435,7 +3435,7 @@ void clResetScissor(Context* ctx, CommandListHandle handle)
 void clSetScissor(Context* ctx, CommandListHandle handle, float x, float y, float w, float h)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clSetScissor(ctx, cl, x, y, w, h);
 }
@@ -3443,7 +3443,7 @@ void clSetScissor(Context* ctx, CommandListHandle handle, float x, float y, floa
 void clIntersectScissor(Context* ctx, CommandListHandle handle, float x, float y, float w, float h)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clIntersectScissor(ctx, cl, x, y, w, h);
 }
@@ -3451,7 +3451,7 @@ void clIntersectScissor(Context* ctx, CommandListHandle handle, float x, float y
 void clTransformIdentity(Context* ctx, CommandListHandle handle)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clTransformIdentity(ctx, cl);
 }
@@ -3459,7 +3459,7 @@ void clTransformIdentity(Context* ctx, CommandListHandle handle)
 void clTransformScale(Context* ctx, CommandListHandle handle, float x, float y)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clTransformScale(ctx, cl, x, y);
 }
@@ -3467,7 +3467,7 @@ void clTransformScale(Context* ctx, CommandListHandle handle, float x, float y)
 void clTransformTranslate(Context* ctx, CommandListHandle handle, float x, float y)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clTransformTranslate(ctx, cl, x, y);
 }
@@ -3475,7 +3475,7 @@ void clTransformTranslate(Context* ctx, CommandListHandle handle, float x, float
 void clTransformRotate(Context* ctx, CommandListHandle handle, float ang_rad)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clTransformRotate(ctx, cl, ang_rad);
 }
@@ -3483,7 +3483,7 @@ void clTransformRotate(Context* ctx, CommandListHandle handle, float ang_rad)
 void clTransformMult(Context* ctx, CommandListHandle handle, const float* mtx, bool pre)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clTransformMult(ctx, cl, mtx, pre);
 }
@@ -3491,7 +3491,7 @@ void clTransformMult(Context* ctx, CommandListHandle handle, const float* mtx, b
 void clText(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, const char* str, const char* end)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clText(ctx, cl, cfg, x, y, str, end);
 }
@@ -3499,7 +3499,7 @@ void clText(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float
 void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clTextBox(ctx, cl, cfg, x, y, breakWidth, str, end);
 }
@@ -3512,7 +3512,7 @@ void submitCommandList(Context* ctx, CommandListHandle handle)
 	}
 
 	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	VG_CHECK(ctx->m_SubmitCmdListRecursionDepth < ctx->m_Config.m_MaxCommandListDepth, "Recursion limit reached");
 	if (ctx->m_SubmitCmdListRecursionDepth >= ctx->m_Config.m_MaxCommandListDepth) {
@@ -4710,24 +4710,24 @@ static void flushTextAtlas(Context* ctx)
 
 static CommandListHandle allocCommandList(Context* ctx)
 {
-	CommandListHandle handle = { ctx->m_CommandListHandleAlloc->alloc() };
+	CommandListHandle handle = { ctx->m_CmdListHandleAlloc->alloc() };
 	if (!isValid(handle)) {
 		return VG_INVALID_HANDLE;
 	}
 
-	if (handle.idx >= ctx->m_CommandListCapacity) {
-		const uint32_t oldCapacity = ctx->m_CommandListCapacity;
+	if (handle.idx >= ctx->m_CmdListCapacity) {
+		const uint32_t oldCapacity = ctx->m_CmdListCapacity;
 
-		ctx->m_CommandListCapacity += 8;
-		ctx->m_CommandLists = (CommandList*)BX_REALLOC(ctx->m_Allocator, ctx->m_CommandLists, sizeof(CommandList) * ctx->m_CommandListCapacity);
-		if (!ctx->m_CommandLists) {
+		ctx->m_CmdListCapacity += 8;
+		ctx->m_CmdLists = (CommandList*)BX_REALLOC(ctx->m_Allocator, ctx->m_CmdLists, sizeof(CommandList) * ctx->m_CmdListCapacity);
+		if (!ctx->m_CmdLists) {
 			VG_WARN(false, "Failed to allocator command list memory");
 			return VG_INVALID_HANDLE;
 		}
 	}
 
-	VG_CHECK(handle.idx < ctx->m_CommandListCapacity, "Allocated invalid command list handle");
-	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+	VG_CHECK(handle.idx < ctx->m_CmdListCapacity, "Allocated invalid command list handle");
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 	bx::memSet(cl, 0, sizeof(CommandList));
 
 	return handle;
@@ -4803,21 +4803,21 @@ static CommandListCache* clGetCache(Context* ctx, CommandList* cl)
 
 static void pushCommandListCache(Context* ctx, CommandListCache* cache)
 {
-	VG_CHECK(ctx->m_CommandListCacheStackTop + 1 < VG_CONFIG_COMMAND_LIST_CACHE_STACK_SIZE, "Command list cache stack overflow");
-	++ctx->m_CommandListCacheStackTop;
-	ctx->m_CommandListCacheStack[ctx->m_CommandListCacheStackTop] = cache;
+	VG_CHECK(ctx->m_CmdListCacheStackTop + 1 < VG_CONFIG_COMMAND_LIST_CACHE_STACK_SIZE, "Command list cache stack overflow");
+	++ctx->m_CmdListCacheStackTop;
+	ctx->m_CmdListCacheStack[ctx->m_CmdListCacheStackTop] = cache;
 }
 
 static void popCommandListCache(Context* ctx)
 {
-	VG_CHECK(ctx->m_CommandListCacheStackTop != ~0u, "Command list cache stack underflow");
-	--ctx->m_CommandListCacheStackTop;
+	VG_CHECK(ctx->m_CmdListCacheStackTop != ~0u, "Command list cache stack underflow");
+	--ctx->m_CmdListCacheStackTop;
 }
 
 static CommandListCache* getCommandListCacheStackTop(Context* ctx)
 {
-	const uint32_t top = ctx->m_CommandListCacheStackTop;
-	return top == ~0u ? nullptr : ctx->m_CommandListCacheStack[top];
+	const uint32_t top = ctx->m_CmdListCacheStackTop;
+	return top == ~0u ? nullptr : ctx->m_CmdListCacheStack[top];
 }
 
 static void beginCachedCommand(Context* ctx)
