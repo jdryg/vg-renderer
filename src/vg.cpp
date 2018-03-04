@@ -26,9 +26,10 @@
 
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment within conditional expression
 
-#define VG_CONFIG_MAX_FONT_SCALE             4.0f
-#define VG_CONFIG_MAX_FONT_IMAGES            4
-#define VG_CONFIG_MIN_FONT_ATLAS_SIZE        512
+#define VG_CONFIG_MAX_FONT_SCALE                 4.0f
+#define VG_CONFIG_MAX_FONT_IMAGES                4
+#define VG_CONFIG_MIN_FONT_ATLAS_SIZE            512
+#define VG_CONFIG_COMMAND_LIST_CACHE_STACK_SIZE  32
 
 // Minimum font size (after scaling with the current transformation matrix),
 // below which no text will be rendered.
@@ -219,6 +220,9 @@ struct CommandType
 		// Text
 		Text,
 		TextBox,
+
+		// Command lists
+		SubmitCommandList,
 	};
 };
 
@@ -283,6 +287,7 @@ struct Context
 
 	Stroker* m_Stroker;
 	Path* m_Path;
+	CommandList* m_ActiveCommandList;
 
 	VertexBuffer* m_VertexBuffers;
 	GPUVertexBuffer* m_GPUVertexBuffers;
@@ -315,8 +320,11 @@ struct Context
 	CommandList* m_CommandLists;
 	uint32_t m_CommandListCapacity;
 	bx::HandleAlloc* m_CommandListHandleAlloc;
-	CommandListCache* m_CommandListCache;
-	CommandList* m_ActiveCommandList;
+	uint32_t m_SubmitCmdListRecursionDepth;
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
+	CommandListCache* m_CommandListCacheStack[VG_CONFIG_COMMAND_LIST_CACHE_STACK_SIZE];
+	uint32_t m_CommandListCacheStackTop;
+#endif
 
 	float* m_TransformedVertices;
 	uint32_t m_TransformedVertexCapacity;
@@ -457,11 +465,15 @@ static void clTransformMult(Context* ctx, CommandList* cl, const float* mtx, boo
 static void clText(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void clTextBox(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end);
 
+static void clSubmitCommandList(Context* ctx, CommandList* cl, CommandListHandle childList);
+
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
 static CommandListCache* clGetCache(Context* ctx, CommandList* cl);
 static CommandListCache* allocCommandListCache(Context* ctx);
 static void freeCommandListCache(Context* ctx, CommandListCache* cache);
-static void bindCommandListCache(Context* ctx, CommandListCache* cache);
+static void pushCommandListCache(Context* ctx, CommandListCache* cache);
+static void popCommandListCache(Context* ctx);
+static CommandListCache* getCommandListCacheStackTop(Context* ctx);
 static void beginCachedCommand(Context* ctx);
 static void endCachedCommand(Context* ctx);
 static void addCachedCommand(Context* ctx, const float* pos, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
@@ -492,7 +504,8 @@ Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const Context
 		16,                          // m_MaxImages
 		256,                         // m_MaxCommandLists
 		65536,                       // m_MaxVBVertices
-		ImageFlags::Filter_Bilinear  // m_FontAtlasImageFlags
+		ImageFlags::Filter_Bilinear, // m_FontAtlasImageFlags
+		16                           // m_MaxCommandListDepth
 	};
 
 	const ContextConfig* cfg = userCfg ? userCfg : &defaultConfig;
@@ -531,6 +544,10 @@ Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const Context
 	ctx->m_StateStack[0].m_GlobalAlpha = 1.0f;
 	resetScissor(ctx);
 	transformIdentity(ctx);
+
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
+	ctx->m_CommandListCacheStackTop = ~0u;
+#endif
 
 #if BX_CONFIG_SUPPORTS_THREADING
 	ctx->m_DataPoolMutex = BX_NEW(allocator, bx::Mutex)();
@@ -790,8 +807,12 @@ void beginFrame(Context* ctx, uint16_t canvasWidth, uint16_t canvasHeight, float
 	ctx->m_DevicePixelRatio = devicePixelRatio;
 	ctx->m_TesselationTolerance = 0.25f / devicePixelRatio;
 	ctx->m_FringeWidth = 1.0f / devicePixelRatio;
-	ctx->m_CommandListCache = nullptr;
 	ctx->m_ActiveCommandList = nullptr;
+	ctx->m_SubmitCmdListRecursionDepth = 0;
+
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
+	ctx->m_CommandListCacheStackTop = ~0u;
+#endif
 
 	VG_CHECK(ctx->m_StateStackTop == 0, "State stack hasn't been properly reset in the previous frame");
 	resetScissor(ctx);
@@ -1250,7 +1271,7 @@ void fillPath(Context* ctx, Color color, uint32_t flags)
 	}
 
 	const bool recordClipCommands = ctx->m_RecordClipCommands;
-	const bool hasCache = ctx->m_CommandListCache != nullptr;
+	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
 
 	const State* state = getState(ctx);
 	const float globalAlpha = hasCache ? 1.0f : state->m_GlobalAlpha;
@@ -1371,7 +1392,7 @@ void fillPath(Context* ctx, GradientHandle gradientHandle, uint32_t flags)
 	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
 	VG_CHECK(gradientHandle.flags == 0, "Invalid gradient handle");
 
-	const bool hasCache = ctx->m_CommandListCache != nullptr;
+	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
 
 	const float* pathVertices = transformPath(ctx);
 
@@ -1480,7 +1501,7 @@ void fillPath(Context* ctx, ImagePatternHandle imgPatternHandle, Color color, ui
 	VG_CHECK(isValid(imgPatternHandle), "Invalid image pattern handle");
 	VG_CHECK(imgPatternHandle.flags == 0, "Invalid gradient handle");
 
-	const bool hasCache = ctx->m_CommandListCache != nullptr;
+	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
 
 	const State* state = getState(ctx);
 	const float globalAlpha = hasCache ? 1.0f : state->m_GlobalAlpha;
@@ -1590,7 +1611,7 @@ void strokePath(Context* ctx, Color color, float width, uint32_t flags)
 	}
 
 	const bool recordClipCommands = ctx->m_RecordClipCommands;
-	const bool hasCache = ctx->m_CommandListCache != nullptr;
+	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
 
 	const State* state = getState(ctx);
 	const float avgScale = state->m_AvgScale;
@@ -1686,7 +1707,7 @@ void strokePath(Context* ctx, GradientHandle gradientHandle, float width, uint32
 	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
 	VG_CHECK(gradientHandle.flags == 0, "Invalid gradient handle");
 
-	const bool hasCache = ctx->m_CommandListCache != nullptr;
+	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
 
 	const LineJoin::Enum lineJoin = VG_STROKE_FLAGS_LINE_JOIN(flags);
 	const LineCap::Enum lineCap = VG_STROKE_FLAGS_LINE_CAP(flags);
@@ -1773,7 +1794,7 @@ void strokePath(Context* ctx, ImagePatternHandle imgPatternHandle, Color color, 
 	VG_CHECK(isValid(imgPatternHandle), "Invalid image pattern handle");
 	VG_CHECK(imgPatternHandle.flags == 0, "Invalid gradient handle");
 
-	const bool hasCache = ctx->m_CommandListCache != nullptr;
+	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
 
 	const State* state = getState(ctx);
 	const float avgScale = state->m_AvgScale;
@@ -3091,6 +3112,8 @@ bool isImageValid(Context* ctx, ImageHandle image)
 //
 CommandListHandle createCommandList(Context* ctx, uint32_t flags)
 {
+	VG_CHECK(ctx->m_ActiveCommandList == nullptr, "Cannot create command list while inside a beginCommandList()/endCommandList() block");
+
 	CommandListHandle handle = allocCommandList(ctx);
 	if (!isValid(handle)) {
 		return VG_INVALID_HANDLE;
@@ -3104,15 +3127,18 @@ CommandListHandle createCommandList(Context* ctx, uint32_t flags)
 
 void destroyCommandList(Context* ctx, CommandListHandle handle)
 {
+	VG_CHECK(ctx->m_ActiveCommandList == nullptr, "Cannot destroy command list while inside a beginCommandList()/endCommandList() block");
 	VG_CHECK(isValid(handle), "Invalid command list handle");
 
 	bx::AllocatorI* allocator = ctx->m_Allocator;
 
 	CommandList* cl = &ctx->m_CommandLists[handle.idx];
 
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
 	if (cl->m_Cache) {
 		freeCommandListCache(ctx, cl->m_Cache);
 	}
+#endif
 
 	BX_FREE(allocator, cl->m_CommandBuffer);
 	BX_FREE(allocator, cl->m_StringBuffer);
@@ -3480,9 +3506,19 @@ void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, fl
 
 void submitCommandList(Context* ctx, CommandListHandle handle)
 {
-	// TODO: clSubmitCommandList command
+	if (ctx->m_ActiveCommandList) {
+		clSubmitCommandList(ctx, ctx->m_ActiveCommandList, handle);
+		return;
+	}
+
 	VG_CHECK(isValid(handle), "Invalid command list handle");
 	CommandList* cl = &ctx->m_CommandLists[handle.idx];
+
+	VG_CHECK(ctx->m_SubmitCmdListRecursionDepth < ctx->m_Config.m_MaxCommandListDepth, "Recursion limit reached");
+	if (ctx->m_SubmitCmdListRecursionDepth >= ctx->m_Config.m_MaxCommandListDepth) {
+		return;
+	}
+	++ctx->m_SubmitCmdListRecursionDepth;
 
 	const uint16_t numGradients = cl->m_NumGradients;
 	const uint16_t numImagePatterns = cl->m_NumImagePatterns;
@@ -3525,11 +3561,14 @@ void submitCommandList(Context* ctx, CommandListHandle handle)
 	const char* stringBuffer = cl->m_StringBuffer;
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
-	bindCommandListCache(ctx, clCache);
+	pushCommandListCache(ctx, clCache);
 #endif
 
 	bool skipCmds = false;
+#if VG_CONFIG_COMMAND_LIST_PRESERVE_STATE
 	pushState(ctx);
+#endif
+
 	while (cmd < cmdListEnd) {
 		const CommandHeader* cmdHeader = (CommandHeader*)cmd;
 		cmd += sizeof(CommandHeader);
@@ -3793,6 +3832,12 @@ void submitCommandList(Context* ctx, CommandListHandle handle)
 		case CommandType::ResetClip: {
 			resetClip(ctx);
 		} break;
+		case CommandType::SubmitCommandList: {
+			const uint16_t cmdListID = CMD_READ(cmd, uint16_t);
+			const CommandListHandle cmdListHandle = { cmdListID };
+
+			submitCommandList(ctx, cmdListHandle);
+		} break;
 		default: {
 			VG_CHECK(false, "Unknown command");
 		} break;
@@ -3801,12 +3846,17 @@ void submitCommandList(Context* ctx, CommandListHandle handle)
 		VG_CHECK(cmd == cmdEnd, "Incomplete command parsing");
 		BX_UNUSED(cmdEnd); // For release builds
 	}
+
+#if VG_CONFIG_COMMAND_LIST_PRESERVE_STATE
 	popState(ctx);
 	resetClip(ctx);
+#endif
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
-	bindCommandListCache(ctx, nullptr);
+	popCommandListCache(ctx);
 #endif
+
+	--ctx->m_SubmitCmdListRecursionDepth;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -4751,15 +4801,29 @@ static CommandListCache* clGetCache(Context* ctx, CommandList* cl)
 	return cache;
 }
 
-static void bindCommandListCache(Context* ctx, CommandListCache* cache)
+static void pushCommandListCache(Context* ctx, CommandListCache* cache)
 {
-	ctx->m_CommandListCache = cache;
+	VG_CHECK(ctx->m_CommandListCacheStackTop + 1 < VG_CONFIG_COMMAND_LIST_CACHE_STACK_SIZE, "Command list cache stack overflow");
+	++ctx->m_CommandListCacheStackTop;
+	ctx->m_CommandListCacheStack[ctx->m_CommandListCacheStackTop] = cache;
+}
+
+static void popCommandListCache(Context* ctx)
+{
+	VG_CHECK(ctx->m_CommandListCacheStackTop != ~0u, "Command list cache stack underflow");
+	--ctx->m_CommandListCacheStackTop;
+}
+
+static CommandListCache* getCommandListCacheStackTop(Context* ctx)
+{
+	const uint32_t top = ctx->m_CommandListCacheStackTop;
+	return top == ~0u ? nullptr : ctx->m_CommandListCacheStack[top];
 }
 
 static void beginCachedCommand(Context* ctx)
 {
-	CommandListCache* cache = ctx->m_CommandListCache;
-	VG_CHECK(cache != nullptr, "No bound CommandListCache");
+	CommandListCache* cache = getCommandListCacheStackTop(ctx);
+	VG_CHECK(cache, "No bound CommandListCache");
 
 	bx::AllocatorI* allocator = ctx->m_Allocator;
 
@@ -4776,8 +4840,9 @@ static void beginCachedCommand(Context* ctx)
 
 static void endCachedCommand(Context* ctx)
 {
-	CommandListCache* cache = ctx->m_CommandListCache;
-	VG_CHECK(cache != nullptr, "No bound CommandListCache");
+	CommandListCache* cache = getCommandListCacheStackTop(ctx);
+	VG_CHECK(cache, "No bound CommandListCache");
+
 	VG_CHECK(cache->m_NumCommands != 0, "beginCachedCommand() hasn't been called");
 
 	CachedCommand* lastCmd = &cache->m_Commands[cache->m_NumCommands - 1];
@@ -4787,8 +4852,8 @@ static void endCachedCommand(Context* ctx)
 
 static void addCachedCommand(Context* ctx, const float* pos, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
 {
-	CommandListCache* cache = ctx->m_CommandListCache;
-	VG_CHECK(cache != nullptr, "No bound CommandListCache");
+	CommandListCache* cache = getCommandListCacheStackTop(ctx);
+	VG_CHECK(cache, "No bound CommandListCache");
 
 	bx::AllocatorI* allocator = ctx->m_Allocator;
 
@@ -4852,7 +4917,11 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 	CachedCommand* nextCachedCommand = &clCache->m_Commands[0];
 
 	bool skipCmds = false;
+
+#if VG_CONFIG_COMMAND_LIST_PRESERVE_STATE
 	pushState(ctx);
+#endif
+
 	while (cmd < cmdListEnd) {
 		const CommandHeader* cmdHeader = (CommandHeader*)cmd;
 		cmd += sizeof(CommandHeader);
@@ -5063,6 +5132,12 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 		case CommandType::ResetClip: {
 			resetClip(ctx);
 		} break;
+		case CommandType::SubmitCommandList: {
+			const uint16_t cmdListID = CMD_READ(cmd, uint16_t);
+			const CommandListHandle cmdListHandle = { cmdListID };
+
+			submitCommandList(ctx, cmdListHandle);
+		} break;
 		default: {
 			VG_CHECK(false, "Unknown cached command");
 		} break;
@@ -5071,8 +5146,11 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 		VG_CHECK(cmd == cmdEnd, "Incomplete command parsing");
 		BX_UNUSED(cmdEnd); // For release builds
 	}
+
+#if VG_CONFIG_COMMAND_LIST_PRESERVE_STATE
 	popState(ctx);
 	resetClip(ctx);
+#endif
 }
 
 static void clCacheReset(Context* ctx, CommandListCache* cache)
@@ -5178,7 +5256,14 @@ static void submitCachedMesh(Context* ctx, ImagePatternHandle imgPattern, Color 
 
 static void clReset(Context* ctx, CommandList* cl)
 {
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
+	if (cl->m_Cache) {
+		clCacheReset(ctx, cl->m_Cache);
+	}
+#else
 	BX_UNUSED(ctx);
+#endif
+
 	cl->m_CommandBufferPos = 0;
 	cl->m_StringBufferPos = 0;
 	cl->m_NumImagePatterns = 0;
@@ -5589,6 +5674,12 @@ static void clTextBox(Context* ctx, CommandList* cl, const TextConfig& cfg, floa
 	CMD_WRITE(ptr, float, breakWidth);
 	CMD_WRITE(ptr, uint32_t, offset);
 	CMD_WRITE(ptr, uint32_t, len);
+}
+
+static void clSubmitCommandList(Context* ctx, CommandList* cl, CommandListHandle childList)
+{
+	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::SubmitCommandList, sizeof(uint16_t));
+	CMD_WRITE(ptr, uint16_t, childList.idx);
 }
 
 static void releaseVertexBufferDataCallback_Vec2(void* ptr, void* userData)

@@ -33,6 +33,10 @@
 #	define VG_CONFIG_UV_INT16 1
 #endif
 
+#ifndef VG_CONFIG_COMMAND_LIST_PRESERVE_STATE
+#	define VG_CONFIG_COMMAND_LIST_PRESERVE_STATE 0
+#endif
+
 #if VG_CONFIG_DEBUG
 #define VG_TRACE(_format, ...) \
 	do { \
@@ -283,6 +287,7 @@ struct ContextConfig
 	uint16_t m_MaxCommandLists;     // default: 256
 	uint32_t m_MaxVBVertices;       // default: 65536
 	uint32_t m_FontAtlasImageFlags; // default: ImageFlags::Filter_Bilinear
+	uint32_t m_MaxCommandListDepth; // default: 16
 };
 
 struct TextConfig
