@@ -1,11 +1,6 @@
 // TODO:
 // - More than 254 clip regions: Either use another view (extra parameter in createContext)
 // or draw a fullscreen quad to reset the stencil buffer to 0.
-// - Try keeping a table of function pointers which will change depending on the current
-// state of the context to avoid repeatedly checking bools. E.g. when beginCommandList() is
-// called switch to a vtable which will redirect all path/stroker calls to the cmd list. 
-// When beginClip() is called, switch to a vtable which will redirect all stroker calls to
-// be stored as clip commands.
 // - Recycle the memory of cached meshes so resetting a cached mesh is faster.
 // - Find a way to move stroker operations into separate functions (i.e. all strokePath 
 // functions differ only on the createDrawCommand_XXX() call; strokerXXX calls are the same
@@ -2479,6 +2474,14 @@ void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, fl
 	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clTextBox(ctx, cl, cfg, x, y, breakWidth, str, end);
+}
+
+void clSubmitCommandList(Context* ctx, CommandListHandle parent, CommandListHandle child)
+{
+	VG_CHECK(isValid(handle), "Invalid command list handle");
+	CommandList* cl = &ctx->m_CmdLists[parent.idx];
+
+	clSubmitCommandList(ctx, cl, child);
 }
 
 // Context

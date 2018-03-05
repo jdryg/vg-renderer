@@ -475,6 +475,8 @@ void clTransformMult(Context* ctx, CommandListHandle handle, const float* mtx, b
 void clText(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end);
 
+void clSubmitCommandList(Context* ctx, CommandListHandle parent, CommandListHandle child);
+
 //////////////////////////////////////////////////////////////////////////
 // Helpers
 //
