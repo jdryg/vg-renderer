@@ -426,13 +426,11 @@ bool isImageValid(Context* ctx, ImageHandle img);
 // Command lists
 CommandListHandle createCommandList(Context* ctx, uint32_t flags);
 void destroyCommandList(Context* ctx, CommandListHandle handle);
-void submitCommandList(Context* ctx, CommandListHandle handle);
-
 void resetCommandList(Context* ctx, CommandListHandle handle);
+void submitCommandList(Context* ctx, CommandListHandle handle);
 void beginCommandList(Context* ctx, CommandListHandle handle);
 void endCommandList(Context* ctx);
 
-void clReset(Context* ctx, CommandListHandle handle);
 void clBeginPath(Context* ctx, CommandListHandle handle);
 void clMoveTo(Context* ctx, CommandListHandle handle, float x, float y);
 void clLineTo(Context* ctx, CommandListHandle handle, float x, float y);
