@@ -4436,6 +4436,10 @@ static VertexBuffer* allocVertexBuffer(Context* ctx)
 
 static uint16_t allocIndexBuffer(Context* ctx)
 {
+#if BX_CONFIG_SUPPORTS_THREADING
+	bx::MutexScope ms(*ctx->m_DataPoolMutex);
+#endif
+
 	uint16_t ibID = UINT16_MAX;
 	const uint32_t numIB = ctx->m_NumIndexBuffers;
 	for (uint32_t i = 0; i < numIB; ++i) {
