@@ -5391,7 +5391,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 	bool skipCmds = false;
 
 #if VG_CONFIG_COMMAND_LIST_PRESERVE_STATE
-	pushState(ctx);
+	ctxPushState(ctx);
 #endif
 
 	while (cmd < cmdListEnd) {
@@ -5481,34 +5481,34 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			cmd += sizeof(uint16_t) * numIndices;
 			const uint16_t imgHandle = CMD_READ(cmd, uint16_t);
 
-			indexedTriList(ctx, positions, numUVs ? uv : nullptr, numVertices, colors, numColors, indices, numIndices, { imgHandle });
+			ctxIndexedTriList(ctx, positions, numUVs ? uv : nullptr, numVertices, colors, numColors, indices, numIndices, { imgHandle });
 		} break;
 		case CommandType::CreateLinearGradient: {
 			const float* params = (float*)cmd;
 			cmd += sizeof(float) * 4;
 			const Color* colors = (Color*)cmd;
 			cmd += sizeof(Color) * 2;
-			createLinearGradient(ctx, params[0], params[1], params[2], params[3], colors[0], colors[1]);
+			ctxCreateLinearGradient(ctx, params[0], params[1], params[2], params[3], colors[0], colors[1]);
 		} break;
 		case CommandType::CreateBoxGradient: {
 			const float* params = (float*)cmd;
 			cmd += sizeof(float) * 6;
 			const Color* colors = (Color*)cmd;
 			cmd += sizeof(Color) * 2;
-			createBoxGradient(ctx, params[0], params[1], params[2], params[3], params[4], params[5], colors[0], colors[1]);
+			ctxCreateBoxGradient(ctx, params[0], params[1], params[2], params[3], params[4], params[5], colors[0], colors[1]);
 		} break;
 		case CommandType::CreateRadialGradient: {
 			const float* params = (float*)cmd;
 			cmd += sizeof(float) * 4;
 			const Color* colors = (Color*)cmd;
 			cmd += sizeof(Color) * 2;
-			createRadialGradient(ctx, params[0], params[1], params[2], params[3], colors[0], colors[1]);
+			ctxCreateRadialGradient(ctx, params[0], params[1], params[2], params[3], colors[0], colors[1]);
 		} break;
 		case CommandType::CreateImagePattern: {
 			const float* params = (float*)cmd;
 			cmd += sizeof(float) * 5;
 			const ImageHandle img = CMD_READ(cmd, ImageHandle);
-			createImagePattern(ctx, params[0], params[1], params[2], params[3], params[4], img);
+			ctxCreateImagePattern(ctx, params[0], params[1], params[2], params[3], params[4], img);
 		} break;
 		case CommandType::Text: {
 			const TextConfig* txtCfg = (TextConfig*)cmd;
@@ -5522,7 +5522,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 
 			const char* str = stringBuffer + stringOffset;
 			const char* end = str + stringLen;
-			text(ctx, *txtCfg, coords[0], coords[1], str, end);
+			ctxText(ctx, *txtCfg, coords[0], coords[1], str, end);
 		} break;
 		case CommandType::TextBox: {
 			const TextConfig* txtCfg = (TextConfig*)cmd;
@@ -5536,16 +5536,16 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 
 			const char* str = stringBuffer + stringOffset;
 			const char* end = str + stringLen;
-			textBox(ctx, *txtCfg, coords[0], coords[1], coords[2], str, end);
+			ctxTextBox(ctx, *txtCfg, coords[0], coords[1], coords[2], str, end);
 		} break;
 		case CommandType::ResetScissor: {
-			resetScissor(ctx);
+			ctxResetScissor(ctx);
 			skipCmds = false;
 		} break;
 		case CommandType::SetScissor: {
 			const float* rect = (float*)cmd;
 			cmd += sizeof(float) * 4;
-			setScissor(ctx, rect[0], rect[1], rect[2], rect[3]);
+			ctxSetScissor(ctx, rect[0], rect[1], rect[2], rect[3]);
 
 			if (cullCmds) {
 				skipCmds = (rect[2] < 1.0f) || (rect[3] < 1.0f);
@@ -5555,16 +5555,16 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			const float* rect = (float*)cmd;
 			cmd += sizeof(float) * 4;
 
-			const bool zeroRect = !intersectScissor(ctx, rect[0], rect[1], rect[2], rect[3]);
+			const bool zeroRect = !ctxIntersectScissor(ctx, rect[0], rect[1], rect[2], rect[3]);
 			if (cullCmds) {
 				skipCmds = zeroRect;
 			}
 		} break;
 		case CommandType::PushState: {
-			pushState(ctx);
+			ctxPushState(ctx);
 		} break;
 		case CommandType::PopState: {
-			popState(ctx);
+			ctxPopState(ctx);
 			if (cullCmds) {
 				const State* state = getState(ctx);
 				const float* scissorRect = &state->m_ScissorRect[0];
@@ -5572,43 +5572,43 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			}
 		} break;
 		case CommandType::TransformIdentity: {
-			transformIdentity(ctx);
+			ctxTransformIdentity(ctx);
 		} break;
 		case CommandType::TransformRotate: {
 			const float ang_rad = CMD_READ(cmd, float);
-			transformRotate(ctx, ang_rad);
+			ctxTransformRotate(ctx, ang_rad);
 		} break;
 		case CommandType::TransformTranslate: {
 			const float* coords = (float*)cmd;
 			cmd += sizeof(float) * 2;
-			transformTranslate(ctx, coords[0], coords[1]);
+			ctxTransformTranslate(ctx, coords[0], coords[1]);
 		} break;
 		case CommandType::TransformScale: {
 			const float* coords = (float*)cmd;
 			cmd += sizeof(float) * 2;
-			transformScale(ctx, coords[0], coords[1]);
+			ctxTransformScale(ctx, coords[0], coords[1]);
 		} break;
 		case CommandType::TransformMult: {
 			const float* mtx = (float*)cmd;
 			cmd += sizeof(float) * 6;
 			const bool pre = CMD_READ(cmd, bool);
-			transformMult(ctx, mtx, pre);
+			ctxTransformMult(ctx, mtx, pre);
 		} break;
 		case CommandType::BeginClip: {
 			const ClipRule::Enum rule = CMD_READ(cmd, ClipRule::Enum);
-			beginClip(ctx, rule);
+			ctxBeginClip(ctx, rule);
 		} break;
 		case CommandType::EndClip: {
-			endClip(ctx);
+			ctxEndClip(ctx);
 		} break;
 		case CommandType::ResetClip: {
-			resetClip(ctx);
+			ctxResetClip(ctx);
 		} break;
 		case CommandType::SubmitCommandList: {
 			const uint16_t cmdListID = CMD_READ(cmd, uint16_t);
 			const CommandListHandle cmdListHandle = { cmdListID };
 
-			submitCommandList(ctx, cmdListHandle);
+			ctxSubmitCommandList(ctx, cmdListHandle);
 		} break;
 		default: {
 			VG_CHECK(false, "Unknown cached command");
@@ -5620,8 +5620,8 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 	}
 
 #if VG_CONFIG_COMMAND_LIST_PRESERVE_STATE
-	popState(ctx);
-	resetClip(ctx);
+	ctxPopState(ctx);
+	ctxResetClip(ctx);
 #endif
 }
 
