@@ -2478,7 +2478,7 @@ void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, fl
 
 void clSubmitCommandList(Context* ctx, CommandListHandle parent, CommandListHandle child)
 {
-	VG_CHECK(isValid(handle), "Invalid command list handle");
+	VG_CHECK(isValid(parent), "Invalid command list handle");
 	CommandList* cl = &ctx->m_CmdLists[parent.idx];
 
 	clSubmitCommandList(ctx, cl, child);
