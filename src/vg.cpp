@@ -1234,8 +1234,8 @@ void endFrame(Context* ctx)
 
 			int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
 			bgfx::setState(0
-				| BGFX_STATE_ALPHA_WRITE 
-				| BGFX_STATE_RGB_WRITE 
+				| BGFX_STATE_WRITE_A
+				| BGFX_STATE_WRITE_RGB
 				| BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
 			bgfx::setStencil(stencilState);
 
@@ -1251,8 +1251,8 @@ void endFrame(Context* ctx)
 
 			int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
 			bgfx::setState(0
-				| BGFX_STATE_ALPHA_WRITE
-				| BGFX_STATE_RGB_WRITE
+				| BGFX_STATE_WRITE_A
+				| BGFX_STATE_WRITE_RGB
 				| BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
 			bgfx::setStencil(stencilState);
 
@@ -1269,8 +1269,8 @@ void endFrame(Context* ctx)
 
 			int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
 			bgfx::setState(0
-				| BGFX_STATE_ALPHA_WRITE
-				| BGFX_STATE_RGB_WRITE
+				| BGFX_STATE_WRITE_A
+				| BGFX_STATE_WRITE_RGB
 				| BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
 			bgfx::setStencil(stencilState);
 
