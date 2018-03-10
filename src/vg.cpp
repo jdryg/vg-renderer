@@ -280,6 +280,7 @@ struct CommandList
 	CommandListCache* m_Cache;
 };
 
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 struct ContextVTable
 {
 	void(*beginPath)(Context* ctx);
@@ -324,10 +325,13 @@ struct ContextVTable
 	void(*indexedTriList)(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* color, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 	void(*submitCommandList)(Context* ctx, CommandListHandle handle);
 };
+#endif // VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 
 struct Context
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	const ContextVTable* m_VTable;
+#endif
 
 	ContextConfig m_Config;
 	bx::AllocatorI* m_Allocator;
@@ -340,7 +344,9 @@ struct Context
 
 	Stroker* m_Stroker;
 	Path* m_Path;
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	CommandList* m_ActiveCommandList;
+#endif
 
 	VertexBuffer* m_VertexBuffers;
 	GPUVertexBuffer* m_GPUVertexBuffers;
@@ -573,6 +579,7 @@ static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, fl
 static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle);
 
 // Active command list wrappers
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 static void aclBeginPath(Context* ctx);
 static void aclMoveTo(Context* ctx, float x, float y);
 static void aclLineTo(Context* ctx, float x, float y);
@@ -702,6 +709,7 @@ const ContextVTable g_ActiveCmdListVTable = {
 	aclIndexedTriList,
 	aclSubmitCommandList
 };
+#endif
 
 #define CMD_WRITE(ptr, type, value) *(type*)(ptr) = (value); ptr += sizeof(type)
 #define CMD_READ(ptr, type) *(type*)(ptr); ptr += sizeof(type)
@@ -763,7 +771,10 @@ Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const Context
 	ctx->m_CmdLists = (CommandList*)mem;
 	mem += alignSize(sizeof(CommandList) * cfg->m_MaxCommandLists, alignment);
 
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable = &g_CtxVTable;
+#endif
+
 	bx::memCopy(&ctx->m_Config, cfg, sizeof(ContextConfig));
 	ctx->m_Allocator = allocator;
 	ctx->m_ViewID = viewID;
@@ -1029,15 +1040,17 @@ void destroyContext(Context* ctx)
 
 void beginFrame(Context* ctx, uint16_t canvasWidth, uint16_t canvasHeight, float devicePixelRatio)
 {
-	ctx->m_VTable = &g_CtxVTable;
-
 	ctx->m_CanvasWidth = canvasWidth;
 	ctx->m_CanvasHeight = canvasHeight;
 	ctx->m_DevicePixelRatio = devicePixelRatio;
 	ctx->m_TesselationTolerance = 0.25f / devicePixelRatio;
 	ctx->m_FringeWidth = 1.0f / devicePixelRatio;
-	ctx->m_ActiveCommandList = nullptr;
 	ctx->m_SubmitCmdListRecursionDepth = 0;
+
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
+	ctx->m_VTable = &g_CtxVTable;
+	ctx->m_ActiveCommandList = nullptr;
+#endif
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
 	ctx->m_CmdListCacheStackTop = ~0u;
@@ -1319,207 +1332,371 @@ void endFrame(Context* ctx)
 
 void beginPath(Context* ctx)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->beginPath(ctx);
+#else
+	ctxBeginPath(ctx);
+#endif
 }
 
 void moveTo(Context* ctx, float x, float y)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->moveTo(ctx, x, y);
+#else
+	ctxMoveTo(ctx, x, y);
+#endif
 }
 
 void lineTo(Context* ctx, float x, float y)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->lineTo(ctx, x, y);
+#else
+	ctxLineTo(ctx, x, y);
+#endif
 }
 
 void cubicTo(Context* ctx, float c1x, float c1y, float c2x, float c2y, float x, float y)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->cubicTo(ctx, c1x, c1y, c2x, c2y, x, y);
+#else
+	ctxCubicTo(ctx, c1x, c1y, c2x, c2y, x, y);
+#endif
 }
 
 void quadraticTo(Context* ctx, float cx, float cy, float x, float y)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->quadraticTo(ctx, cx, cy, x, y);
+#else
+	ctxQuadraticTo(ctx, cx, cy, x, y);
+#endif
 }
 
 void arc(Context* ctx, float cx, float cy, float r, float a0, float a1, Winding::Enum dir)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->arc(ctx, cx, cy, r, a0, a1, dir);
+#else
+	ctxArc(ctx, cx, cy, r, a0, a1, dir);
+#endif
 }
 
 void arcTo(Context* ctx, float x1, float y1, float x2, float y2, float r)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->arcTo(ctx, x1, y1, x2, y2, r);
+#else
+	ctxArcTo(ctx, x1, y1, x2, y2, r);
+#endif
 }
 
 void rect(Context* ctx, float x, float y, float w, float h)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->rect(ctx, x, y, w, h);
+#else
+	ctxRect(ctx, x, y, w, h);
+#endif
 }
 
 void roundedRect(Context* ctx, float x, float y, float w, float h, float r)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->roundedRect(ctx, x, y, w, h, r);
+#else
+	ctxRoundedRect(ctx, x, y, w, h, r);
+#endif
 }
 
 void roundedRectVarying(Context* ctx, float x, float y, float w, float h, float rtl, float rtr, float rbr, float rbl)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->roundedRectVarying(ctx, x, y, w, h, rtl, rtr, rbr, rbl);
+#else
+	ctxRoundedRectVarying(ctx, x, y, w, h, rtl, rtr, rbr, rbl);
+#endif
 }
 
 void circle(Context* ctx, float cx, float cy, float radius)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->circle(ctx, cx, cy, radius);
+#else
+	ctxCircle(ctx, cx, cy, radius);
+#endif
 }
 
 void ellipse(Context* ctx, float cx, float cy, float rx, float ry)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->ellipse(ctx, cx, cy, rx, ry);
+#else
+	ctxEllipse(ctx, cx, cy, rx, ry);
+#endif
 }
 
 void polyline(Context* ctx, const float* coords, uint32_t numPoints)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->polyline(ctx, coords, numPoints);
+#else
+	ctxPolyline(ctx, coords, numPoints);
+#endif
 }
 
 void closePath(Context* ctx)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->closePath(ctx);
+#else
+	ctxClosePath(ctx);
+#endif
 }
 
 void fillPath(Context* ctx, Color color, uint32_t flags)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->fillPathColor(ctx, color, flags);
+#else
+	ctxFillPathColor(ctx, color, flags);
+#endif
 }
 
 void fillPath(Context* ctx, GradientHandle gradientHandle, uint32_t flags)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->fillPathGradient(ctx, gradientHandle, flags);
+#else
+	ctxFillPathGradient(ctx, gradientHandle, flags);
+#endif
 }
 
 void fillPath(Context* ctx, ImagePatternHandle imgPatternHandle, Color color, uint32_t flags)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->fillPathImagePattern(ctx, imgPatternHandle, color, flags);
+#else
+	ctxFillPathImagePattern(ctx, imgPatternHandle, color, flags);
+#endif
 }
 
 void strokePath(Context* ctx, Color color, float width, uint32_t flags)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->strokePathColor(ctx, color, width, flags);
+#else
+	ctxStrokePathColor(ctx, color, width, flags);
+#endif
 }
 
 void strokePath(Context* ctx, GradientHandle gradientHandle, float width, uint32_t flags)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->strokePathGradient(ctx, gradientHandle, width, flags);
+#else
+	ctxStrokePathGradient(ctx, gradientHandle, width, flags);
+#endif
 }
 
 void strokePath(Context* ctx, ImagePatternHandle imgPatternHandle, Color color, float width, uint32_t flags)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->strokePathImagePattern(ctx, imgPatternHandle, color, width, flags);
+#else
+	ctxStrokePathImagePattern(ctx, imgPatternHandle, color, width, flags);
+#endif
 }
 
 void beginClip(Context* ctx, ClipRule::Enum rule)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->beginClip(ctx, rule);
+#else
+	ctxBeginClip(ctx, rule);
+#endif
 }
 
 void endClip(Context* ctx)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->endClip(ctx);
+#else
+	ctxEndClip(ctx);
+#endif
 }
 
 void resetClip(Context* ctx)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->resetClip(ctx);
+#else
+	ctxResetClip(ctx);
+#endif
 }
 
 GradientHandle createLinearGradient(Context* ctx, float sx, float sy, float ex, float ey, Color icol, Color ocol)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	return ctx->m_VTable->createLinearGradient(ctx, sx, sy, ex, ey, icol, ocol);
+#else
+	return ctxCreateLinearGradient(ctx, sx, sy, ex, ey, icol, ocol);
+#endif
 }
 
 GradientHandle createBoxGradient(Context* ctx, float x, float y, float w, float h, float r, float f, Color icol, Color ocol)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	return ctx->m_VTable->createBoxGradient(ctx, x, y, w, h, r, f, icol, ocol);
+#else
+	return ctxCreateBoxGradient(ctx, x, y, w, h, r, f, icol, ocol);
+#endif
 }
 
 GradientHandle createRadialGradient(Context* ctx, float cx, float cy, float inr, float outr, Color icol, Color ocol)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	return ctx->m_VTable->createRadialGradient(ctx, cx, cy, inr, outr, icol, ocol);
+#else
+	return ctxCreateRadialGradient(ctx, cx, cy, inr, outr, icol, ocol);
+#endif
 }
 
 ImagePatternHandle createImagePattern(Context* ctx, float cx, float cy, float w, float h, float angle, ImageHandle image)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	return ctx->m_VTable->createImagePattern(ctx, cx, cy, w, h, angle, image);
+#else
+	return ctxCreateImagePattern(ctx, cx, cy, w, h, angle, image);
+#endif
 }
 
 void pushState(Context* ctx)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->pushState(ctx);
+#else
+	ctxPushState(ctx);
+#endif
 }
 
 void popState(Context* ctx)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->popState(ctx);
+#else
+	ctxPopState(ctx);
+#endif
 }
 
 void resetScissor(Context* ctx)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->resetScissor(ctx);
+#else
+	ctxResetScissor(ctx);
+#endif
 }
 
 void setScissor(Context* ctx, float x, float y, float w, float h)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->setScissor(ctx, x, y, w, h);
+#else
+	ctxSetScissor(ctx, x, y, w, h);
+#endif
 }
 
 bool intersectScissor(Context* ctx, float x, float y, float w, float h)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	return ctx->m_VTable->intersectScissor(ctx, x, y, w, h);
+#else
+	return ctxIntersectScissor(ctx, x, y, w, h);
+#endif
 }
 
 void transformIdentity(Context* ctx)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->transformIdentity(ctx);
+#else
+	ctxTransformIdentity(ctx);
+#endif
 }
 
 void transformScale(Context* ctx, float x, float y)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->transformScale(ctx, x, y);
+#else
+	ctxTransformScale(ctx, x, y);
+#endif
 }
 
 void transformTranslate(Context* ctx, float x, float y)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->transformTranslate(ctx, x, y);
+#else
+	ctxTransformTranslate(ctx, x, y);
+#endif
 }
 
 void transformRotate(Context* ctx, float ang_rad)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->transformRotate(ctx, ang_rad);
+#else
+	ctxTransformRotate(ctx, ang_rad);
+#endif
 }
 
 void transformMult(Context* ctx, const float* mtx, bool pre)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->transformMult(ctx, mtx, pre);
+#else
+	ctxTransformMult(ctx, mtx, pre);
+#endif
 }
 
 void indexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->indexedTriList(ctx, pos, uv, numVertices, colors, numColors, indices, numIndices, img);
+#else
+	ctxIndexedTriList(ctx, pos, uv, numVertices, colors, numColors, indices, numIndices, img);
+#endif
 }
 
 void text(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->text(ctx, cfg, x, y, str, end);
+#else
+	ctxText(ctx, cfg, x, y, str, end);
+#endif
 }
 
 void textBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->textBox(ctx, cfg, x, y, breakWidth, str, end);
+#else
+	ctxTextBox(ctx, cfg, x, y, breakWidth, str, end);
+#endif
 }
 
 void submitCommandList(Context* ctx, CommandListHandle handle)
 {
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable->submitCommandList(ctx, handle);
+#else
+	ctxSubmitCommandList(ctx, handle);
+#endif
 }
 
 void setGlobalAlpha(Context* ctx, float alpha)
@@ -2131,6 +2308,7 @@ void resetCommandList(Context* ctx, CommandListHandle handle)
 	clReset(ctx, cl);
 }
 
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 void beginCommandList(Context* ctx, CommandListHandle handle)
 {
 	VG_CHECK(ctx->m_ActiveCommandList == nullptr, "Cannot call beginCommandList() while inside a beginCommandList()/endCommandList() block");
@@ -2149,6 +2327,7 @@ void endCommandList(Context* ctx)
 
 	ctx->m_VTable = &g_CtxVTable;
 }
+#endif
 
 void clBeginPath(Context* ctx, CommandListHandle handle)
 {
@@ -4081,6 +4260,7 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 	--ctx->m_SubmitCmdListRecursionDepth;
 }
 
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 // Active command list
 static void aclBeginPath(Context* ctx)
 {
@@ -4328,6 +4508,7 @@ static void aclSubmitCommandList(Context* ctx, CommandListHandle handle)
 	VG_CHECK(ctx->m_ActiveCommandList, "Invalid Context state");
 	clSubmitCommandList(ctx, ctx->m_ActiveCommandList, handle);
 }
+#endif // VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 
 // Internal
 static void getWhitePixelUV(Context* ctx, uv_t* uv)

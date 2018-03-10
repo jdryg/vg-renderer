@@ -33,8 +33,20 @@
 #	define VG_CONFIG_UV_INT16 1
 #endif
 
+// If set to 1, submitCommandList() calls pustState()/popState() and resetClip() before and after
+// executing the commands. Otherwise, the state produced by the command list will affect the global
+// state after the execution of the commands.
 #ifndef VG_CONFIG_COMMAND_LIST_PRESERVE_STATE
 #	define VG_CONFIG_COMMAND_LIST_PRESERVE_STATE 0
+#endif
+
+// NOTE: beginCommandList()/endCommandList() blocks require an indirect jump for each function/path command,
+// because they change the Context' vtable. If this is set to 0, all functions call their implementation 
+// directly (i.e. there will probably still be a jump there but it'll be unconditional/direct).
+// If you care about perf so much that an indirect unconditional jump is a problem for you, or if you aren't
+// planning on using command lists at all, set this to 0 and use only clXXX functions to build command lists. 
+#ifndef VG_CONFIG_COMMAND_LIST_BEGIN_END_API
+#	define VG_CONFIG_COMMAND_LIST_BEGIN_END_API 1
 #endif
 
 #if VG_CONFIG_DEBUG
@@ -428,8 +440,10 @@ CommandListHandle createCommandList(Context* ctx, uint32_t flags);
 void destroyCommandList(Context* ctx, CommandListHandle handle);
 void resetCommandList(Context* ctx, CommandListHandle handle);
 void submitCommandList(Context* ctx, CommandListHandle handle);
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 void beginCommandList(Context* ctx, CommandListHandle handle);
 void endCommandList(Context* ctx);
+#endif
 
 void clBeginPath(Context* ctx, CommandListHandle handle);
 void clMoveTo(Context* ctx, CommandListHandle handle, float x, float y);
