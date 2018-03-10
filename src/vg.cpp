@@ -1766,9 +1766,6 @@ bool setFallbackFont(Context* ctx, FontHandle base, FontHandle fallback)
 float measureText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end, float* bounds)
 {
 	// nvgTextBounds()
-	// TODO: fonsTextBounds() calls fons__getGlyph() which in turn bakes the glyph into the atlas.
-	// This shouldn't happen at this point. Measuring text should do the absolute minimum work to 
-	// calculate text size.
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
@@ -1927,7 +1924,7 @@ int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const c
 	unsigned int pcodepoint = 0;
 
 	FONStextIter iter, prevIter;
-	fonsTextIterInit(fons, &iter, 0, 0, str, end);
+	fonsTextIterInit(fons, &iter, 0, 0, str, end, FONS_GLYPH_BITMAP_OPTIONAL);
 	prevIter = iter;
 
 	FONSquad q;
@@ -2129,7 +2126,7 @@ int textGlyphPositions(Context* ctx, const TextConfig& cfg, float x, float y, co
 	fonsSetFont(fons, cfg.m_FontHandle.idx);
 
 	FONStextIter iter, prevIter;
-	fonsTextIterInit(fons, &iter, x * scale, y * scale, str, end);
+	fonsTextIterInit(fons, &iter, x * scale, y * scale, str, end, FONS_GLYPH_BITMAP_OPTIONAL);
 	prevIter = iter;
 
 	FONSquad q;
