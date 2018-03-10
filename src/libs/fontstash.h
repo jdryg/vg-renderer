@@ -1228,7 +1228,7 @@ static void fons__blur(FONScontext* stash, unsigned char* dst, int w, int h, int
 		return;
 	// Calculate the alpha such that 90% of the kernel is within the radius. (Kernel extends to infinity)
 	sigma = (float)blur * 0.57735f; // 1 / sqrt(3)
-	alpha = (int)((1<<APREC) * (1.0f - expf(-2.3f / (sigma+1.0f))));
+	alpha = (int)((1<<APREC) * (1.0f - bx::exp(-2.3f / (sigma+1.0f))));
 	fons__blurRows(dst, w, h, dstStride, alpha);
 	fons__blurCols(dst, w, h, dstStride, alpha);
 	fons__blurRows(dst, w, h, dstStride, alpha);

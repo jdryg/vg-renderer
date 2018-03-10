@@ -3772,6 +3772,7 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 	const uint16_t firstImagePatternID = (uint16_t)ctx->m_NextImagePatternID;
 	VG_CHECK(firstGradientID + numGradients <= ctx->m_Config.m_MaxGradients, "Not enough free gradients for command list. Increase ContextConfig::m_MaxGradients");
 	VG_CHECK(firstImagePatternID + numImagePatterns <= ctx->m_Config.m_MaxImagePatterns, "Not enough free image patterns for command list. Increase ContextConfig::m_MaxImagePatterns");
+	BX_UNUSED(numGradients, numImagePatterns); // For Release builds
 
 	uint8_t* cmd = cl->m_CommandBuffer;
 	const uint8_t* cmdListEnd = cl->m_CommandBuffer + cl->m_CommandBufferPos;
@@ -5366,6 +5367,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 	const uint16_t firstImagePatternID = (uint16_t)ctx->m_NextImagePatternID;
 	VG_CHECK(firstGradientID + numGradients <= ctx->m_Config.m_MaxGradients, "Not enough free gradients for command list. Increase ContextConfig::m_MaxGradients");
 	VG_CHECK(firstImagePatternID + numImagePatterns <= ctx->m_Config.m_MaxImagePatterns, "Not enough free image patterns for command list. Increase ContextConfig::m_MaxImagePatterns");
+	BX_UNUSED(numGradients, numImagePatterns); // For Release builds.
 
 	uint8_t* cmd = cl->m_CommandBuffer;
 	const uint8_t* cmdListEnd = cl->m_CommandBuffer + cl->m_CommandBufferPos;
@@ -5404,6 +5406,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 		case CommandType::FillPathColor: {
 			const uint32_t flags = CMD_READ(cmd, uint32_t);
 			const Color color = CMD_READ(cmd, Color);
+			BX_UNUSED(flags);
 			submitCachedMesh(ctx, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
@@ -5411,6 +5414,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			const uint32_t flags = CMD_READ(cmd, uint32_t);
 			const uint16_t gradientHandle = CMD_READ(cmd, uint16_t);
 			const uint16_t gradientFlags = CMD_READ(cmd, uint16_t);
+			BX_UNUSED(flags);
 
 			const GradientHandle gradient = { isLocal(gradientFlags) ? (uint16_t)(gradientHandle + firstGradientID) : gradientHandle, 0 };
 			submitCachedMesh(ctx, gradient, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
@@ -5421,6 +5425,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			const Color color = CMD_READ(cmd, Color);
 			const uint16_t imgPatternHandle = CMD_READ(cmd, uint16_t);
 			const uint16_t imgPatternFlags = CMD_READ(cmd, uint16_t);
+			BX_UNUSED(flags);
 
 			const ImagePatternHandle imgPattern = { isLocal(imgPatternFlags) ? (uint16_t)(imgPatternHandle + firstImagePatternID) : imgPatternHandle, 0 };
 			submitCachedMesh(ctx, imgPattern, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
@@ -5430,6 +5435,8 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			const float width = CMD_READ(cmd, float);
 			const uint32_t flags = CMD_READ(cmd, uint32_t);
 			const Color color = CMD_READ(cmd, Color);
+			BX_UNUSED(flags, width);
+
 			submitCachedMesh(ctx, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
@@ -5438,6 +5445,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			const uint32_t flags = CMD_READ(cmd, uint32_t);
 			const uint16_t gradientHandle = CMD_READ(cmd, uint16_t);
 			const uint16_t gradientFlags = CMD_READ(cmd, uint16_t);
+			BX_UNUSED(flags, width);
 
 			const GradientHandle gradient = { isLocal(gradientFlags) ? (uint16_t)(gradientHandle + firstGradientID) : gradientHandle, 0 };
 			submitCachedMesh(ctx, gradient, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
@@ -5449,6 +5457,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			const Color color = CMD_READ(cmd, Color);
 			const uint16_t imgPatternHandle = CMD_READ(cmd, uint16_t);
 			const uint16_t imgPatternFlags = CMD_READ(cmd, uint16_t);
+			BX_UNUSED(flags, width);
 
 			const ImagePatternHandle imgPattern = { isLocal(imgPatternFlags) ? (uint16_t)(imgPatternHandle + firstImagePatternID) : imgPatternHandle, 0 };
 			submitCachedMesh(ctx, imgPattern, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);

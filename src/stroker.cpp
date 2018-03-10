@@ -103,6 +103,9 @@ struct Stroker
 static void resetGeometry(Stroker* stroker);
 static void expandIB(Stroker* stroker, uint32_t n);
 static void expandVB(Stroker* stroker, uint32_t n);
+static void addPos(Stroker* stroker, const Vec2* srcPos, uint32_t n);
+static void addPosColor(Stroker* stroker, const Vec2* srcPos, const uint32_t* srcColor, uint32_t n);
+static void addIndices(Stroker* stroker, const uint16_t* src, uint32_t n);
 
 template<bool _Closed, LineCap::Enum _LineCap, LineJoin::Enum _LineJoin>
 static void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numPathVertices, float strokeWidth);
