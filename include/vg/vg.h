@@ -50,6 +50,8 @@
 #endif
 
 #if VG_CONFIG_DEBUG
+#include <bx/debug.h>
+
 #define VG_TRACE(_format, ...) \
 	do { \
 		bx::debugPrintf(BX_FILE_LINE_LITERAL "vg " _format "\n", ##__VA_ARGS__); \
