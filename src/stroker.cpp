@@ -103,9 +103,6 @@ struct Stroker
 static void resetGeometry(Stroker* stroker);
 static void expandIB(Stroker* stroker, uint32_t n);
 static void expandVB(Stroker* stroker, uint32_t n);
-static void addPos(Stroker* stroker, const Vec2* srcPos, uint32_t n);
-static void addPosColor(Stroker* stroker, const Vec2* srcPos, const uint32_t* srcColor, uint32_t n);
-static void addIndices(Stroker* stroker, const uint16_t* src, uint32_t n);
 
 template<bool _Closed, LineCap::Enum _LineCap, LineJoin::Enum _LineJoin>
 static void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numPathVertices, float strokeWidth);
@@ -113,6 +110,13 @@ template<bool _Closed, LineCap::Enum _LineCap, LineJoin::Enum _LineJoin>
 static void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numPathVertices, float strokeWidth, Color color);
 template<LineCap::Enum _LineCap, LineJoin::Enum _LineJoin>
 static void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numPathVertices, Color color, bool closed);
+
+template<uint32_t N>
+static void addPos(Stroker* stroker, const Vec2* srcPos);
+template<uint32_t N>
+static void addPosColor(Stroker* stroker, const Vec2* srcPos, const uint32_t* srcColor);
+template<uint32_t N>
+static void addIndices(Stroker* stroker, const uint16_t* src);
 
 Stroker* createStroker(bx::AllocatorI* allocator)
 {
@@ -770,7 +774,7 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 			};
 
 			expandVB(stroker, 2);
-			addPos(stroker, &p[0], 2);
+			addPos<2>(stroker, &p[0]);
 
 			prevSegmentLeftID = 0;
 			prevSegmentRightID = 1;
@@ -784,7 +788,7 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 			};
 
 			expandVB(stroker, 2);
-			addPos(stroker, &p[0], 2);
+			addPos<2>(stroker, &p[0]);
 
 			prevSegmentLeftID = 0;
 			prevSegmentRightID = 1;
@@ -799,13 +803,13 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 
 				Vec2 p = { p0.x + ca * hsw, p0.y + sa * hsw };
 
-				addPos(stroker, &p, 1);
+				addPos<1>(stroker, &p);
 			}
 
 			expandIB(stroker, (numPointsHalfCircle - 2) * 3);
 			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
 				uint16_t id[3] = { 0, (uint16_t)(i + 1), (uint16_t)(i + 2) };
-				addIndices(stroker, &id[0], 3);
+				addIndices<3>(stroker, &id[0]);
 			}
 
 			prevSegmentLeftID = 0;
@@ -842,7 +846,7 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 				};
 
 				expandVB(stroker, 2);
-				addPos(stroker, &p[0], 2);
+				addPos<2>(stroker, &p[0]);
 
 				if (prevSegmentLeftID != 0xFFFF) {
 					VG_CHECK(prevSegmentRightID != 0xFFFF, "Invalid previous segment");
@@ -853,10 +857,10 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 					};
 
 					expandIB(stroker, 6);
-					addIndices(stroker, &id[0], 6);
+					addIndices<6>(stroker, &id[0]);
 				} else {
-					firstSegmentLeftID = firstVertexID; // 0
-					firstSegmentRightID = firstVertexID + 1; // 1
+					firstSegmentLeftID = firstVertexID;
+					firstSegmentRightID = firstVertexID + 1;
 				}
 
 				prevSegmentLeftID = firstVertexID;
@@ -887,7 +891,7 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 
 				uint16_t firstFanVertexID = (uint16_t)stroker->m_NumVertices;
 				expandVB(stroker, numArcPoints + 2);
-				addPos(stroker, &p[0], 2);
+				addPos<2>(stroker, &p[0]);
 				for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
 					float a = a01 + iArcPoint * arcDa;
 					float ca = bx::cos(a);
@@ -895,9 +899,9 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 
 					Vec2 p = { p1.x + hsw * ca, p1.y + hsw * sa };
 
-					addPos(stroker, &p, 1);
+					addPos<1>(stroker, &p);
 				}
-				addPos(stroker, &p[2], 1);
+				addPos<1>(stroker, &p[2]);
 
 				if (prevSegmentLeftID != 0xFFFF) {
 					VG_CHECK(prevSegmentRightID != 0xFFFF, "Invalid previous segment");
@@ -908,10 +912,10 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 					};
 
 					expandIB(stroker, 6);
-					addIndices(stroker, &id[0], 6);
+					addIndices<6>(stroker, &id[0]);
 				} else {
-					firstSegmentLeftID = firstFanVertexID; // 0
-					firstSegmentRightID = firstFanVertexID + 1; // 1
+					firstSegmentLeftID = firstFanVertexID;
+					firstSegmentRightID = firstFanVertexID + 1;
 				}
 
 				// Generate the triangle fan.
@@ -921,7 +925,7 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 					uint16_t id[3] = {
 						firstFanVertexID, (uint16_t)(idBase + 1), (uint16_t)(idBase + 2)
 					};
-					addIndices(stroker, &id[0], 3);
+					addIndices<3>(stroker, &id[0]);
 				}
 
 				prevSegmentLeftID = firstFanVertexID;
@@ -940,7 +944,7 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 				};
 
 				expandVB(stroker, 2);
-				addPos(stroker, &p[0], 2);
+				addPos<2>(stroker, &p[0]);
 
 				if (prevSegmentLeftID != 0xFFFF) {
 					VG_CHECK(prevSegmentRightID != 0xFFFF, "Invalid previous segment");
@@ -951,10 +955,10 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 					};
 
 					expandIB(stroker, 6);
-					addIndices(stroker, &id[0], 6);
+					addIndices<6>(stroker, &id[0]);
 				} else {
-					firstSegmentLeftID = firstVertexID + 1; // 1
-					firstSegmentRightID = firstVertexID; // 0
+					firstSegmentLeftID = firstVertexID + 1;
+					firstSegmentRightID = firstVertexID;
 				}
 
 				prevSegmentLeftID = firstVertexID + 1;
@@ -985,16 +989,16 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 
 				uint16_t firstFanVertexID = (uint16_t)stroker->m_NumVertices;
 				expandVB(stroker, numArcPoints + 2);
-				addPos(stroker, &p[0], 2);
+				addPos<2>(stroker, &p[0]);
 				for (uint32_t iArcPoint = 1; iArcPoint < numArcPoints; ++iArcPoint) {
 					float a = a01 + iArcPoint * arcDa;
 					float ca = bx::cos(a);
 					float sa = bx::sin(a);
 
 					Vec2 p = { p1.x + hsw * ca, p1.y + hsw * sa };
-					addPos(stroker, &p, 1);
+					addPos<1>(stroker, &p);
 				}
-				addPos(stroker, &p[2], 1);
+				addPos<1>(stroker, &p[2]);
 
 				if (prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF) {
 					uint16_t id[6] = {
@@ -1003,10 +1007,10 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 					};
 
 					expandIB(stroker, 6);
-					addIndices(stroker, &id[0], 6);
+					addIndices<6>(stroker, &id[0]);
 				} else {
-					firstSegmentLeftID = firstFanVertexID + 1; // 1
-					firstSegmentRightID = firstFanVertexID; // 0
+					firstSegmentLeftID = firstFanVertexID + 1;
+					firstSegmentRightID = firstFanVertexID;
 				}
 
 				expandIB(stroker, numArcPoints * 3);
@@ -1015,7 +1019,7 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 					uint16_t id[3] = {
 						firstFanVertexID, (uint16_t)(idBase + 2), (uint16_t)(idBase + 1)
 					};
-					addIndices(stroker, &id[0], 3);
+					addIndices<3>(stroker, &id[0]);
 				}
 
 				prevSegmentLeftID = firstFanVertexID + (uint16_t)numArcPoints + 1;
@@ -1042,7 +1046,7 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 			};
 
 			expandVB(stroker, 2);
-			addPos(stroker, &p[0], 2);
+			addPos<2>(stroker, &p[0]);
 
 			uint16_t id[6] = {
 				prevSegmentLeftID, prevSegmentRightID, (uint16_t)(curSegmentLeftID + 1),
@@ -1050,7 +1054,7 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 			};
 
 			expandIB(stroker, 6);
-			addIndices(stroker, &id[0], 6);
+			addIndices<6>(stroker, &id[0]);
 		} else if (_LineCap == LineCap::Square) {
 			const uint16_t curSegmentLeftID = (uint16_t)stroker->m_NumVertices;
 			const Vec2 l01_hsw = vec2Scale(l01, hsw);
@@ -1062,7 +1066,7 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 			};
 
 			expandVB(stroker, 2);
-			addPos(stroker, &p[0], 2);
+			addPos<2>(stroker, &p[0]);
 
 			uint16_t id[6] = {
 				prevSegmentLeftID, prevSegmentRightID, (uint16_t)(curSegmentLeftID + 1),
@@ -1070,7 +1074,7 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 			};
 
 			expandIB(stroker, 6);
-			addIndices(stroker, &id[0], 6);
+			addIndices<6>(stroker, &id[0]);
 		} else if (_LineCap == LineCap::Round) {
 			expandVB(stroker, numPointsHalfCircle);
 
@@ -1083,7 +1087,7 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 
 				Vec2 p = { p1.x + ca * hsw, p1.y + sa * hsw };
 
-				addPos(stroker, &p, 1);
+				addPos<1>(stroker, &p);
 			}
 
 			uint16_t id[6] = {
@@ -1092,13 +1096,13 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 			};
 
 			expandIB(stroker, 6 + (numPointsHalfCircle - 2) * 3);
-			addIndices(stroker, &id[0], 6);
+			addIndices<6>(stroker, &id[0]);
 			for (uint32_t i = 0; i < numPointsHalfCircle - 2; ++i) {
 				const uint16_t idBase = curSegmentLeftID + (uint16_t)i;
 				uint16_t id[3] = {
 					curSegmentLeftID, (uint16_t)(idBase + 2), (uint16_t)(idBase + 1)
 				};
-				addIndices(stroker, &id[0], 3);
+				addIndices<3>(stroker, &id[0]);
 			}
 		}
 	} else {
@@ -1109,7 +1113,7 @@ void polylineStroke(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t numP
 		};
 
 		expandIB(stroker, 6);
-		addIndices(stroker, &id[0], 6);
+		addIndices<6>(stroker, &id[0]);
 	}
 
 	mesh->m_PosBuffer = &stroker->m_PosBuffer[0].x;
@@ -1164,14 +1168,14 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 			};
 
 			expandVB(stroker, 4);
-			addPosColor(stroker, &p[0], &c0_c_c_c0[0], 4);
+			addPosColor<4>(stroker, &p[0], &c0_c_c_c0[0]);
 
 			uint16_t id[6] = {
 				0, 2, 1,
 				0, 3, 2
 			};
 			expandIB(stroker, 6);
-			addIndices(stroker, &id[0], 6);
+			addIndices<6>(stroker, &id[0]);
 
 			prevSegmentLeftAAID = 0;
 			prevSegmentLeftID = 1;
@@ -1191,14 +1195,14 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 			};
 
 			expandVB(stroker, 4);
-			addPosColor(stroker, &p[0], &c0_c_c_c0[0], 4);
+			addPosColor<4>(stroker, &p[0], &c0_c_c_c0[0]);
 
 			uint16_t id[6] = {
 				0, 2, 1,
 				0, 3, 2
 			};
 			expandIB(stroker, 6);
-			addIndices(stroker, &id[0], 6);
+			addIndices<6>(stroker, &id[0]);
 
 			prevSegmentLeftAAID = 0;
 			prevSegmentLeftID = 1;
@@ -1217,7 +1221,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 					{ p0.x + ca * hsw_aa, p0.y + sa * hsw_aa }
 				};
 
-				addPosColor(stroker, &p[0], &c0_c_c_c0[2], 2);
+				addPosColor<2>(stroker, &p[0], &c0_c_c_c0[2]);
 			}
 
 			// Generate indices for the triangle fan
@@ -1228,7 +1232,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 					(uint16_t)((i << 1) + 2),
 					(uint16_t)((i << 1) + 4)
 				};
-				addIndices(stroker, &id[0], 3);
+				addIndices<3>(stroker, &id[0]);
 			}
 
 			// Generate indices for the AA quads
@@ -1238,7 +1242,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 					idBase, (uint16_t)(idBase + 1), (uint16_t)(idBase + 3),
 					idBase, (uint16_t)(idBase + 3), (uint16_t)(idBase + 2)
 				};
-				addIndices(stroker, &id[0], 6);
+				addIndices<6>(stroker, &id[0]);
 			}
 
 			prevSegmentLeftAAID = 1;
@@ -1281,7 +1285,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 				};
 
 				expandVB(stroker, 4);
-				addPosColor(stroker, &p[0], &c0_c_c_c0[0], 4);
+				addPosColor<4>(stroker, &p[0], &c0_c_c_c0[0]);
 
 				if (prevSegmentLeftAAID != 0xFFFF) {
 					VG_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
@@ -1296,7 +1300,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 					};
 
 					expandIB(stroker, 18);
-					addIndices(stroker, &id[0], 18);
+					addIndices<18>(stroker, &id[0]);
 				} else {
 					VG_CHECK(_Closed, "Invalid previous segment");
 					firstSegmentLeftAAID = firstVertexID; // 0
@@ -1334,7 +1338,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 					innerCornerAA,
 					innerCorner
 				};
-				addPosColor(stroker, &p[0], &c0_c_c_c0[0], 2);
+				addPosColor<2>(stroker, &p[0], &c0_c_c_c0[0]);
 
 				// First arc vertex
 				{
@@ -1348,7 +1352,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 						p[0] = vec2Sub(p[0], vec2Scale(d01, (cosAngle * stroker->m_FringeWidth)));
 					}
 
-					addPosColor(stroker, &p[0], &c0_c_c_c0[2], 2);
+					addPosColor<2>(stroker, &p[0], &c0_c_c_c0[2]);
 				}
 
 				// Middle arc vertices
@@ -1362,7 +1366,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 						vec2Add(p1, vec2Scale(arcPointDir, hsw_aa))
 					};
 
-					addPosColor(stroker, &p[0], &c0_c_c_c0[2], 2);
+					addPosColor<2>(stroker, &p[0], &c0_c_c_c0[2]);
 				}
 
 				// Last arc vertex
@@ -1377,7 +1381,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 						p[0] = vec2Add(p[0], vec2Scale(d12, (cosAngle * stroker->m_FringeWidth)));
 					}
 
-					addPosColor(stroker, &p[0], &c0_c_c_c0[2], 2);
+					addPosColor<2>(stroker, &p[0], &c0_c_c_c0[2]);
 				}
 
 				if (prevSegmentLeftAAID != 0xFFFF) {
@@ -1393,7 +1397,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 					};
 
 					expandIB(stroker, 18);
-					addIndices(stroker, &id[0], 18);
+					addIndices<18>(stroker, &id[0]);
 				} else {
 					VG_CHECK(_Closed, "Invalid previous segment");
 					firstSegmentLeftAAID = firstFanVertexID; // 0
@@ -1411,7 +1415,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 						arcID, (uint16_t)(arcID + 1), (uint16_t)(arcID + 3),
 						arcID, (uint16_t)(arcID + 3), (uint16_t)(arcID + 2)
 					};
-					addIndices(stroker, &id[0], 9);
+					addIndices<9>(stroker, &id[0]);
 
 					arcID += 2;
 				}
@@ -1438,7 +1442,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 				};
 
 				expandVB(stroker, 4);
-				addPosColor(stroker, &p[0], &c0_c_c_c0[0], 4);
+				addPosColor<4>(stroker, &p[0], &c0_c_c_c0[0]);
 
 				if (prevSegmentLeftAAID != 0xFFFF) {
 					VG_CHECK(prevSegmentLeftID != 0xFFFF && prevSegmentRightID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
@@ -1453,12 +1457,12 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 					};
 
 					expandIB(stroker, 18);
-					addIndices(stroker, &id[0], 18);
+					addIndices<18>(stroker, &id[0]);
 				} else {
-					firstSegmentLeftAAID = firstFanVertexID + 3; // 3
-					firstSegmentLeftID = firstFanVertexID + 2; // 2
-					firstSegmentRightID = firstFanVertexID + 1; // 1
-					firstSegmentRightAAID = firstFanVertexID + 0; // 0
+					firstSegmentLeftAAID = firstFanVertexID + 3;
+					firstSegmentLeftID = firstFanVertexID + 2;
+					firstSegmentRightID = firstFanVertexID + 1;
+					firstSegmentRightAAID = firstFanVertexID + 0;
 				}
 
 				prevSegmentLeftAAID = firstFanVertexID + 3;
@@ -1490,7 +1494,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 					innerCornerAA,
 					innerCorner
 				};
-				addPosColor(stroker, &p[0], &c0_c_c_c0[0], 2);
+				addPosColor<2>(stroker, &p[0], &c0_c_c_c0[0]);
 
 				// First arc vertex
 				{
@@ -1504,7 +1508,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 						p[0] = vec2Sub(p[0], vec2Scale(d01, (cosAngle * stroker->m_FringeWidth)));
 					}
 
-					addPosColor(stroker, &p[0], &c0_c_c_c0[2], 2);
+					addPosColor<2>(stroker, &p[0], &c0_c_c_c0[2]);
 				}
 
 				// Middle arc vertices
@@ -1518,7 +1522,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 						vec2Add(p1, vec2Scale(arcPointDir, hsw_aa))
 					};
 
-					addPosColor(stroker, &p[0], &c0_c_c_c0[2], 2);
+					addPosColor<2>(stroker, &p[0], &c0_c_c_c0[2]);
 				}
 
 				// Last arc vertex
@@ -1533,7 +1537,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 						p[0] = vec2Add(p[0], vec2Scale(d12, (cosAngle * stroker->m_FringeWidth)));
 					}
 
-					addPosColor(stroker, &p[0], &c0_c_c_c0[2], 2);
+					addPosColor<2>(stroker, &p[0], &c0_c_c_c0[2]);
 				}
 
 				if (prevSegmentLeftAAID != 0xFFFF) {
@@ -1549,12 +1553,12 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 					};
 
 					expandIB(stroker, 18);
-					addIndices(stroker, &id[0], 18);
+					addIndices<18>(stroker, &id[0]);
 				} else {
-					firstSegmentLeftAAID = firstFanVertexID + 3; // 3
-					firstSegmentLeftID = firstFanVertexID + 2; // 2
-					firstSegmentRightID = firstFanVertexID + 1; // 1
-					firstSegmentRightAAID = firstFanVertexID + 0; // 0
+					firstSegmentLeftAAID = firstFanVertexID + 3;
+					firstSegmentLeftID = firstFanVertexID + 2;
+					firstSegmentRightID = firstFanVertexID + 1;
+					firstSegmentRightAAID = firstFanVertexID + 0;
 				}
 
 				// Generate the slice.
@@ -1566,7 +1570,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 						arcID, (uint16_t)(arcID + 3), (uint16_t)(arcID + 1),
 						arcID, (uint16_t)(arcID + 2), (uint16_t)(arcID + 3)
 					};
-					addIndices(stroker, &id[0], 9);
+					addIndices<9>(stroker, &id[0]);
 
 					arcID += 2;
 				}
@@ -1601,7 +1605,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 			};
 
 			expandVB(stroker, 4);
-			addPosColor(stroker, &p[0], &c0_c_c_c0[0], 4);
+			addPosColor<4>(stroker, &p[0], &c0_c_c_c0[0]);
 
 			uint16_t id[24] = {
 				prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(curSegmentLeftAAID + 1),
@@ -1615,7 +1619,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 			};
 
 			expandIB(stroker, 24);
-			addIndices(stroker, &id[0], 24);
+			addIndices<24>(stroker, &id[0]);
 		} else if (_LineCap == LineCap::Square) {
 			const uint16_t curSegmentLeftAAID = (uint16_t)stroker->m_NumVertices;
 			const Vec2 l01_hsw = vec2Scale(l01, hsw);
@@ -1631,7 +1635,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 			};
 
 			expandVB(stroker, 4);
-			addPosColor(stroker, &p[0], &c0_c_c_c0[0], 4);
+			addPosColor<4>(stroker, &p[0], &c0_c_c_c0[0]);
 
 			uint16_t id[24] = {
 				prevSegmentLeftAAID, prevSegmentLeftID, (uint16_t)(curSegmentLeftAAID + 1),
@@ -1645,7 +1649,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 			};
 
 			expandIB(stroker, 24);
-			addIndices(stroker, &id[0], 24);
+			addIndices<24>(stroker, &id[0]);
 		} else if (_LineCap == LineCap::Round) {
 			const uint16_t curSegmentLeftID = (uint16_t)stroker->m_NumVertices;
 			const float startAngle = bx::atan2(l01.y, l01.x);
@@ -1661,7 +1665,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 					{ p1.x + ca * hsw_aa, p1.y + sa * hsw_aa }
 				};
 
-				addPosColor(stroker, &p[0], &c0_c_c_c0[2], 2);
+				addPosColor<2>(stroker, &p[0], &c0_c_c_c0[2]);
 			}
 
 			uint16_t id[18] = {
@@ -1674,7 +1678,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 			};
 
 			expandIB(stroker, 18);
-			addIndices(stroker, &id[0], 18);
+			addIndices<18>(stroker, &id[0]);
 
 			// Generate indices for the triangle fan
 			expandIB(stroker, (numPointsHalfCircle - 2) * 3);
@@ -1685,7 +1689,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 					(uint16_t)(idBase + 4),
 					(uint16_t)(idBase + 2)
 				};
-				addIndices(stroker, &id[0], 3);
+				addIndices<3>(stroker, &id[0]);
 			}
 
 			// Generate indices for the AA quads
@@ -1696,7 +1700,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 					idBase, (uint16_t)(idBase + 3), (uint16_t)(idBase + 1),
 					idBase, (uint16_t)(idBase + 2), (uint16_t)(idBase + 3)
 				};
-				addIndices(stroker, &id[0], 6);
+				addIndices<6>(stroker, &id[0]);
 			}
 		}
 	} else {
@@ -1712,7 +1716,7 @@ void polylineStrokeAA(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_t nu
 		};
 
 		expandIB(stroker, 18);
-		addIndices(stroker, &id[0], 18);
+		addIndices<18>(stroker, &id[0]);
 	}
 
 	mesh->m_PosBuffer = &stroker->m_PosBuffer[0].x;
@@ -1760,7 +1764,7 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 			};
 
 			expandVB(stroker, 3);
-			addPosColor(stroker, &p[0], &c0_c_c0_c0[0], 3);
+			addPosColor<3>(stroker, &p[0], &c0_c_c0_c0[0]);
 
 			prevSegmentLeftAAID = 0;
 			prevSegmentMiddleID = 1;
@@ -1776,7 +1780,7 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 			};
 
 			expandVB(stroker, 3);
-			addPosColor(stroker, &p[0], &c0_c_c0_c0[0], 3);
+			addPosColor<3>(stroker, &p[0], &c0_c_c0_c0[0]);
 
 			prevSegmentLeftAAID = 0;
 			prevSegmentMiddleID = 1;
@@ -1816,7 +1820,7 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 				};
 
 				expandVB(stroker, 3);
-				addPosColor(stroker, &p[0], &c0_c_c0_c0[0], 3);
+				addPosColor<3>(stroker, &p[0], &c0_c_c0_c0[0]);
 
 				if (prevSegmentLeftAAID != 0xFFFF) {
 					VG_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
@@ -1829,12 +1833,12 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 					};
 
 					expandIB(stroker, 12);
-					addIndices(stroker, &id[0], 12);
+					addIndices<12>(stroker, id);
 				} else {
 					VG_CHECK(closed, "Invalid previous segment");
-					firstSegmentLeftAAID = firstVertexID; // 0
-					firstSegmentMiddleID = firstVertexID + 1; // 1
-					firstSegmentRightAAID = firstVertexID + 2; // 3
+					firstSegmentLeftAAID = firstVertexID;
+					firstSegmentMiddleID = firstVertexID + 1;
+					firstSegmentRightAAID = firstVertexID + 2;
 				}
 
 				prevSegmentLeftAAID = firstVertexID;
@@ -1854,7 +1858,7 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 
 				const uint16_t firstFanVertexID = (uint16_t)stroker->m_NumVertices;
 				expandVB(stroker, 4);
-				addPosColor(stroker, &p[0], &c0_c_c0_c0[0], 4);
+				addPosColor<4>(stroker, &p[0], &c0_c_c0_c0[0]);
 
 				if (prevSegmentLeftAAID != 0xFFFF) {
 					VG_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
@@ -1867,7 +1871,7 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 					};
 
 					expandIB(stroker, 12);
-					addIndices(stroker, &id[0], 12);
+					addIndices<12>(stroker, id);
 				} else {
 					VG_CHECK(closed, "Invalid previous segment");
 					firstSegmentLeftAAID = firstFanVertexID;
@@ -1879,7 +1883,7 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 					(uint16_t)(firstFanVertexID + 1), (uint16_t)(firstFanVertexID + 2), (uint16_t)(firstFanVertexID + 3)
 				};
 				expandIB(stroker, 3);
-				addIndices(stroker, &id[0], 3);
+				addIndices<3>(stroker, id);
 
 				prevSegmentLeftAAID = firstFanVertexID;
 				prevSegmentMiddleID = firstFanVertexID + 1;
@@ -1899,7 +1903,7 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 				};
 
 				expandVB(stroker, 3);
-				addPosColor(stroker, &p[0], &c0_c_c0_c0[0], 3);
+				addPosColor<3>(stroker, &p[0], &c0_c_c0_c0[0]);
 
 				if (prevSegmentLeftAAID != 0xFFFF) {
 					VG_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
@@ -1912,7 +1916,7 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 					};
 
 					expandIB(stroker, 12);
-					addIndices(stroker, &id[0], 12);
+					addIndices<12>(stroker, id);
 				} else {
 					firstSegmentLeftAAID = firstFanVertexID + 2;
 					firstSegmentMiddleID = firstFanVertexID + 1;
@@ -1935,7 +1939,7 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 
 				const uint16_t firstFanVertexID = (uint16_t)stroker->m_NumVertices;
 				expandVB(stroker, 4);
-				addPosColor(stroker, &p[0], &c0_c_c0_c0[0], 4);
+				addPosColor<4>(stroker, &p[0], &c0_c_c0_c0[0]);
 
 				if (prevSegmentLeftAAID != 0xFFFF) {
 					VG_CHECK(prevSegmentMiddleID != 0xFFFF && prevSegmentRightAAID != 0xFFFF, "Invalid previous segment");
@@ -1948,7 +1952,7 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 					};
 
 					expandIB(stroker, 12);
-					addIndices(stroker, &id[0], 12);
+					addIndices<12>(stroker, id);
 				} else {
 					firstSegmentLeftAAID = firstFanVertexID + 2;
 					firstSegmentMiddleID = firstFanVertexID + 1;
@@ -1959,7 +1963,7 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 					(uint16_t)(firstFanVertexID + 1), (uint16_t)(firstFanVertexID + 3), (uint16_t)(firstFanVertexID + 2)
 				};
 				expandIB(stroker, 3);
-				addIndices(stroker, &id[0], 3);
+				addIndices<3>(stroker, id);
 
 				prevSegmentLeftAAID = firstFanVertexID + 3;
 				prevSegmentMiddleID = firstFanVertexID + 1;
@@ -1987,7 +1991,7 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 			};
 
 			expandVB(stroker, 3);
-			addPosColor(stroker, &p[0], &c0_c_c0_c0[0], 3);
+			addPosColor<3>(stroker, &p[0], &c0_c_c0_c0[0]);
 
 			uint16_t id[12] = {
 				prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(curSegmentLeftAAID + 1),
@@ -1997,7 +2001,7 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 			};
 
 			expandIB(stroker, 12);
-			addIndices(stroker, &id[0], 12);
+			addIndices<12>(stroker, id);
 		} else if (_LineCap == LineCap::Square) {
 			const uint16_t curSegmentLeftAAID = (uint16_t)stroker->m_NumVertices;
 			const Vec2 d01_hsw = vec2Scale(d01, hsw_aa);
@@ -2010,7 +2014,7 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 			};
 
 			expandVB(stroker, 3);
-			addPosColor(stroker, &p[0], &c0_c_c0_c0[0], 3);
+			addPosColor<3>(stroker, &p[0], &c0_c_c0_c0[0]);
 
 			uint16_t id[12] = {
 				prevSegmentLeftAAID, prevSegmentMiddleID, (uint16_t)(curSegmentLeftAAID + 1),
@@ -2020,7 +2024,7 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 			};
 
 			expandIB(stroker, 12);
-			addIndices(stroker, &id[0], 12);
+			addIndices<12>(stroker, id);
 		} else if (_LineCap == LineCap::Round) {
 			VG_CHECK(false, "Round caps not implemented for thin strokes.");
 		}
@@ -2035,7 +2039,7 @@ void polylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const Vec2* vtx, uint32_
 		};
 
 		expandIB(stroker, 12);
-		addIndices(stroker, &id[0], 12);
+		addIndices<12>(stroker, id);
 	}
 
 	mesh->m_PosBuffer = &stroker->m_PosBuffer[0].x;
@@ -2078,29 +2082,167 @@ BX_FORCE_INLINE static void expandIB(Stroker* stroker, uint32_t n)
 	}
 }
 
-BX_FORCE_INLINE static void addPos(Stroker* stroker, const Vec2* srcPos, uint32_t n)
+template<uint32_t N>
+static void addPos(Stroker* stroker, const Vec2* srcPos)
 {
-	VG_CHECK(stroker->m_NumVertices + n <= stroker->m_VertexCapacity, "Not enough free space for temporary geometry");
+	VG_CHECK(stroker->m_NumVertices + N <= stroker->m_VertexCapacity, "Not enough free space for temporary geometry");
 
-	bx::memCopy(&stroker->m_PosBuffer[stroker->m_NumVertices], srcPos, sizeof(Vec2) * n);
-	stroker->m_NumVertices += n;
+	const uint64_t* srcPos64 = (const uint64_t*)&srcPos->x;
+	uint64_t* dstPos64 = (uint64_t*)&stroker->m_PosBuffer[stroker->m_NumVertices].x;
+
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+	const __m128* srcPos128 = (const __m128*)&srcPos->x;
+	__m128* dstPos128 = (__m128*)&stroker->m_PosBuffer[stroker->m_NumVertices].x;
+#endif
+
+	if (N == 1) {
+		dstPos64[0] = srcPos64[0]; // x0, y0
+	} else if (N == 2) {
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+		dstPos128[0] = srcPos128[0]; // x0, y0, x1, y1
+#else
+		dstPos64[0] = srcPos64[0]; // x0, y0
+		dstPos64[1] = srcPos64[1]; // x1, y1
+#endif
+	} else {
+		bx::memCopy(&stroker->m_PosBuffer[stroker->m_NumVertices], srcPos, sizeof(Vec2) * N);
+	}
+
+	stroker->m_NumVertices += N;
 }
 
-BX_FORCE_INLINE static void addPosColor(Stroker* stroker, const Vec2* srcPos, const uint32_t* srcColor, uint32_t n)
+template<uint32_t N>
+static void addPosColor(Stroker* stroker, const Vec2* srcPos, const uint32_t* srcColor)
 {
-	VG_CHECK(stroker->m_NumVertices + n <= stroker->m_VertexCapacity, "Not enough free space for temporary geometry");
+	VG_CHECK(stroker->m_NumVertices + N <= stroker->m_VertexCapacity, "Not enough free space for temporary geometry");
 
-	bx::memCopy(&stroker->m_PosBuffer[stroker->m_NumVertices], srcPos, sizeof(Vec2) * n);
-	bx::memCopy(&stroker->m_ColorBuffer[stroker->m_NumVertices], srcColor, sizeof(uint32_t) * n);
-	stroker->m_NumVertices += n;
+	const uint64_t* srcPos64 = (const uint64_t*)&srcPos->x;
+	const uint64_t* srcColor64 = (const uint64_t*)srcColor;
+	uint64_t* dstPos64 = (uint64_t*)&stroker->m_PosBuffer[stroker->m_NumVertices].x;
+	uint32_t* dstColor = &stroker->m_ColorBuffer[stroker->m_NumVertices];
+	uint64_t* dstColor64 = (uint64_t*)&stroker->m_ColorBuffer[stroker->m_NumVertices];
+
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+	const __m128* srcPos128 = (const __m128*)&srcPos->x;
+	const __m128* srcColor128 = (const __m128*)srcColor;
+	__m128* dstPos128 = (__m128*)&stroker->m_PosBuffer[stroker->m_NumVertices].x;
+	__m128* dstColor128 = (__m128*)&stroker->m_ColorBuffer[stroker->m_NumVertices];
+#endif
+
+	if (N == 2) {
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+		*dstPos128 = *srcPos128; // x0, y0, x1, y1
+#else
+		dstPos64[0] = srcPos64[0]; // x0, y0
+		dstPos64[1] = srcPos64[1]; // x1, y1
+#endif
+
+		*dstColor64 = *srcColor64; // c0, c1
+	} else if (N == 3) {
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+		*dstPos128 = *srcPos128; // x0, y0, x1, y1
+		dstPos64[2] = srcPos64[2]; // x2, y2
+#else
+		dstPos64[0] = srcPos64[0]; // x0, y0
+		dstPos64[1] = srcPos64[1]; // x1, y1
+		dstPos64[2] = srcPos64[2]; // x2, y2
+#endif
+
+		*dstColor64 = *srcColor64; // c0, c1
+		dstColor[2] = srcColor[2]; // c2
+	} else if (N == 4) {
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+		dstPos128[0] = srcPos128[0]; // x0, y0, x1, y1
+		dstPos128[1] = srcPos128[1]; // x2, y2, x3, y3
+
+		dstColor128[0] = srcColor128[0]; // c0, c1, c2, c3
+#else
+		dstPos64[0] = srcPos64[0]; // x0, y0
+		dstPos64[1] = srcPos64[1]; // x1, y1
+		dstPos64[2] = srcPos64[2]; // x2, y2
+		dstPos64[3] = srcPos64[3]; // x3, y3
+
+		dstColor64[0] = srcColor64[0]; // c0, c1
+		dstColor64[1] = srcColor64[1]; // c2, c3
+#endif
+	} else {
+		bx::memCopy(dstPos64, srcPos, sizeof(Vec2) * N);
+		bx::memCopy(dstColor64, srcColor, sizeof(uint32_t) * N);
+	}
+
+	stroker->m_NumVertices += N;
 }
 
-BX_FORCE_INLINE static void addIndices(Stroker* stroker, const uint16_t* src, uint32_t n)
+template<uint32_t N>
+static void addIndices(Stroker* stroker, const uint16_t* src)
 {
-	VG_CHECK(stroker->m_NumIndices + n <= stroker->m_IndexCapacity, "Not enough free space for temporary geometry");
+	VG_CHECK(stroker->m_NumIndices + N <= stroker->m_IndexCapacity, "Not enough free space for temporary geometry");
 
-	bx::memCopy(&stroker->m_IndexBuffer[stroker->m_NumIndices], src, sizeof(uint16_t) * n);
-	stroker->m_NumIndices += n;
+	const uint32_t* src32 = (const uint32_t*)src;
+	const uint64_t* src64 = (const uint64_t*)src;
+	uint16_t* dst = &stroker->m_IndexBuffer[stroker->m_NumIndices];
+	uint32_t* dst32 = (uint32_t*)dst;
+	uint64_t* dst64 = (uint64_t*)dst;
+
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+	const __m128* src128 = (const __m128*)src;
+	__m128* dst128 = (__m128*)dst;
+#endif
+
+	if (N == 3) {
+		dst32[0] = src32[0]; // 0, 1
+		dst[2] = src[2];     // 2
+	} else if (N == 6) {
+		dst64[0] = src64[0]; // 0, 1, 2, 3
+		dst32[2] = src32[2]; // 4, 5
+	} else if (N == 9) {
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+		dst128[0] = src128[0]; // 0, 1, 2, 3, 4, 5, 6, 7
+		dst[8] = src[8];       // 8
+#else
+		dst64[0] = src64[0]; // 0, 1, 2, 3
+		dst64[1] = src64[1]; // 4, 5, 6, 7
+		dst[8] = src[8];     // 8
+#endif
+	} else if (N == 12) {
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+		dst128[0] = src128[0]; // 0, 1, 2, 3, 4, 5, 6, 7
+		dst64[2] = src64[2];   // 8, 9, 10, 11
+#else
+		dst64[0] = src64[0]; // 0, 1, 2, 3
+		dst64[1] = src64[1]; // 4, 5, 6, 7
+		dst64[2] = src64[2]; // 8, 9, 10, 11
+#endif
+	} else if (N == 18) {
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+		dst128[0] = src128[0]; // 0, 1, 2, 3, 4, 5, 6, 7
+		dst128[1] = src128[1]; // 8, 9, 10, 11, 12, 13, 14, 15
+		dst32[8] = src32[8];   // 16, 17
+#else
+		dst64[0] = src64[0]; // 0, 1, 2, 3
+		dst64[1] = src64[1]; // 4, 5, 6, 7
+		dst64[2] = src64[2]; // 8, 9, 10, 11
+		dst64[3] = src64[3]; // 12, 13, 14, 15
+		dst32[8] = src32[8]; // 16, 17
+#endif
+	} else if (N == 24) {
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+		dst128[0] = src128[0]; // 0, 1, 2, 3, 4, 5, 6, 7
+		dst128[1] = src128[1]; // 8, 9, 10, 11, 12, 13, 14, 15
+		dst128[2] = src128[2]; // 16, 17, 18, 19, 20, 21, 22, 23
+#else
+		dst64[0] = src64[0]; // 0, 1, 2, 3
+		dst64[1] = src64[1]; // 4, 5, 6, 7
+		dst64[2] = src64[2]; // 8, 9, 10, 11
+		dst64[3] = src64[3]; // 12, 13, 14, 15
+		dst64[4] = src64[4]; // 16, 17, 18, 19
+		dst64[5] = src64[5]; // 20, 21, 22, 22
+#endif
+	} else {
+		bx::memCopy(dst, src, sizeof(uint16_t) * N);
+	}
+
+	stroker->m_NumIndices += N;
 }
 
 #if !VG_CONFIG_USE_LIBTESS2
