@@ -2756,7 +2756,11 @@ static void ctxClosePath(Context* ctx)
 static void ctxFillPathColor(Context* ctx, Color color, uint32_t flags)
 {
 	const bool recordClipCommands = ctx->m_RecordClipCommands;
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
 	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
+#else
+	const bool hasCache = false;
+#endif
 
 	const State* state = getState(ctx);
 	const float globalAlpha = hasCache ? 1.0f : state->m_GlobalAlpha;
@@ -2872,7 +2876,11 @@ static void ctxFillPathGradient(Context* ctx, GradientHandle gradientHandle, uin
 	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
 	VG_CHECK(!isLocal(gradientHandle), "Invalid gradient handle");
 
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
 	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
+#else
+	const bool hasCache = false;
+#endif
 
 	const float* pathVertices = transformPath(ctx);
 
@@ -2976,7 +2984,11 @@ static void ctxFillPathImagePattern(Context* ctx, ImagePatternHandle imgPatternH
 	VG_CHECK(isValid(imgPatternHandle), "Invalid image pattern handle");
 	VG_CHECK(!isLocal(imgPatternHandle), "Invalid gradient handle");
 
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
 	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
+#else
+	const bool hasCache = false;
+#endif
 
 	const State* state = getState(ctx);
 	const float globalAlpha = hasCache ? 1.0f : state->m_GlobalAlpha;
@@ -3081,7 +3093,12 @@ static void ctxFillPathImagePattern(Context* ctx, ImagePatternHandle imgPatternH
 static void ctxStrokePathColor(Context* ctx, Color color, float width, uint32_t flags)
 {
 	const bool recordClipCommands = ctx->m_RecordClipCommands;
+
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
 	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
+#else
+	const bool hasCache = false;
+#endif
 
 	const State* state = getState(ctx);
 	const float avgScale = state->m_AvgScale;
@@ -3172,7 +3189,11 @@ static void ctxStrokePathGradient(Context* ctx, GradientHandle gradientHandle, f
 	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
 	VG_CHECK(!isLocal(gradientHandle), "Invalid gradient handle");
 
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
 	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
+#else
+	const bool hasCache = false;
+#endif
 
 	const LineJoin::Enum lineJoin = VG_STROKE_FLAGS_LINE_JOIN(flags);
 	const LineCap::Enum lineCap = VG_STROKE_FLAGS_LINE_CAP(flags);
@@ -3254,7 +3275,11 @@ static void ctxStrokePathImagePattern(Context* ctx, ImagePatternHandle imgPatter
 	VG_CHECK(isValid(imgPatternHandle), "Invalid image pattern handle");
 	VG_CHECK(!isLocal(imgPatternHandle), "Invalid gradient handle");
 
+#if VG_CONFIG_ENABLE_SHAPE_CACHING
 	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
+#else
+	const bool hasCache = false;
+#endif
 
 	const State* state = getState(ctx);
 	const float avgScale = state->m_AvgScale;
