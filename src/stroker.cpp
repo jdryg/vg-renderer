@@ -2062,7 +2062,7 @@ static void reallocVB(Stroker* stroker, uint32_t n)
 	stroker->m_ColorBuffer = (uint32_t*)BX_ALIGNED_REALLOC(stroker->m_Allocator, stroker->m_ColorBuffer, sizeof(uint32_t) * stroker->m_VertexCapacity, 16);
 }
 
-BX_FORCE_INLINE static void expandVB(Stroker* stroker, uint32_t n)
+static BX_FORCE_INLINE void expandVB(Stroker* stroker, uint32_t n)
 {
 	if (stroker->m_NumVertices + n > stroker->m_VertexCapacity) {
 		reallocVB(stroker, n);
@@ -2075,7 +2075,7 @@ static void reallocIB(Stroker* stroker, uint32_t n)
 	stroker->m_IndexBuffer = (uint16_t*)BX_ALIGNED_REALLOC(stroker->m_Allocator, stroker->m_IndexBuffer, sizeof(uint16_t) * stroker->m_IndexCapacity, 16);
 }
 
-BX_FORCE_INLINE static void expandIB(Stroker* stroker, uint32_t n)
+static BX_FORCE_INLINE void expandIB(Stroker* stroker, uint32_t n)
 {
 	if (stroker->m_NumIndices + n > stroker->m_IndexCapacity) {
 		reallocIB(stroker, n);
