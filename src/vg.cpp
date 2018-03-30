@@ -2214,6 +2214,34 @@ ImageHandle createImage(Context* ctx, uint16_t w, uint16_t h, uint32_t flags, co
 	return handle;
 }
 
+ImageHandle createImage(Context* ctx, uint32_t flags, const bgfx::TextureHandle& bgfxTextureHandle)
+{
+	VG_CHECK(bgfx::isValid(bgfxTextureHandle), "Invalid bgfx texture handle");
+
+	ImageHandle handle = allocImage(ctx);
+	if (!isValid(handle)) {
+		return VG_INVALID_HANDLE;
+	}
+
+	Image* tex = &ctx->m_Images[handle.idx];
+	tex->m_Width = UINT16_MAX;
+	tex->m_Height = UINT16_MAX;
+
+	uint32_t bgfxFlags = BGFX_TEXTURE_NONE;
+
+	if (flags & ImageFlags::Filter_NearestUV) {
+		bgfxFlags |= BGFX_TEXTURE_MIN_POINT | BGFX_TEXTURE_MAG_POINT;
+	}
+	if (flags & ImageFlags::Filter_NearestW) {
+		bgfxFlags |= BGFX_TEXTURE_MIP_POINT;
+	}
+	tex->m_Flags = bgfxFlags;
+
+	tex->m_bgfxHandle.idx = bgfxTextureHandle.idx;
+
+	return handle;
+}
+
 bool updateImage(Context* ctx, ImageHandle image, uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint8_t* data)
 {
 	if (!isValid(image)) {
