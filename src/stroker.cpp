@@ -9,6 +9,9 @@
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4127) // conditional expression is constant
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4456) // declaration of X hides previous local decleration
 
+#define RSQRT_ALGORITHM 1
+#define RCP_ALGORITHM 1
+
 namespace vg
 {
 struct Vec2
@@ -47,6 +50,82 @@ inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
 
 	return v;
 }
+
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+static const __m128 vec2_perpCCW_xorMask = _mm_castsi128_ps(_mm_set_epi32(0, 0, 0, 0x80000000));
+
+static inline __m128 xmm_vec2_rotCCW90(const __m128 a)
+{
+	__m128 ayx = _mm_shuffle_ps(a, a, _MM_SHUFFLE(3, 2, 0, 1)); // { a.y, a.x, DC, DC }
+	return _mm_xor_ps(ayx, vec2_perpCCW_xorMask); // { -a.y, a.x, DC, DC }
+}
+
+static inline float xmm_vec2_cross(const __m128 a, const __m128 b)
+{
+	const __m128 axy_bxy = _mm_movelh_ps(a, b); // { a.x, a.y, b.x, b.y }
+	const __m128 byx_ayx = _mm_shuffle_ps(axy_bxy, axy_bxy, _MM_SHUFFLE(0, 1, 2, 3)); // { b.y, b.x, a.y, a.x }
+	const __m128 axby_aybx = _mm_mul_ps(axy_bxy, byx_ayx); // { a.x * b.y, a.y * b.x, b.x * a.y, b.y * a.x }
+	const __m128 bxay = _mm_shuffle_ps(axby_aybx, axby_aybx, _MM_SHUFFLE(1, 1, 1, 1)); // { a.y * b.x, a.y * b.x, a.y * b.x, a.y * b.x }
+	const __m128 cross = _mm_sub_ss(axby_aybx, bxay);
+	return _mm_cvtss_f32(cross);
+}
+
+static inline __m128 xmm_vec2_dir(const __m128 a, const __m128 b)
+{
+	const __m128 dxy = _mm_sub_ps(b, a); // { dx, dy, DC, DC }
+	const __m128 dxySqr = _mm_mul_ps(dxy, dxy); // { dx * dx, dy * dy, DC, DC }
+	const __m128 dySqr = _mm_shuffle_ps(dxySqr, dxySqr, _MM_SHUFFLE(1, 1, 1, 1)); // { dy * dy, dy * dy, dy * dy, dy * dy }
+	const float lenSqr = _mm_cvtss_f32(_mm_add_ss(dxySqr, dySqr));
+	__m128 dir = _mm_setzero_ps();
+	if (lenSqr >= VG_EPSILON) {
+		const __m128 invLen = _mm_set_ps1(bx::rsqrt(lenSqr));
+		dir = _mm_mul_ps(dxy, invLen);
+	}
+	return dir;
+}
+
+static inline __m128 xmm_calcExtrusionVector(const __m128 d01, const __m128 d12)
+{
+	const float cross = xmm_vec2_cross(d12, d01);
+#if 0
+	return (fabs(cross) > VG_EPSILON) ? _mm_mul_ps(_mm_sub_ps(d01, d12), _mm_set_ps1(rcp(cross))) : xmm_vec2_rotCCW90(d01);
+#else
+	return (fabs(cross) > VG_EPSILON) ? _mm_mul_ps(_mm_sub_ps(d01, d12), _mm_set_ps1(1.0f / cross)) : xmm_vec2_rotCCW90(d01);
+#endif
+}
+
+static inline __m128 xmm_rsqrt(__m128 a)
+{
+#if RSQRT_ALGORITHM == 0
+	const __m128 res = _mm_div_ps(xmm_one, _mm_sqrt_ps(a));
+#elif RSQRT_ALGORITHM == 1
+	const __m128 res = _mm_rsqrt_ps(a);
+#elif RSQRT_ALGORITHM == 2
+	// Newton/Raphson
+	const __m128 rsqrtEst = _mm_rsqrt_ps(a);
+	const __m128 iter0 = _mm_mul_ps(a, rsqrtEst);
+	const __m128 iter1 = _mm_mul_ps(iter0, rsqrtEst);
+	const __m128 half_rsqrt = _mm_mul_ps(xmm_half, rsqrtEst);
+	const __m128 three_sub_iter1 = _mm_sub_ps(xmm_three, iter1);
+	const __m128 res = _mm_mul_ps(half_rsqrt, three_sub_iter1);
+#endif
+
+	return res;
+}
+
+static inline __m128 xmm_rcp(__m128 a)
+{
+#if RCP_ALGORITHM == 0
+	const __m128 inv_a = _mm_div_ps(xmm_one, a);
+#elif RCP_ALGORITHM == 1
+	const __m128 inv_a = _mm_rcp_ps(a);
+#elif RCP_ALGORITHM == 2
+	// TODO: 
+#endif
+
+	return inv_a;
+}
+#endif
 
 #if VG_CONFIG_USE_LIBTESS2
 struct libtess2Allocator
@@ -287,6 +366,352 @@ void strokerConvexFill(Stroker* stroker, Mesh* mesh, const float* vertexList, ui
 	mesh->m_NumIndices = stroker->m_NumIndices;
 }
 
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+void strokerConvexFillAA(Stroker* stroker, Mesh* mesh, const float* vertexList, uint32_t numVertices, uint32_t color)
+{
+	VG_CHECK(numVertices >= 3, "Invalid number of vertices");
+
+	const uint32_t lastVertexID = numVertices - 1;
+
+	const __m128 vtx0 = _mm_loadl_pi(_mm_setzero_ps(), (const __m64*)vertexList);
+	const __m128 vtx1 = _mm_loadl_pi(_mm_setzero_ps(), (const __m64*)(vertexList + 2));
+	const __m128 vtx2 = _mm_loadl_pi(_mm_setzero_ps(), (const __m64*)(vertexList + 4));
+	const float cross = xmm_vec2_cross(_mm_sub_ps(vtx1, vtx0), _mm_sub_ps(vtx2, vtx0));
+
+	const float aa = stroker->m_FringeWidth * 0.5f * bx::sign(cross);
+	const __m128 xmm_aa = _mm_set_ps1(aa);
+
+	const uint32_t c0 = colorSetAlpha(color, 0);
+
+	const uint32_t numTris =
+		(numVertices - 2) + // Triangle fan
+		(numVertices * 2); // AA fringes
+	const uint32_t numDrawVertices = numVertices * 2; // original polygon point + AA fringe point.
+	const uint32_t numDrawIndices = numTris * 3;
+
+	resetGeometry(stroker);
+
+	// Vertex buffer
+	{
+		expandVB(stroker, numDrawVertices);
+
+		const __m128 vtxLast = _mm_loadl_pi(_mm_setzero_ps(), (const __m64*)(vertexList + (lastVertexID << 1)));
+		__m128 d01 = xmm_vec2_dir(vtxLast, vtx0);
+		__m128 p1 = vtx0;
+
+		const float* srcPos = vertexList + 2;
+		float* dstPos = &stroker->m_PosBuffer->x;
+
+		const __m128 xmm_epsilon = _mm_set_ps1(VG_EPSILON);
+		const __m128 vec2x2_perpCCW_xorMask = _mm_castsi128_ps(_mm_set_epi32(0, 0x80000000, 0, 0x80000000));
+
+		const uint32_t numIter = lastVertexID >> 2;
+		for (uint32_t i = 0; i < numIter; ++i) {
+			// Load 4 points. With p1 from previous loop iteration make up 4 segments
+			const __m128 p23 = _mm_loadu_ps(srcPos);                          // { p2.x, p2.y, p3.x, p3.y }
+			const __m128 p45 = _mm_loadu_ps(srcPos + 4);                      // { p4.x, p4.y, p5.x, p5.y }
+
+			const __m128 p12 = _mm_movelh_ps(p1, p23);                        // { p1.x, p1.y, p2.x, p2.y }
+			const __m128 p34 = _mm_movelh_ps(_mm_movehl_ps(p23, p23), p45);   // { p3.x, p3.y, p4.x, p4.y }
+
+			// Calculate the direction vector of the 4 segments
+			// NOTE: Tried to calc all 4 rsqrt in 1 call but it ends up being slower. Kept this version for now.
+			const __m128 d12_23_unorm = _mm_sub_ps(p23, p12);
+			const __m128 d34_45_unorm = _mm_sub_ps(p45, p34);
+
+			const __m128 d12_23_xy_sqr = _mm_mul_ps(d12_23_unorm, d12_23_unorm);
+			const __m128 d34_45_xy_sqr = _mm_mul_ps(d34_45_unorm, d34_45_unorm);
+
+			const __m128 d12_23_yx_sqr = _mm_shuffle_ps(d12_23_xy_sqr, d12_23_xy_sqr, _MM_SHUFFLE(2, 3, 0, 1));
+			const __m128 d34_45_yx_sqr = _mm_shuffle_ps(d34_45_xy_sqr, d34_45_xy_sqr, _MM_SHUFFLE(2, 3, 0, 1));
+
+			const __m128 len12_23_sqr = _mm_add_ps(d12_23_xy_sqr, d12_23_yx_sqr);
+			const __m128 len34_45_sqr = _mm_add_ps(d34_45_xy_sqr, d34_45_yx_sqr);
+
+			const __m128 lenSqr123_ge_eps = _mm_cmpge_ps(len12_23_sqr, xmm_epsilon);
+			const __m128 lenSqr345_ge_eps = _mm_cmpge_ps(len34_45_sqr, xmm_epsilon);
+
+			const __m128 invLen12_23 = xmm_rsqrt(len12_23_sqr);
+			const __m128 invLen34_45 = xmm_rsqrt(len34_45_sqr);
+
+			const __m128 invLen12_23_masked = _mm_and_ps(invLen12_23, lenSqr123_ge_eps);
+			const __m128 invLen34_45_masked = _mm_and_ps(invLen34_45, lenSqr345_ge_eps);
+
+			const __m128 d12_23 = _mm_mul_ps(d12_23_unorm, invLen12_23_masked);
+			const __m128 d34_45 = _mm_mul_ps(d34_45_unorm, invLen34_45_masked);
+
+			// Calculate the 4 extrusion vectors for the 4 points based on the equ
+			// abs(cross(d12, d01) > epsilon ? ((d01 - d12) / cross(d12, d01)) : rot90CCW(d01)
+			const __m128 v012_123_fake = _mm_xor_ps(_mm_shuffle_ps(d01, d12_23, _MM_SHUFFLE(0, 1, 0, 1)), vec2x2_perpCCW_xorMask);
+			const __m128 v234_345_fake = _mm_xor_ps(_mm_shuffle_ps(d12_23, d34_45, _MM_SHUFFLE(0, 1, 2, 3)), vec2x2_perpCCW_xorMask);
+
+			// cross012 = d12.x * d01.y - d12.y * d01.x
+			// cross123 = d23.x * d12.y - d23.y * d12.x
+			// cross234 = d34.x * d23.y - d34.y * d23.x
+			// cross345 = d45.x * d34.y - d45.y * d34.x
+			const __m128 dxy01_12 = _mm_shuffle_ps(d01, d12_23, _MM_SHUFFLE(1, 0, 1, 0));
+			const __m128 dxy12_23 = d12_23;
+			const __m128 dxy23_34 = _mm_shuffle_ps(d12_23, d34_45, _MM_SHUFFLE(1, 0, 3, 2));
+			const __m128 dxy34_45 = d34_45;
+
+			const __m128 dx01_12_23_34 = _mm_shuffle_ps(dxy01_12, dxy23_34, _MM_SHUFFLE(2, 0, 2, 0));
+			const __m128 dy01_12_23_34 = _mm_shuffle_ps(dxy01_12, dxy23_34, _MM_SHUFFLE(3, 1, 3, 1));
+			const __m128 dx12_23_34_45 = _mm_shuffle_ps(dxy12_23, dxy34_45, _MM_SHUFFLE(2, 0, 2, 0));
+			const __m128 dy12_23_34_45 = _mm_shuffle_ps(dxy12_23, dxy34_45, _MM_SHUFFLE(3, 1, 3, 1));
+
+			const __m128 crossx012_123_234_345 = _mm_mul_ps(dx12_23_34_45, dy01_12_23_34);
+			const __m128 crossy012_123_234_345 = _mm_mul_ps(dy12_23_34_45, dx01_12_23_34);
+
+			const __m128 cross012_123_234_345 = _mm_sub_ps(crossx012_123_234_345, crossy012_123_234_345);
+
+			const __m128 inv_cross012_123_234_345 = xmm_rcp(cross012_123_234_345);
+
+			const __m128 cross_gt_eps012_123_234_345 = _mm_cmpge_ps(cross012_123_234_345, xmm_epsilon);
+
+			const __m128 inv_cross012_123 = _mm_shuffle_ps(inv_cross012_123_234_345, inv_cross012_123_234_345, _MM_SHUFFLE(1, 1, 0, 0));
+			const __m128 inv_cross234_345 = _mm_shuffle_ps(inv_cross012_123_234_345, inv_cross012_123_234_345, _MM_SHUFFLE(3, 3, 2, 2));
+
+			const __m128 cross012_123_gt_eps = _mm_shuffle_ps(cross_gt_eps012_123_234_345, cross_gt_eps012_123_234_345, _MM_SHUFFLE(1, 1, 0, 0));
+			const __m128 cross234_345_gt_eps = _mm_shuffle_ps(cross_gt_eps012_123_234_345, cross_gt_eps012_123_234_345, _MM_SHUFFLE(3, 3, 2, 2));
+
+			const __m128 dxy012_123 = _mm_sub_ps(dxy01_12, dxy12_23);
+			const __m128 dxy234_345 = _mm_sub_ps(dxy23_34, dxy34_45);
+
+			const __m128 v012_123_true = _mm_mul_ps(dxy012_123, inv_cross012_123);
+			const __m128 v234_345_true = _mm_mul_ps(dxy234_345, inv_cross234_345);
+
+			const __m128 v012_123_true_masked = _mm_and_ps(cross012_123_gt_eps, v012_123_true);
+			const __m128 v234_345_true_masked = _mm_and_ps(cross234_345_gt_eps, v234_345_true);
+
+			const __m128 v012_123_fake_masked = _mm_andnot_ps(cross012_123_gt_eps, v012_123_fake);
+			const __m128 v245_345_fake_masked = _mm_andnot_ps(cross234_345_gt_eps, v234_345_fake);
+
+			const __m128 v012_123 = _mm_or_ps(v012_123_true_masked, v012_123_fake_masked);
+			const __m128 v234_345 = _mm_or_ps(v234_345_true_masked, v245_345_fake_masked);
+
+			const __m128 v012_v123_aa = _mm_mul_ps(v012_123, xmm_aa);
+			const __m128 v234_v345_aa = _mm_mul_ps(v234_345, xmm_aa);
+
+			// Calculate the 2 fringe points for each of p1, p2, p3 and p4
+			const __m128 posEdge12 = _mm_add_ps(p12, v012_v123_aa);
+			const __m128 negEdge12 = _mm_sub_ps(p12, v012_v123_aa);
+			const __m128 posEdge34 = _mm_add_ps(p34, v234_v345_aa);
+			const __m128 negEdge34 = _mm_sub_ps(p34, v234_v345_aa);
+
+			const __m128 p1_in_out = _mm_shuffle_ps(posEdge12, negEdge12, _MM_SHUFFLE(1, 0, 1, 0));
+			const __m128 p2_in_out = _mm_shuffle_ps(posEdge12, negEdge12, _MM_SHUFFLE(3, 2, 3, 2));
+			const __m128 p3_in_out = _mm_shuffle_ps(posEdge34, negEdge34, _MM_SHUFFLE(1, 0, 1, 0));
+			const __m128 p4_in_out = _mm_shuffle_ps(posEdge34, negEdge34, _MM_SHUFFLE(3, 2, 3, 2));
+
+			// Store the fringe points
+			_mm_store_ps(dstPos + 0, p1_in_out);
+			_mm_store_ps(dstPos + 4, p2_in_out);
+			_mm_store_ps(dstPos + 8, p3_in_out);
+			_mm_store_ps(dstPos + 12, p4_in_out);
+
+			// Move on to the next iteration.
+			d01 = _mm_movehl_ps(d34_45, d34_45);
+			p1 = _mm_movehl_ps(p45, p45); // p1 = p5
+			srcPos += 8;
+			dstPos += 16;
+}
+
+		uint32_t rem = (lastVertexID & 3);
+		if (rem >= 2) {
+			const __m128 p23 = _mm_loadu_ps(srcPos);
+			const __m128 p12 = _mm_movelh_ps(p1, p23);
+
+			const __m128 d12_23 = _mm_sub_ps(p23, p12);
+			const __m128 d12_23_xy_sqr = _mm_mul_ps(d12_23, d12_23);
+			const __m128 d12_23_yx_sqr = _mm_shuffle_ps(d12_23_xy_sqr, d12_23_xy_sqr, _MM_SHUFFLE(2, 3, 0, 1));
+			const __m128 len12_23_sqr = _mm_add_ps(d12_23_xy_sqr, d12_23_yx_sqr);
+			const __m128 lenSqr_ge_eps = _mm_cmpge_ps(len12_23_sqr, xmm_epsilon);
+
+			const __m128 invLen12_23 = xmm_rsqrt(len12_23_sqr);
+
+			const __m128 invLen12_23_masked = _mm_and_ps(invLen12_23, lenSqr_ge_eps);
+			const __m128 d12_23_norm = _mm_mul_ps(d12_23, invLen12_23_masked);
+
+			const __m128 d12 = _mm_movelh_ps(d12_23_norm, d12_23_norm);
+			const __m128 d23 = _mm_movehl_ps(d12_23_norm, d12_23_norm);
+
+			const __m128 d12xy_d01xy = _mm_movelh_ps(d12, d01);
+			const __m128 d23xy_d12xy = _mm_movelh_ps(d23, d12);
+
+			const __m128 d01yx_d12yx = _mm_shuffle_ps(d12xy_d01xy, d12xy_d01xy, _MM_SHUFFLE(0, 1, 2, 3));
+			const __m128 d12yx_d23yx = _mm_shuffle_ps(d23xy_d12xy, d23xy_d12xy, _MM_SHUFFLE(0, 1, 2, 3));
+
+			const __m128 d12xd01y_d12yd01x = _mm_mul_ps(d12xy_d01xy, d01yx_d12yx);
+			const __m128 d23xd12y_d23yd12x = _mm_mul_ps(d23xy_d12xy, d12yx_d23yx);
+
+			const __m128 d12yd01x_d23yd12x = _mm_shuffle_ps(d12xd01y_d12yd01x, d23xd12y_d23yd12x, _MM_SHUFFLE(1, 1, 1, 1));
+			const __m128 d12xd01y_d23xd12x = _mm_shuffle_ps(d12xd01y_d12yd01x, d23xd12y_d23yd12x, _MM_SHUFFLE(0, 0, 0, 0));
+
+			const __m128 cross012_123 = _mm_sub_ps(d12xd01y_d23xd12x, d12yd01x_d23yd12x);
+
+			const __m128 inv_cross012_123 = xmm_rcp(cross012_123);
+
+			const __m128 v012_123_fake = _mm_xor_ps(d01yx_d12yx, vec2x2_perpCCW_xorMask);
+
+			const __m128 d01xy_d12xy = _mm_shuffle_ps(d12xy_d01xy, d12xy_d01xy, _MM_SHUFFLE(1, 0, 3, 2));
+			const __m128 d12xy_d23xy = _mm_shuffle_ps(d23xy_d12xy, d23xy_d12xy, _MM_SHUFFLE(1, 0, 3, 2));
+
+			const __m128 d012xy_d123xy = _mm_sub_ps(d01xy_d12xy, d12xy_d23xy);
+			const __m128 v012_123_true = _mm_mul_ps(d012xy_d123xy, inv_cross012_123);
+
+			const __m128 cross_gt_eps = _mm_cmpge_ps(cross012_123, xmm_epsilon);
+			const __m128 v012_123_true_masked = _mm_and_ps(cross_gt_eps, v012_123_true);
+			const __m128 v012_123_fake_masked = _mm_andnot_ps(cross_gt_eps, v012_123_fake);
+			const __m128 v012_123 = _mm_or_ps(v012_123_true_masked, v012_123_fake_masked);
+
+			const __m128 v012_v123_aa = _mm_mul_ps(v012_123, xmm_aa);
+
+			const __m128 posEdge = _mm_add_ps(p12, v012_v123_aa);
+			const __m128 negEdge = _mm_sub_ps(p12, v012_v123_aa);
+
+			const __m128 packed0 = _mm_shuffle_ps(posEdge, negEdge, _MM_SHUFFLE(1, 0, 1, 0));
+			const __m128 packed1 = _mm_shuffle_ps(posEdge, negEdge, _MM_SHUFFLE(3, 2, 3, 2));
+
+			_mm_store_ps(dstPos, packed0);
+			_mm_store_ps(dstPos + 4, packed1);
+
+			dstPos += 8;
+			srcPos += 4;
+			d01 = d23;
+			p1 = _mm_movehl_ps(p23, p23);
+
+			rem -= 2;
+		}
+
+		if (rem) {
+			const __m128 p2 = _mm_loadl_pi(_mm_setzero_ps(), (const __m64*)srcPos);
+			const __m128 d12 = xmm_vec2_dir(p1, p2);
+			const __m128 v_aa = _mm_mul_ps(xmm_calcExtrusionVector(d01, d12), xmm_aa);
+			const __m128 packed = _mm_movelh_ps(_mm_add_ps(p1, v_aa), _mm_sub_ps(p1, v_aa));
+			_mm_store_ps(dstPos, packed);
+
+			dstPos += 4;
+			srcPos += 2;
+			d01 = d12;
+			p1 = p2;
+		}
+
+		// Last segment
+		{
+			const __m128 v_aa = _mm_mul_ps(xmm_calcExtrusionVector(d01, xmm_vec2_dir(p1, vtx0)), xmm_aa);
+			const __m128 packed = _mm_movelh_ps(_mm_add_ps(p1, v_aa), _mm_sub_ps(p1, v_aa));
+			_mm_storeu_ps(dstPos, packed);
+		}
+
+		const uint32_t colors[2] = { color, c0 };
+		vgutil::memset64(stroker->m_ColorBuffer, numVertices, &colors[0]);
+
+		stroker->m_NumVertices += numDrawVertices;
+	}
+
+		// Index buffer
+	{
+		expandIB(stroker, numDrawIndices);
+
+		uint16_t* dstIndex = stroker->m_IndexBuffer;
+
+		// First fringe quad
+		dstIndex[0] = 0; dstIndex[1] = 1; dstIndex[2] = 3;
+		dstIndex[3] = 0; dstIndex[4] = 3; dstIndex[5] = 2;
+		dstIndex += 6;
+
+		const uint32_t numFanTris = numVertices - 2;
+
+		__m128i xmm_stv = _mm_set1_epi16(2);
+		{
+			static const uint16_t delta0[8] = { 0, 0, 2, 0, 1, 3, 0, 3 };
+			static const uint16_t delta1[8] = { 2, 0, 2, 4, 2, 3, 5, 2 };
+			static const uint16_t delta2[8] = { 5, 4, 0, 4, 6, 4, 5, 7 };
+			static const uint16_t delta3[8] = { 4, 7, 6, 0, 6, 8, 6, 7 };
+			static const uint16_t delta4[8] = { 9, 6, 9, 8, 0, 0, 0, 0 };
+			const __m128i xmm_delta0 = _mm_loadu_si128((const __m128i*)delta0);
+			const __m128i xmm_delta1 = _mm_loadu_si128((const __m128i*)delta1);
+			const __m128i xmm_delta2 = _mm_loadu_si128((const __m128i*)delta2);
+			const __m128i xmm_delta3 = _mm_loadu_si128((const __m128i*)delta3);
+			const __m128i xmm_delta4 = _mm_loadu_si128((const __m128i*)delta4);
+
+			const __m128i xmm_stv_delta = _mm_set1_epi16(8);
+
+			const uint32_t numIter = numFanTris >> 2;
+			for (uint32_t i = 0; i < numIter; ++i) {
+				// { 0, stv + 0, stv + 2, stv + 0, stv + 1, stv + 3, stv + 0, stv + 3 }
+				// { stv + 2, 0, stv + 2, stv + 4, stv + 2, stv + 3, stv + 5, stv + 2 }
+				// { stv + 5, stv + 4, 0, stv + 4, stv + 6, stv + 4, stv + 5, stv + 7 }
+				// { stv + 4, stv + 7, stv + 6, 0, stv + 6, stv + 8, stv + 6, stv + 7 }
+				// { stv + 9, stv + 6, stv + 9, stv + 8 }
+				const __m128i xmm_id0 = _mm_add_epi16(xmm_stv, xmm_delta0);
+				const __m128i xmm_id1 = _mm_add_epi16(xmm_stv, xmm_delta1);
+				const __m128i xmm_id2 = _mm_add_epi16(xmm_stv, xmm_delta2);
+				const __m128i xmm_id3 = _mm_add_epi16(xmm_stv, xmm_delta3);
+				const __m128i xmm_id4 = _mm_add_epi16(xmm_stv, xmm_delta4);
+
+				_mm_storeu_si128((__m128i*)(dstIndex + 0), _mm_insert_epi16(xmm_id0, 0, 0));
+				_mm_storeu_si128((__m128i*)(dstIndex + 8), _mm_insert_epi16(xmm_id1, 0, 1));
+				_mm_storeu_si128((__m128i*)(dstIndex + 16), _mm_insert_epi16(xmm_id2, 0, 2));
+				_mm_storeu_si128((__m128i*)(dstIndex + 24), _mm_insert_epi16(xmm_id3, 0, 3));
+				_mm_storel_epi64((__m128i*)(dstIndex + 32), xmm_id4);
+
+				dstIndex += 36;
+				xmm_stv = _mm_add_epi16(xmm_stv, xmm_stv_delta);
+			}
+		}
+
+		{
+			static const uint16_t delta0[8] = { 0, 2, 0, 1, 3, 0, 3, 2 };
+			static const uint16_t delta1[8] = { 2, 4, 2, 3, 5, 2, 5, 4 };
+			const __m128i xmm_delta0 = _mm_loadu_si128((const __m128i*)delta0);
+			const __m128i xmm_delta1 = _mm_loadu_si128((const __m128i*)delta1);
+
+			uint32_t rem = numFanTris & 3;
+			if (rem >= 2) {
+				const __m128i xmm_id0 = _mm_add_epi16(xmm_stv, xmm_delta0);
+				const __m128i xmm_id1 = _mm_add_epi16(xmm_stv, xmm_delta1);
+
+				dstIndex[0] = 0;
+				_mm_storeu_si128((__m128i*)(dstIndex + 1), xmm_id0);
+
+				dstIndex[9] = 0;
+				_mm_storeu_si128((__m128i*)(dstIndex + 10), xmm_id1);
+
+				dstIndex += 18;
+				xmm_stv = _mm_add_epi16(xmm_stv, _mm_set1_epi16(4));
+				rem -= 2;
+			}
+
+			if (rem) {
+				const __m128i xmm_id0 = _mm_add_epi16(xmm_stv, xmm_delta0);
+
+				dstIndex[0] = 0;
+				_mm_storeu_si128((__m128i*)(dstIndex + 1), xmm_id0);
+
+				dstIndex += 9;
+			}
+		}
+
+		// Last fringe quad
+		const uint16_t lastID = (uint16_t)((numVertices - 1) << 1);
+		dstIndex[0] = lastID;
+		dstIndex[1] = lastID + 1;
+		dstIndex[2] = 1;
+		dstIndex[3] = lastID;
+		dstIndex[4] = 1;
+		dstIndex[5] = 0;
+
+		stroker->m_NumIndices += numDrawIndices;
+	}
+
+	mesh->m_PosBuffer = &stroker->m_PosBuffer[0].x;
+	mesh->m_ColorBuffer = stroker->m_ColorBuffer;
+	mesh->m_IndexBuffer = stroker->m_IndexBuffer;
+	mesh->m_NumVertices = stroker->m_NumVertices;
+	mesh->m_NumIndices = stroker->m_NumIndices;
+}
+#else
 void strokerConvexFillAA(Stroker* stroker, Mesh* mesh, const float* vertexList, uint32_t numVertices, uint32_t color)
 {
 	// Determine path orientation by checking the normal of the first triangle
@@ -381,6 +806,7 @@ void strokerConvexFillAA(Stroker* stroker, Mesh* mesh, const float* vertexList, 
 	mesh->m_NumVertices = stroker->m_NumVertices;
 	mesh->m_NumIndices = stroker->m_NumIndices;
 }
+#endif
 
 bool strokerConcaveFill(Stroker* stroker, Mesh* mesh, const float* vertexList, uint32_t numVertices)
 {
