@@ -514,7 +514,7 @@ void strokerConvexFillAA(Stroker* stroker, Mesh* mesh, const float* vertexList, 
 			p1 = _mm_movehl_ps(p45, p45); // p1 = p5
 			srcPos += 8;
 			dstPos += 16;
-}
+		}
 
 		uint32_t rem = (lastVertexID & 3);
 		if (rem >= 2) {
@@ -600,7 +600,7 @@ void strokerConvexFillAA(Stroker* stroker, Mesh* mesh, const float* vertexList, 
 		{
 			const __m128 v_aa = _mm_mul_ps(xmm_calcExtrusionVector(d01, xmm_vec2_dir(p1, vtx0)), xmm_aa);
 			const __m128 packed = _mm_movelh_ps(_mm_add_ps(p1, v_aa), _mm_sub_ps(p1, v_aa));
-			_mm_storeu_ps(dstPos, packed);
+			_mm_store_ps(dstPos, packed);
 		}
 
 		const uint32_t colors[2] = { color, c0 };
@@ -609,7 +609,7 @@ void strokerConvexFillAA(Stroker* stroker, Mesh* mesh, const float* vertexList, 
 		stroker->m_NumVertices += numDrawVertices;
 	}
 
-		// Index buffer
+	// Index buffer
 	{
 		expandIB(stroker, numDrawIndices);
 
