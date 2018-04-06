@@ -30,9 +30,9 @@ bool invertMatrix3(const float* __restrict t, float* __restrict inv)
 	return true;
 }
 
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
 void memset32(void* __restrict dst, uint32_t n, const void* __restrict src)
 {
-#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
 	const __m128 s128 = _mm_load_ps1((const float*)src);
 	float* d = (float*)dst;
 
@@ -62,24 +62,16 @@ void memset32(void* __restrict dst, uint32_t n, const void* __restrict src)
 	switch (rem) {
 	case 3: *d++ = *(const float*)src;
 	case 2: *d++ = *(const float*)src;
-	case 1: *d   = *(const float*)src;
+	case 1: *d = *(const float*)src;
 	}
-#else
-	const uint32_t s = *(const uint32_t*)src;
-	uint32_t* d = (uint32_t*)dst;
-	while (n-- > 0) {
-		*d++ = s;
-	}
-#endif
 }
 
 void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src)
 {
-#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
 	const float* s = (const float*)src;
 	const __m128 s0 = _mm_load_ss(&s[0]);
 	const __m128 s1 = _mm_load_ss(&s[1]);
-	const __m128 s0011 = _mm_shuffle_ps(s0, s1, 0);
+	const __m128 s0011 = _mm_shuffle_ps(s0, s1, _MM_SHUFFLE(0, 0, 0, 0));
 	const __m128 s128 = _mm_shuffle_ps(s0011, s0011, _MM_SHUFFLE(2, 0, 2, 0));
 	float* d = (float*)dst;
 
@@ -110,21 +102,10 @@ void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src)
 		d[0] = s[0];
 		d[1] = s[1];
 	}
-#else
-	const uint32_t s0 = *((const uint32_t*)src + 0);
-	const uint32_t s1 = *((const uint32_t*)src + 1);
-	uint32_t* d = (uint32_t*)dst;
-	while (n64-- > 0) {
-		d[0] = s0;
-		d[1] = s1;
-		d += 2;
-	}
-#endif
 }
 
 void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src)
 {
-#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
 	const __m128 s128 = _mm_loadu_ps((const float*)src);
 	float* d = (float*)dst;
 
@@ -148,7 +129,124 @@ void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src)
 	if (rem) {
 		_mm_storeu_ps(d, s128);
 	}
+}
+
+void batchTransformPositions(const float* __restrict src, uint32_t n, float* __restrict dst, const float* __restrict mtx)
+{
+	const __m128 mtx0123 = _mm_loadu_ps(mtx);
+	const __m128 mtx45 = _mm_loadl_pi(_mm_setzero_ps(), (const __m64*)(mtx + 4));
+
+	const __m128 mtx0 = _mm_shuffle_ps(mtx0123, mtx0123, _MM_SHUFFLE(0, 0, 0, 0));
+	const __m128 mtx1 = _mm_shuffle_ps(mtx0123, mtx0123, _MM_SHUFFLE(1, 1, 1, 1));
+	const __m128 mtx2 = _mm_shuffle_ps(mtx0123, mtx0123, _MM_SHUFFLE(2, 2, 2, 2));
+	const __m128 mtx3 = _mm_shuffle_ps(mtx0123, mtx0123, _MM_SHUFFLE(3, 3, 3, 3));
+	const __m128 mtx4 = _mm_shuffle_ps(mtx45, mtx45, _MM_SHUFFLE(0, 0, 0, 0));
+	const __m128 mtx5 = _mm_shuffle_ps(mtx45, mtx45, _MM_SHUFFLE(1, 1, 1, 1));
+
+	const uint32_t iter = n >> 3;
+	for (uint32_t i = 0; i < iter; ++i) {
+		// x' = m[0] * x + m[2] * y + m[4];
+		// y' = m[1] * x + m[3] * y + m[5];
+		const __m128 xy01 = _mm_load_ps(src + 0);  // { x0, y0, x1, y1 }
+		const __m128 xy23 = _mm_load_ps(src + 4);  // { x2, y2, x3, y3 }
+		const __m128 xy45 = _mm_load_ps(src + 8);  // { x4, y4, x5, y5 }
+		const __m128 xy67 = _mm_load_ps(src + 12); // { x6, y6, x7, y7 }
+
+		const __m128 x0123 = _mm_shuffle_ps(xy01, xy23, _MM_SHUFFLE(2, 0, 2, 0)); // { x0, x1, x2, x3 }
+		const __m128 y0123 = _mm_shuffle_ps(xy01, xy23, _MM_SHUFFLE(3, 1, 3, 1)); // { y0, y1, y2, y3 }
+		const __m128 x4567 = _mm_shuffle_ps(xy45, xy67, _MM_SHUFFLE(2, 0, 2, 0)); // { x0, x1, x2, x3 }
+		const __m128 y4567 = _mm_shuffle_ps(xy45, xy67, _MM_SHUFFLE(3, 1, 3, 1)); // { y0, y1, y2, y3 }
+
+		const __m128 resx0123 = _mm_add_ps(_mm_add_ps(_mm_mul_ps(x0123, mtx0), mtx4), _mm_mul_ps(y0123, mtx2)); // { xi * m[0] + yi * m[2] + m[4] }
+		const __m128 resy0123 = _mm_add_ps(_mm_add_ps(_mm_mul_ps(x0123, mtx1), mtx5), _mm_mul_ps(y0123, mtx3)); // { x1 * m[1] + yi * m[3] + m[5] }
+		const __m128 resx4567 = _mm_add_ps(_mm_add_ps(_mm_mul_ps(x4567, mtx0), mtx4), _mm_mul_ps(y4567, mtx2)); // { xi * m[0] + yi * m[2] + m[4] }
+		const __m128 resy4567 = _mm_add_ps(_mm_add_ps(_mm_mul_ps(x4567, mtx1), mtx5), _mm_mul_ps(y4567, mtx3)); // { x1 * m[1] + yi * m[3] + m[5] }
+
+		const __m128 resx01_resy01 = _mm_movelh_ps(resx0123, resy0123);                               // { rx0, rx1, ry0, ry1 }
+		const __m128 resx23_resy23 = _mm_movehl_ps(resy0123, resx0123);                               // { rx2, rx3, ry2, ry3 }
+		const __m128 resx45_resy45 = _mm_movelh_ps(resx4567, resy4567);                               // { rx4, rx5, ry4, ry5 }
+		const __m128 resx67_resy67 = _mm_movehl_ps(resy4567, resx4567);                               // { rx6, rx7, ry6, ry7 }
+
+		const __m128 resxy01 = _mm_shuffle_ps(resx01_resy01, resx01_resy01, _MM_SHUFFLE(3, 1, 2, 0)); // { rx0, ry0, rx1, ry1 }
+		const __m128 resxy23 = _mm_shuffle_ps(resx23_resy23, resx23_resy23, _MM_SHUFFLE(3, 1, 2, 0)); // { rx2, ry2, rx3, ry3 }
+		const __m128 resxy45 = _mm_shuffle_ps(resx45_resy45, resx45_resy45, _MM_SHUFFLE(3, 1, 2, 0)); // { rx4, ry4, rx5, ry5 }
+		const __m128 resxy67 = _mm_shuffle_ps(resx67_resy67, resx67_resy67, _MM_SHUFFLE(3, 1, 2, 0)); // { rx6, ry6, rx7, ry7 }
+
+		_mm_store_ps(dst + 0, resxy01);
+		_mm_store_ps(dst + 4, resxy23);
+		_mm_store_ps(dst + 8, resxy45);
+		_mm_store_ps(dst + 12, resxy67);
+
+		src += 16;
+		dst += 16;
+	}
+
+	uint32_t rem = n & 7;
+	if (rem >= 4) {
+		const __m128 xy01 = _mm_load_ps(src + 0);
+		const __m128 xy23 = _mm_load_ps(src + 4);
+
+		const __m128 x0123 = _mm_shuffle_ps(xy01, xy23, _MM_SHUFFLE(2, 0, 2, 0));
+		const __m128 y0123 = _mm_shuffle_ps(xy01, xy23, _MM_SHUFFLE(3, 1, 3, 1));
+
+		const __m128 resx0123 = _mm_add_ps(_mm_add_ps(_mm_mul_ps(x0123, mtx0), mtx4), _mm_mul_ps(y0123, mtx2));
+		const __m128 resy0123 = _mm_add_ps(_mm_add_ps(_mm_mul_ps(x0123, mtx1), mtx5), _mm_mul_ps(y0123, mtx3));
+
+		const __m128 resx01_resy01 = _mm_movelh_ps(resx0123, resy0123);
+		const __m128 resx23_resy23 = _mm_movehl_ps(resy0123, resx0123);
+
+		const __m128 resxy01 = _mm_shuffle_ps(resx01_resy01, resx01_resy01, _MM_SHUFFLE(3, 1, 2, 0));
+		const __m128 resxy23 = _mm_shuffle_ps(resx23_resy23, resx23_resy23, _MM_SHUFFLE(3, 1, 2, 0));
+
+		_mm_store_ps(dst + 0, resxy01);
+		_mm_store_ps(dst + 4, resxy23);
+
+		src += 8;
+		dst += 8;
+
+		rem -= 4;
+	}
+
+	switch (rem) {
+	case 3:
+		dst[0] = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
+		dst[1] = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
+		src += 2;
+		dst += 2;
+	case 2:
+		dst[0] = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
+		dst[1] = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
+		src += 2;
+		dst += 2;
+	case 1:
+		dst[0] = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
+		dst[1] = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
+	}
+}
 #else
+void memset32(void* __restrict dst, uint32_t n, const void* __restrict src)
+{
+	const uint32_t s = *(const uint32_t*)src;
+	uint32_t* d = (uint32_t*)dst;
+	while (n-- > 0) {
+		*d++ = s;
+	}
+}
+
+void memset64(void* __restrict dst, uint32_t n64, const void* __restrict src)
+{
+	const uint32_t s0 = *((const uint32_t*)src + 0);
+	const uint32_t s1 = *((const uint32_t*)src + 1);
+	uint32_t* d = (uint32_t*)dst;
+	while (n64-- > 0) {
+		d[0] = s0;
+		d[1] = s1;
+		d += 2;
+	}
+}
+
+void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src)
+{
 	const uint32_t s0 = *((const uint32_t*)src + 0);
 	const uint32_t s1 = *((const uint32_t*)src + 1);
 	const uint32_t s2 = *((const uint32_t*)src + 2);
@@ -161,8 +259,16 @@ void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src)
 		d[3] = s3;
 		d += 4;
 	}
-#endif
 }
+
+void batchTransformPositions(const float* __restrict v, uint32_t n, float* __restrict p, const float* __restrict mtx)
+{
+	for (uint32_t i = 0; i < n; ++i) {
+		const uint32_t id = i << 1;
+		transformPos2D(v[id], v[id + 1], mtx, &p[id]);
+	}
+}
+#endif
 
 void genQuadIndices_unaligned(uint16_t* dst, uint32_t n, uint16_t firstVertexID)
 {
@@ -335,109 +441,6 @@ void batchTransformTextQuads(const float* __restrict quads, uint32_t n, const fl
 	}
 #endif
 }
-
-#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
-void batchTransformPositions(const float* __restrict src, uint32_t n, float* __restrict dst, const float* __restrict mtx)
-{
-	const __m128 mtx0123 = _mm_loadu_ps(mtx);
-	const __m128 mtx45 = _mm_loadl_pi(_mm_setzero_ps(), (const __m64*)(mtx + 4));
-
-	const __m128 mtx0 = _mm_shuffle_ps(mtx0123, mtx0123, _MM_SHUFFLE(0, 0, 0, 0));
-	const __m128 mtx1 = _mm_shuffle_ps(mtx0123, mtx0123, _MM_SHUFFLE(1, 1, 1, 1));
-	const __m128 mtx2 = _mm_shuffle_ps(mtx0123, mtx0123, _MM_SHUFFLE(2, 2, 2, 2));
-	const __m128 mtx3 = _mm_shuffle_ps(mtx0123, mtx0123, _MM_SHUFFLE(3, 3, 3, 3));
-	const __m128 mtx4 = _mm_shuffle_ps(mtx45, mtx45, _MM_SHUFFLE(0, 0, 0, 0));
-	const __m128 mtx5 = _mm_shuffle_ps(mtx45, mtx45, _MM_SHUFFLE(1, 1, 1, 1));
-
-	const uint32_t iter = n >> 3;
-	for (uint32_t i = 0; i < iter; ++i) {
-		// x' = m[0] * x + m[2] * y + m[4];
-		// y' = m[1] * x + m[3] * y + m[5];
-		const __m128 xy01 = _mm_load_ps(src + 0);  // { x0, y0, x1, y1 }
-		const __m128 xy23 = _mm_load_ps(src + 4);  // { x2, y2, x3, y3 }
-		const __m128 xy45 = _mm_load_ps(src + 8);  // { x4, y4, x5, y5 }
-		const __m128 xy67 = _mm_load_ps(src + 12); // { x6, y6, x7, y7 }
-
-		const __m128 x0123 = _mm_shuffle_ps(xy01, xy23, _MM_SHUFFLE(2, 0, 2, 0)); // { x0, x1, x2, x3 }
-		const __m128 y0123 = _mm_shuffle_ps(xy01, xy23, _MM_SHUFFLE(3, 1, 3, 1)); // { y0, y1, y2, y3 }
-		const __m128 x4567 = _mm_shuffle_ps(xy45, xy67, _MM_SHUFFLE(2, 0, 2, 0)); // { x0, x1, x2, x3 }
-		const __m128 y4567 = _mm_shuffle_ps(xy45, xy67, _MM_SHUFFLE(3, 1, 3, 1)); // { y0, y1, y2, y3 }
-
-		const __m128 resx0123 = _mm_add_ps(_mm_add_ps(_mm_mul_ps(x0123, mtx0), mtx4), _mm_mul_ps(y0123, mtx2)); // { xi * m[0] + yi * m[2] + m[4] }
-		const __m128 resy0123 = _mm_add_ps(_mm_add_ps(_mm_mul_ps(x0123, mtx1), mtx5), _mm_mul_ps(y0123, mtx3)); // { x1 * m[1] + yi * m[3] + m[5] }
-		const __m128 resx4567 = _mm_add_ps(_mm_add_ps(_mm_mul_ps(x4567, mtx0), mtx4), _mm_mul_ps(y4567, mtx2)); // { xi * m[0] + yi * m[2] + m[4] }
-		const __m128 resy4567 = _mm_add_ps(_mm_add_ps(_mm_mul_ps(x4567, mtx1), mtx5), _mm_mul_ps(y4567, mtx3)); // { x1 * m[1] + yi * m[3] + m[5] }
-
-		const __m128 resx01_resy01 = _mm_movelh_ps(resx0123, resy0123);                               // { rx0, rx1, ry0, ry1 }
-		const __m128 resx23_resy23 = _mm_movehl_ps(resy0123, resx0123);                               // { rx2, rx3, ry2, ry3 }
-		const __m128 resx45_resy45 = _mm_movelh_ps(resx4567, resy4567);                               // { rx4, rx5, ry4, ry5 }
-		const __m128 resx67_resy67 = _mm_movehl_ps(resy4567, resx4567);                               // { rx6, rx7, ry6, ry7 }
-
-		const __m128 resxy01 = _mm_shuffle_ps(resx01_resy01, resx01_resy01, _MM_SHUFFLE(3, 1, 2, 0)); // { rx0, ry0, rx1, ry1 }
-		const __m128 resxy23 = _mm_shuffle_ps(resx23_resy23, resx23_resy23, _MM_SHUFFLE(3, 1, 2, 0)); // { rx2, ry2, rx3, ry3 }
-		const __m128 resxy45 = _mm_shuffle_ps(resx45_resy45, resx45_resy45, _MM_SHUFFLE(3, 1, 2, 0)); // { rx4, ry4, rx5, ry5 }
-		const __m128 resxy67 = _mm_shuffle_ps(resx67_resy67, resx67_resy67, _MM_SHUFFLE(3, 1, 2, 0)); // { rx6, ry6, rx7, ry7 }
-
-		_mm_store_ps(dst + 0, resxy01);
-		_mm_store_ps(dst + 4, resxy23);
-		_mm_store_ps(dst + 8, resxy45);
-		_mm_store_ps(dst + 12, resxy67);
-
-		src += 16;
-		dst += 16;
-	}
-
-	uint32_t rem = n & 7;
-	if (rem >= 4) {
-		const __m128 xy01 = _mm_load_ps(src + 0);
-		const __m128 xy23 = _mm_load_ps(src + 4);
-
-		const __m128 x0123 = _mm_shuffle_ps(xy01, xy23, _MM_SHUFFLE(2, 0, 2, 0));
-		const __m128 y0123 = _mm_shuffle_ps(xy01, xy23, _MM_SHUFFLE(3, 1, 3, 1));
-
-		const __m128 resx0123 = _mm_add_ps(_mm_add_ps(_mm_mul_ps(x0123, mtx0), mtx4), _mm_mul_ps(y0123, mtx2));
-		const __m128 resy0123 = _mm_add_ps(_mm_add_ps(_mm_mul_ps(x0123, mtx1), mtx5), _mm_mul_ps(y0123, mtx3));
-
-		const __m128 resx01_resy01 = _mm_movelh_ps(resx0123, resy0123);
-		const __m128 resx23_resy23 = _mm_movehl_ps(resy0123, resx0123);
-
-		const __m128 resxy01 = _mm_shuffle_ps(resx01_resy01, resx01_resy01, _MM_SHUFFLE(3, 1, 2, 0));
-		const __m128 resxy23 = _mm_shuffle_ps(resx23_resy23, resx23_resy23, _MM_SHUFFLE(3, 1, 2, 0));
-
-		_mm_store_ps(dst + 0, resxy01);
-		_mm_store_ps(dst + 4, resxy23);
-
-		src += 8;
-		dst += 8;
-
-		rem -= 4;
-	}
-
-	switch (rem) {
-	case 3:
-		dst[0] = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
-		dst[1] = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
-		src += 2;
-		dst += 2;
-	case 2:
-		dst[0] = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
-		dst[1] = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
-		src += 2;
-		dst += 2;
-	case 1:
-		dst[0] = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
-		dst[1] = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
-	}
-}
-#else
-void batchTransformPositions(const float* __restrict v, uint32_t n, float* __restrict p, const float* __restrict mtx)
-{
-	for (uint32_t i = 0; i < n; ++i) {
-		const uint32_t id = i << 1;
-		transformPos2D(v[id], v[id + 1], mtx, &p[id]);
-	}
-}
-#endif
 
 void batchTransformPositions_Unaligned(const float* __restrict v, uint32_t n, float* __restrict p, const float* __restrict mtx)
 {
