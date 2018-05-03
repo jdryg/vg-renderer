@@ -88,9 +88,9 @@ static inline __m128 xmm_calcExtrusionVector(const __m128 d01, const __m128 d12)
 {
 	const float cross = xmm_vec2_cross(d12, d01);
 #if 0
-	return (fabs(cross) > VG_EPSILON) ? _mm_mul_ps(_mm_sub_ps(d01, d12), _mm_set_ps1(rcp(cross))) : xmm_vec2_rotCCW90(d01);
+	return (bx::abs(cross) > VG_EPSILON) ? _mm_mul_ps(_mm_sub_ps(d01, d12), _mm_set_ps1(rcp(cross))) : xmm_vec2_rotCCW90(d01);
 #else
-	return (fabs(cross) > VG_EPSILON) ? _mm_mul_ps(_mm_sub_ps(d01, d12), _mm_set_ps1(1.0f / cross)) : xmm_vec2_rotCCW90(d01);
+	return (bx::abs(cross) > VG_EPSILON) ? _mm_mul_ps(_mm_sub_ps(d01, d12), _mm_set_ps1(1.0f / cross)) : xmm_vec2_rotCCW90(d01);
 #endif
 }
 
