@@ -3434,7 +3434,7 @@ static void ctxResetClip(Context* ctx)
 static GradientHandle ctxCreateLinearGradient(Context* ctx, float sx, float sy, float ex, float ey, Color icol, Color ocol)
 {
 	if (ctx->m_NextGradientID >= ctx->m_Config.m_MaxGradients) {
-		return VG_INVALID_HANDLE;
+		return VG_INVALID_HANDLE32;
 	}
 
 	GradientHandle handle = { (uint16_t)ctx->m_NextGradientID++, 0 };
@@ -3497,7 +3497,7 @@ static GradientHandle ctxCreateLinearGradient(Context* ctx, float sx, float sy, 
 static GradientHandle ctxCreateBoxGradient(Context* ctx, float x, float y, float w, float h, float r, float f, Color icol, Color ocol)
 {
 	if (ctx->m_NextGradientID >= ctx->m_Config.m_MaxGradients) {
-		return VG_INVALID_HANDLE;
+		return VG_INVALID_HANDLE32;
 	}
 
 	GradientHandle handle = { (uint16_t)ctx->m_NextGradientID++, 0 };
@@ -3548,7 +3548,7 @@ static GradientHandle ctxCreateBoxGradient(Context* ctx, float x, float y, float
 static GradientHandle ctxCreateRadialGradient(Context* ctx, float cx, float cy, float inr, float outr, Color icol, Color ocol)
 {
 	if (ctx->m_NextGradientID >= ctx->m_Config.m_MaxGradients) {
-		return VG_INVALID_HANDLE;
+		return VG_INVALID_HANDLE32;
 	}
 
 	GradientHandle handle = { (uint16_t)ctx->m_NextGradientID++, 0 };
@@ -3602,11 +3602,11 @@ static GradientHandle ctxCreateRadialGradient(Context* ctx, float cx, float cy, 
 static ImagePatternHandle ctxCreateImagePattern(Context* ctx, float cx, float cy, float w, float h, float angle, ImageHandle image)
 {
 	if (!isValid(image)) {
-		return VG_INVALID_HANDLE;
+		return VG_INVALID_HANDLE32;
 	}
 
 	if (ctx->m_NextImagePatternID >= ctx->m_Config.m_MaxImagePatterns) {
-		return VG_INVALID_HANDLE;
+		return VG_INVALID_HANDLE32;
 	}
 
 	ImagePatternHandle handle = { (uint16_t)ctx->m_NextImagePatternID++, 0 };

@@ -80,6 +80,7 @@
 #define VG_HANDLE(_name) struct _name { uint16_t idx; }
 #define VG_HANDLE32(_name) struct _name { uint16_t idx; uint16_t flags; }
 #define VG_INVALID_HANDLE { UINT16_MAX }
+#define VG_INVALID_HANDLE32 { UINT16_MAX, 0 }
 
 #define VG_COLOR_RED_SHIFT   0
 #define VG_COLOR_GREEN_SHIFT 8
