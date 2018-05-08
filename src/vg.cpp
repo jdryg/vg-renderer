@@ -1033,7 +1033,9 @@ void destroyContext(Context* ctx)
 	BX_ALIGNED_FREE(allocator, ctx->m_TransformedVertices, 16);
 	ctx->m_TransformedVertices = nullptr;
 
+#if BX_CONFIG_SUPPORTS_THREADING
 	BX_DELETE(allocator, ctx->m_DataPoolMutex);
+#endif
 
 	BX_FREE(allocator, ctx);
 }
@@ -2187,7 +2189,7 @@ ImageHandle createImage(Context* ctx, uint16_t w, uint16_t h, uint32_t flags, co
 	uint32_t bgfxFlags = BGFX_TEXTURE_NONE;
 
 #if BX_PLATFORM_EMSCRIPTEN
-	if (!isPowerOf2(w) || !isPowerOf2(h)) {
+	if (!bx::isPowerOf2(w) || !bx::isPowerOf2(h)) {
 		flags = ImageFlags::Filter_NearestUV | ImageFlags::Filter_NearestW;
 		bgfxFlags |= BGFX_TEXTURE_U_CLAMP | BGFX_TEXTURE_V_CLAMP | BGFX_TEXTURE_W_CLAMP;
 	}
