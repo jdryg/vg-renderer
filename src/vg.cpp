@@ -32,6 +32,7 @@
 
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment within conditional expression
 
+#define VG_CONFIG_MIN_FONT_SCALE                 0.1f
 #define VG_CONFIG_MAX_FONT_SCALE                 4.0f
 #define VG_CONFIG_MAX_FONT_IMAGES                4
 #define VG_CONFIG_MIN_FONT_ATLAS_SIZE            512
@@ -39,7 +40,7 @@ BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment within conditional express
 
 // Minimum font size (after scaling with the current transformation matrix),
 // below which no text will be rendered.
-#define VG_CONFIG_MIN_FONT_SIZE              1.0f
+#define VG_CONFIG_MIN_FONT_SIZE              4.0f
 
 namespace vg
 {
@@ -1946,7 +1947,7 @@ int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const c
 			type = CP_SPACE;
 			break;
 		case 32:		// space 
-						// JD: Treat spaces as regular characters in order to be able to have pre and post spaces in an edit box.
+			// JD: Treat spaces as regular characters in order to be able to have pre and post spaces in an edit box.
 			if (flags & TextBreakFlags::SpacesAsChars) {
 				type = CP_CHAR;
 			} else {
@@ -2016,14 +2017,14 @@ int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const c
 				// track last non-white space character
 				if (type == CP_CHAR) {
 					rowEnd = iter.next;
-					rowWidth = iter.nextx - rowStartX;
+//					rowWidth = iter.nextx - rowStartX;
 					rowMaxX = q.x1 - rowStartX;
 				}
 
 				// track last end of a word
 				if (ptype == CP_CHAR && type == CP_SPACE) {
 					breakEnd = iter.str;
-					breakWidth = rowWidth;
+					breakWidth = nextWidth; // rowWidth;
 					breakMaxX = rowMaxX;
 				}
 
@@ -2082,6 +2083,8 @@ int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const c
 					breakEnd = rowStart;
 					breakWidth = 0.0;
 					breakMaxX = 0.0;
+				} else {
+					rowWidth = nextWidth;
 				}
 			}
 		}
@@ -3930,14 +3933,21 @@ static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const
 
 static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end)
 {
-	uint32_t alignment = cfg.m_Alignment;
+	VG_CHECK(isValid(cfg.m_FontHandle), "Invalid font handle");
 
-	int halign = alignment & (FONS_ALIGN_LEFT | FONS_ALIGN_CENTER | FONS_ALIGN_RIGHT);
-	int valign = alignment & (FONS_ALIGN_TOP | FONS_ALIGN_MIDDLE | FONS_ALIGN_BOTTOM | FONS_ALIGN_BASELINE);
+	const State* state = getState(ctx);
+	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
+	const float scaledFontSize = cfg.m_FontSize * scale;
+	if (scaledFontSize < VG_CONFIG_MIN_FONT_SIZE) {
+		return;
+	}
 
-	float lineh = getTextLineHeight(ctx, cfg);
+	const uint32_t alignment = cfg.m_Alignment;
+	const int halign = alignment & (FONS_ALIGN_LEFT | FONS_ALIGN_CENTER | FONS_ALIGN_RIGHT);
+	const int valign = alignment & (FONS_ALIGN_TOP | FONS_ALIGN_MIDDLE | FONS_ALIGN_BOTTOM | FONS_ALIGN_BASELINE);
+	const float lineh = getTextLineHeight(ctx, cfg);
 
-	alignment = FONS_ALIGN_LEFT | valign;
+	const TextConfig newCfg = makeTextConfig(ctx, cfg.m_FontHandle, cfg.m_FontSize, FONS_ALIGN_LEFT | valign, cfg.m_Color);
 
 	TextRow rows[2];
 	int nrows;
@@ -3946,11 +3956,11 @@ static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, fl
 			TextRow* row = &rows[i];
 
 			if (halign & FONS_ALIGN_LEFT) {
-				text(ctx, cfg, x, y, row->start, row->end);
+				ctxText(ctx, newCfg, x, y, row->start, row->end);
 			} else if (halign & FONS_ALIGN_CENTER) {
-				text(ctx, cfg, x + breakWidth * 0.5f - row->width * 0.5f, y, row->start, row->end);
+				ctxText(ctx, newCfg, x + (breakWidth - row->width) * 0.5f, y, row->start, row->end);
 			} else if (halign & FONS_ALIGN_RIGHT) {
-				text(ctx, cfg, x + breakWidth - row->width, y, row->start, row->end);
+				ctxText(ctx, newCfg, x + breakWidth - row->width, y, row->start, row->end);
 			}
 
 			y += lineh; // Assume line height multiplier to be 1.0 (NanoVG allows the user to change it, but I don't use it).
@@ -4595,7 +4605,7 @@ static void updateState(State* state)
 
 	const float quantFactor = 0.1f;
 	const float quantScale = (bx::floor((avgScale / quantFactor) + 0.5f)) * quantFactor;
-	state->m_FontScale = bx::min<float>(quantScale, VG_CONFIG_MAX_FONT_SCALE);
+	state->m_FontScale = bx::clamp<float>(quantScale, VG_CONFIG_MIN_FONT_SCALE, VG_CONFIG_MAX_FONT_SCALE);
 }
 
 static float* allocTransformedVertices(Context* ctx, uint32_t numVertices)
