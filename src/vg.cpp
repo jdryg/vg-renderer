@@ -223,6 +223,7 @@ struct CommandType
 		TransformTranslate,
 		TransformRotate,
 		TransformMult,
+		SetViewBox,
 
 		// Text
 		Text,
@@ -321,6 +322,7 @@ struct ContextVTable
 	void(*transformTranslate)(Context* ctx, float x, float y);
 	void(*transformRotate)(Context* ctx, float ang_rad);
 	void(*transformMult)(Context* ctx, const float* mtx, bool pre);
+	void(*setViewBox)(Context* ctx, float x, float y, float w, float h);
 	void(*text)(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 	void(*textBox)(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end);
 	void(*indexedTriList)(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* color, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
@@ -518,6 +520,7 @@ static void clTransformScale(Context* ctx, CommandList* cl, float x, float y);
 static void clTransformTranslate(Context* ctx, CommandList* cl, float x, float y);
 static void clTransformRotate(Context* ctx, CommandList* cl, float ang_rad);
 static void clTransformMult(Context* ctx, CommandList* cl, const float* mtx, bool pre);
+static void clSetViewBox(Context* ctx, CommandList* cl, float x, float y, float w, float h);
 static void clText(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void clTextBox(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end);
 static void clSubmitCommandList(Context* ctx, CommandList* cl, CommandListHandle childList);
@@ -574,6 +577,7 @@ static void ctxTransformScale(Context* ctx, float x, float y);
 static void ctxTransformTranslate(Context* ctx, float x, float y);
 static void ctxTransformRotate(Context* ctx, float ang_rad);
 static void ctxTransformMult(Context* ctx, const float* mtx, bool pre);
+static void ctxSetViewBox(Context* ctx, float x, float y, float w, float h);
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end);
@@ -618,6 +622,7 @@ static void aclTransformScale(Context* ctx, float x, float y);
 static void aclTransformTranslate(Context* ctx, float x, float y);
 static void aclTransformRotate(Context* ctx, float ang_rad);
 static void aclTransformMult(Context* ctx, const float* mtx, bool pre);
+static void aclSetViewBox(Context* ctx, float x, float y, float w, float h);
 static void aclIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 static void aclText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void aclTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end);
@@ -661,6 +666,7 @@ const ContextVTable g_CtxVTable = {
 	ctxTransformTranslate,
 	ctxTransformRotate,
 	ctxTransformMult,
+	ctxSetViewBox,
 	ctxText,
 	ctxTextBox,
 	ctxIndexedTriList,
@@ -705,6 +711,7 @@ const ContextVTable g_ActiveCmdListVTable = {
 	aclTransformTranslate,
 	aclTransformRotate,
 	aclTransformMult,
+	aclSetViewBox,
 	aclText,
 	aclTextBox,
 	aclIndexedTriList,
@@ -1663,6 +1670,15 @@ void transformMult(Context* ctx, const float* mtx, bool pre)
 	ctx->m_VTable->transformMult(ctx, mtx, pre);
 #else
 	ctxTransformMult(ctx, mtx, pre);
+#endif
+}
+
+void setViewBox(Context* ctx, float x, float y, float w, float h)
+{
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
+	ctx->m_VTable->setViewBox(ctx, x, y, w, h);
+#else
+	ctxSetViewBox(ctx, x, y, w, h);
 #endif
 }
 
@@ -2667,6 +2683,14 @@ void clTransformMult(Context* ctx, CommandListHandle handle, const float* mtx, b
 	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clTransformMult(ctx, cl, mtx, pre);
+}
+
+void clSetViewBox(Context* ctx, CommandListHandle handle, float x, float y, float w, float h)
+{
+	VG_CHECK(isValid(handle), "Invalid command list handle");
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
+
+	clSetViewBox(ctx, cl, x, y, w, h);
 }
 
 void clText(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, const char* str, const char* end)
@@ -3825,6 +3849,15 @@ static void ctxTransformMult(Context* ctx, const float* mtx, bool pre)
 	updateState(state);
 }
 
+static void ctxSetViewBox(Context* ctx, float x, float y, float w, float h)
+{
+	const float scaleX = (float)ctx->m_CanvasWidth / w;
+	const float scaleY = (float)ctx->m_CanvasHeight / h;
+
+	ctxTransformTranslate(ctx, -x * scaleX, -y * scaleY);
+	ctxTransformScale(ctx, scaleX, scaleY);
+}
+
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
 {
 	if (!isValid(img)) {
@@ -4285,6 +4318,11 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 			const bool pre = CMD_READ(cmd, bool);
 			ctxTransformMult(ctx, mtx, pre);
 		} break;
+		case CommandType::SetViewBox: {
+			const float* viewBox = (float*)cmd;
+			cmd += sizeof(float) * 4;
+			ctxSetViewBox(ctx, viewBox[0], viewBox[1], viewBox[2], viewBox[3]);
+		} break;
 		case CommandType::BeginClip: {
 			const ClipRule::Enum rule = CMD_READ(cmd, ClipRule::Enum);
 			ctxBeginClip(ctx, rule);
@@ -4545,6 +4583,12 @@ static void aclTransformMult(Context* ctx, const float* mtx, bool pre)
 {
 	VG_CHECK(ctx->m_ActiveCommandList, "Invalid Context state");
 	clTransformMult(ctx, ctx->m_ActiveCommandList, mtx, pre);
+}
+
+static void aclSetViewBox(Context* ctx, float x, float y, float w, float h)
+{
+	VG_CHECK(ctx->m_ActiveCommandList, "Invalid Context state");
+	clSetViewBox(ctx, ctx->m_ActiveCommandList, x, y, w, h);
 }
 
 static void aclIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
@@ -5834,6 +5878,11 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			const bool pre = CMD_READ(cmd, bool);
 			ctxTransformMult(ctx, mtx, pre);
 		} break;
+		case CommandType::SetViewBox: {
+			const float* viewBox = (float*)cmd;
+			cmd += sizeof(float) * 4;
+			ctxSetViewBox(ctx, viewBox[0], viewBox[1], viewBox[2], viewBox[3]);
+		} break;
 		case CommandType::BeginClip: {
 			const ClipRule::Enum rule = CMD_READ(cmd, ClipRule::Enum);
 			ctxBeginClip(ctx, rule);
@@ -6349,6 +6398,15 @@ static void clTransformMult(Context* ctx, CommandList* cl, const float* mtx, boo
 	bx::memCopy(ptr, mtx, sizeof(float) * 6);
 	ptr += sizeof(float) * 6;
 	CMD_WRITE(ptr, bool, pre);
+}
+
+static void clSetViewBox(Context* ctx, CommandList* cl, float x, float y, float w, float h)
+{
+	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::SetViewBox, sizeof(float) * 4);
+	CMD_WRITE(ptr, float, x);
+	CMD_WRITE(ptr, float, y);
+	CMD_WRITE(ptr, float, w);
+	CMD_WRITE(ptr, float, h);
 }
 
 static void clText(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, const char* str, const char* end)

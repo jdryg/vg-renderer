@@ -410,6 +410,7 @@ void transformScale(Context* ctx, float x, float y);
 void transformTranslate(Context* ctx, float x, float y);
 void transformRotate(Context* ctx, float ang_rad);
 void transformMult(Context* ctx, const float* mtx, bool pre);
+void setViewBox(Context* ctx, float x, float y, float w, float h);
 
 void getTransform(Context* ctx, float* mtx);
 void getScissor(Context* ctx, float* rect);
@@ -494,6 +495,7 @@ void clTransformScale(Context* ctx, CommandListHandle handle, float x, float y);
 void clTransformTranslate(Context* ctx, CommandListHandle handle, float x, float y);
 void clTransformRotate(Context* ctx, CommandListHandle handle, float ang_rad);
 void clTransformMult(Context* ctx, CommandListHandle handle, const float* mtx, bool pre);
+void clSetViewBox(Context* ctx, CommandListHandle handle, float x, float y, float w, float h);
 
 void clText(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end);

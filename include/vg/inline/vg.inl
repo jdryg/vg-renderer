@@ -324,6 +324,11 @@ inline void clTransformMult(CommandListRef& ref, const float* mtx, bool pre)
 	clTransformMult(ref.m_Context, ref.m_Handle, mtx, pre);
 }
 
+inline void clSetViewBox(CommandListRef& ref, float x, float y, float w, float h)
+{
+	clSetViewBox(ref.m_Context, ref.m_Handle, x, y, w, h);
+}
+
 inline void clText(CommandListRef& ref, const TextConfig& cfg, float x, float y, const char* str, const char* end)
 {
 	clText(ref.m_Context, ref.m_Handle, cfg, x, y, str, end);
