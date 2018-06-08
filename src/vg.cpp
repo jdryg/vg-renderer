@@ -3854,8 +3854,20 @@ static void ctxSetViewBox(Context* ctx, float x, float y, float w, float h)
 	const float scaleX = (float)ctx->m_CanvasWidth / w;
 	const float scaleY = (float)ctx->m_CanvasHeight / h;
 
-	ctxTransformTranslate(ctx, -x * scaleX, -y * scaleY);
-	ctxTransformScale(ctx, scaleX, scaleY);
+	State* state = getState(ctx);
+	float* stateTransform = &state->m_TransformMtx[0];
+
+	// ctxTransformScale(ctx, scaleX, scaleY);
+	stateTransform[0] = scaleX * stateTransform[0];
+	stateTransform[1] = scaleX * stateTransform[1];
+	stateTransform[2] = scaleY * stateTransform[2];
+	stateTransform[3] = scaleY * stateTransform[3];
+
+	// ctxTransformTranslate(ctx, -x, -y);
+	stateTransform[4] -= stateTransform[0] * x + stateTransform[2] * y;
+	stateTransform[5] -= stateTransform[1] * x + stateTransform[3] * y;
+
+	updateState(state);
 }
 
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
