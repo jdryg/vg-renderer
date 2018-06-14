@@ -2822,7 +2822,7 @@ static void ctxFillPathColor(Context* ctx, Color color, uint32_t flags)
 	const State* state = getState(ctx);
 	const float globalAlpha = hasCache ? 1.0f : state->m_GlobalAlpha;
 	const Color col = recordClipCommands ? Colors::Black : colorSetAlpha(color, (uint8_t)(globalAlpha * colorGetAlpha(color)));
-	if (colorGetAlpha(col) == 0) {
+	if (!hasCache && colorGetAlpha(col) == 0) {
 		return;
 	}
 
@@ -3050,7 +3050,7 @@ static void ctxFillPathImagePattern(Context* ctx, ImagePatternHandle imgPatternH
 	const State* state = getState(ctx);
 	const float globalAlpha = hasCache ? 1.0f : state->m_GlobalAlpha;
 	const Color col = colorSetAlpha(color, (uint8_t)(globalAlpha * colorGetAlpha(color)));
-	if (colorGetAlpha(col) == 0) {
+	if (!hasCache && colorGetAlpha(col) == 0) {
 		return;
 	}
 
@@ -3167,7 +3167,7 @@ static void ctxStrokePathColor(Context* ctx, Color color, float width, uint32_t 
 
 	const float alphaScale = !isThin ? globalAlpha : globalAlpha * bx::square(bx::clamp<float>(scaledStrokeWidth, 0.0f, fringeWidth));
 	const Color col = recordClipCommands ? Colors::Black : colorSetAlpha(color, (uint8_t)(alphaScale * colorGetAlpha(color)));
-	if (colorGetAlpha(col) == 0) {
+	if (!hasCache && colorGetAlpha(col) == 0) {
 		return;
 	}
 
@@ -3348,7 +3348,7 @@ static void ctxStrokePathImagePattern(Context* ctx, ImagePatternHandle imgPatter
 
 	const float alphaScale = isThin ? globalAlpha : globalAlpha * bx::square(bx::clamp<float>(scaledStrokeWidth, 0.0f, fringeWidth));
 	const Color col = colorSetAlpha(color, (uint8_t)(alphaScale * colorGetAlpha(color)));
-	if (colorGetAlpha(col) == 0) {
+	if (!hasCache && colorGetAlpha(col) == 0) {
 		return;
 	}
 
