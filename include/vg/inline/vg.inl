@@ -338,4 +338,9 @@ inline void clTextBox(CommandListRef& ref, const TextConfig& cfg, float x, float
 {
 	clTextBox(ref.m_Context, ref.m_Handle, cfg, x, y, breakWidth, str, end);
 }
+
+inline void clSubmitCommandList(CommandListRef& ref, CommandListHandle child)
+{
+	clSubmitCommandList(ref.m_Context, ref.m_Handle, child);
+}
 }

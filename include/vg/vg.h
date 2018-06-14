@@ -563,6 +563,7 @@ void clTransformRotate(CommandListRef& ref, float ang_rad);
 void clTransformMult(CommandListRef& ref, const float* mtx, bool pre);
 void clText(CommandListRef& ref, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 void clTextBox(CommandListRef& ref, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end);
+void clSubmitCommandList(CommandListRef& ref, CommandListHandle child);
 }
 
 #include "inline/vg.inl"
