@@ -4151,6 +4151,12 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 			cmd += sizeof(float) * 4;
 			ctxEllipse(ctx, coords[0], coords[1], coords[2], coords[3]);
 		} break;
+		case CommandType::Polyline: {
+			const uint32_t numPoints = CMD_READ(cmd, uint32_t);
+			const float* coords = (float*)cmd;
+			cmd += sizeof(float) * 2 * numPoints;
+			ctxPolyline(ctx, coords, numPoints);
+		} break;
 		case CommandType::FillPathColor: {
 			const uint32_t flags = CMD_READ(cmd, uint32_t);
 			const Color color = CMD_READ(cmd, Color);
@@ -6154,7 +6160,8 @@ static void clEllipse(Context* ctx, CommandList* cl, float cx, float cy, float r
 
 static void clPolyline(Context* ctx, CommandList* cl, const float* coords, uint32_t numPoints)
 {
-	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::Polyline, sizeof(float) * 2 * numPoints);
+	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::Polyline, sizeof(uint32_t) + sizeof(float) * 2 * numPoints);
+	CMD_WRITE(ptr, uint32_t, numPoints);
 	bx::memCopy(ptr, coords, sizeof(float) * 2 * numPoints);
 }
 
