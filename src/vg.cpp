@@ -1137,9 +1137,9 @@ void endFrame(Context* ctx)
 		const bgfx::Memory* uvMem = bgfx::makeRef(vb->m_UV, sizeof(float) * 2 * vb->m_Count, releaseVertexBufferDataCallback_Vec2, ctx);
 #endif
 
-		bgfx::updateDynamicVertexBuffer(gpuvb->m_PosBufferHandle, 0, posMem);
-		bgfx::updateDynamicVertexBuffer(gpuvb->m_UVBufferHandle, 0, uvMem);
-		bgfx::updateDynamicVertexBuffer(gpuvb->m_ColorBufferHandle, 0, colorMem);
+		bgfx::update(gpuvb->m_PosBufferHandle, 0, posMem);
+		bgfx::update(gpuvb->m_UVBufferHandle, 0, uvMem);
+		bgfx::update(gpuvb->m_ColorBufferHandle, 0, colorMem);
 
 		vb->m_Pos = nullptr;
 		vb->m_UV = nullptr;
@@ -1153,7 +1153,7 @@ void endFrame(Context* ctx)
 	if (!bgfx::isValid(gpuib->m_bgfxHandle)) {
 		gpuib->m_bgfxHandle = bgfx::createDynamicIndexBuffer(indexMem, BGFX_BUFFER_ALLOW_RESIZE);
 	} else {
-		bgfx::updateDynamicIndexBuffer(gpuib->m_bgfxHandle, 0, indexMem);
+		bgfx::update(gpuib->m_bgfxHandle, 0, indexMem);
 	}
 
 	const uint16_t viewID = ctx->m_ViewID;
