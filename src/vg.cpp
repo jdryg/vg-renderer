@@ -37,6 +37,7 @@ BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment within conditional express
 #define VG_CONFIG_MAX_FONT_IMAGES                4
 #define VG_CONFIG_MIN_FONT_ATLAS_SIZE            512
 #define VG_CONFIG_COMMAND_LIST_CACHE_STACK_SIZE  32
+#define VG_CONFIG_COMMAND_LIST_ALIGNMENT         16
 
 // Minimum font size (after scaling with the current transformation matrix),
 // below which no text will be rendered.
@@ -4080,9 +4081,11 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 	while (cmd < cmdListEnd) {
 		const CommandHeader* cmdHeader = (CommandHeader*)cmd;
 		cmd += sizeof(CommandHeader);
+
+		uint8_t* nextCmd = cmd + alignSize(cmdHeader->m_Size, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
 		
 		if (skipCmds && cmdHeader->m_Type >= CommandType::FirstStrokerCommand && cmdHeader->m_Type <= CommandType::LastStrokerCommand) {
-			cmd += cmdHeader->m_Size;
+			cmd = nextCmd;
 			continue;
 		}
 
@@ -4364,6 +4367,7 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 
 		VG_CHECK(cmd == cmdEnd, "Incomplete command parsing");
 		BX_UNUSED(cmdEnd); // For release builds
+		cmd = nextCmd;
 	}
 
 #if VG_CONFIG_COMMAND_LIST_PRESERVE_STATE
@@ -5521,7 +5525,7 @@ static void freeCommandListCache(Context* ctx, CommandListCache* cache)
 
 static uint8_t* clAllocCommand(Context* ctx, CommandList* cl, CommandType::Enum cmdType, uint32_t dataSize)
 {
-	const uint32_t totalSize = dataSize + sizeof(CommandType::Enum) + sizeof(uint32_t);
+	const uint32_t totalSize = alignSize(dataSize, VG_CONFIG_COMMAND_LIST_ALIGNMENT) + sizeof(CommandType::Enum) + sizeof(uint32_t);
 	const uint32_t pos = cl->m_CommandBufferPos;
 	if (pos + totalSize > cl->m_CommandBufferCapacity) {
 		cl->m_CommandBufferCapacity += bx::max<uint32_t>(totalSize, 256);
@@ -5693,14 +5697,16 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 		const CommandHeader* cmdHeader = (CommandHeader*)cmd;
 		cmd += sizeof(CommandHeader);
 
+		uint8_t* nextCmd = cmd + alignSize(cmdHeader->m_Size, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
+
 		// Skip path commands.
 		if (cmdHeader->m_Type >= CommandType::FirstPathCommand && cmdHeader->m_Type <= CommandType::LastPathCommand) {
-			cmd += cmdHeader->m_Size;
+			cmd = nextCmd;
 			continue;
 		}
 
 		if (skipCmds && cmdHeader->m_Type >= CommandType::FirstStrokerCommand && cmdHeader->m_Type <= CommandType::LastStrokerCommand) {
-			cmd += cmdHeader->m_Size;
+			cmd = nextCmd;
 			++nextCachedCommand;
 			continue;
 		}
@@ -5924,6 +5930,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 
 		VG_CHECK(cmd == cmdEnd, "Incomplete command parsing");
 		BX_UNUSED(cmdEnd); // For release builds
+		cmd = nextCmd;
 	}
 
 #if VG_CONFIG_COMMAND_LIST_PRESERVE_STATE
