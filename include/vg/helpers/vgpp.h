@@ -359,7 +359,7 @@ inline void Renderer::GetImageSize(ImageHandle image, int* iw, int* ih)
 
 inline void Renderer::DeleteImage(ImageHandle image)
 {
-	deleteImage(m_Context, image);
+	destroyImage(m_Context, image);
 }
 
 inline bool Renderer::IsImageHandleValid(ImageHandle image)

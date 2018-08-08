@@ -1009,7 +1009,7 @@ void destroyContext(Context* ctx)
 	fonsDeleteInternal(ctx->m_FontStashContext);
 
 	for (uint32_t i = 0; i < VG_CONFIG_MAX_FONT_IMAGES; ++i) {
-		deleteImage(ctx, ctx->m_FontImages[i]);
+		destroyImage(ctx, ctx->m_FontImages[i]);
 	}
 
 	for (uint32_t i = 0; i < ctx->m_ImageCapacity; ++i) {
@@ -1321,7 +1321,7 @@ void endFrame(Context* ctx)
 					getImageSize(ctx, ctx->m_FontImages[i], &nw, &nh);
 
 					if (nw < iw || nh < ih) {
-						deleteImage(ctx, ctx->m_FontImages[i]);
+						destroyImage(ctx, ctx->m_FontImages[i]);
 					} else {
 						ctx->m_FontImages[j++] = ctx->m_FontImages[i];
 					}
@@ -2284,7 +2284,7 @@ bool updateImage(Context* ctx, ImageHandle image, uint16_t x, uint16_t y, uint16
 	return true;
 }
 
-bool deleteImage(Context* ctx, ImageHandle img)
+bool destroyImage(Context* ctx, ImageHandle img)
 {
 	if (!isValid(img)) {
 		return false;

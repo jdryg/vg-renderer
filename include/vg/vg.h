@@ -442,7 +442,7 @@ bool getImageSize(Context* ctx, ImageHandle handle, uint16_t* w, uint16_t* h);
 ImageHandle createImage(Context* ctx, uint16_t w, uint16_t h, uint32_t flags, const uint8_t* data);
 ImageHandle createImage(Context* ctx, uint32_t flags, const bgfx::TextureHandle& bgfxTextureHandle);
 bool updateImage(Context* ctx, ImageHandle image, uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint8_t* data);
-bool deleteImage(Context* ctx, ImageHandle img);
+bool destroyImage(Context* ctx, ImageHandle img);
 bool isImageValid(Context* ctx, ImageHandle img);
 
 // Command lists
