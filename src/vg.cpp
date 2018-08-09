@@ -4064,6 +4064,7 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 	uint8_t* cmd = cl->m_CommandBuffer;
 	const uint8_t* cmdListEnd = cl->m_CommandBuffer + cl->m_CommandBufferPos;
 	if (cmd == cmdListEnd) {
+		--ctx->m_SubmitCmdListRecursionDepth;
 		return;
 	}
 
