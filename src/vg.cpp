@@ -730,6 +730,14 @@ inline uint32_t alignSize(uint32_t sz, uint32_t alignment)
 	return (sz & (~mask)) + ((sz & mask) != 0 ? alignment : 0);
 }
 
+inline bool isAligned(uint32_t sz, uint32_t alignment)
+{
+	VG_CHECK(bx::isPowerOf2<uint32_t>(alignment), "Invalid alignment value");
+	return (sz & (alignment - 1)) == 0;
+}
+
+static const uint32_t kAlignedCommandHeaderSize = alignSize(sizeof(CommandHeader), VG_CONFIG_COMMAND_LIST_ALIGNMENT);
+
 inline bool isLocal(uint16_t handleFlags)      { return (handleFlags & HandleFlags::LocalHandle) != 0; }
 inline bool isLocal(GradientHandle handle)     { return isLocal(handle.flags); }
 inline bool isLocal(ImagePatternHandle handle) { return isLocal(handle.flags); }
@@ -2340,7 +2348,7 @@ void destroyCommandList(Context* ctx, CommandListHandle handle)
 	}
 #endif
 
-	BX_FREE(allocator, cl->m_CommandBuffer);
+	BX_ALIGNED_FREE(allocator, cl->m_CommandBuffer, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
 	BX_FREE(allocator, cl->m_StringBuffer);
 	bx::memSet(cl, 0, sizeof(CommandList));
 
@@ -4061,7 +4069,7 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 	VG_CHECK(firstImagePatternID + numImagePatterns <= ctx->m_Config.m_MaxImagePatterns, "Not enough free image patterns for command list. Increase ContextConfig::m_MaxImagePatterns");
 	BX_UNUSED(numGradients, numImagePatterns); // For Release builds
 
-	uint8_t* cmd = cl->m_CommandBuffer;
+	const uint8_t* cmd = cl->m_CommandBuffer;
 	const uint8_t* cmdListEnd = cl->m_CommandBuffer + cl->m_CommandBufferPos;
 	if (cmd == cmdListEnd) {
 		--ctx->m_SubmitCmdListRecursionDepth;
@@ -4081,9 +4089,9 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 
 	while (cmd < cmdListEnd) {
 		const CommandHeader* cmdHeader = (CommandHeader*)cmd;
-		cmd += sizeof(CommandHeader);
+		cmd += kAlignedCommandHeaderSize;
 
-		uint8_t* nextCmd = cmd + alignSize(cmdHeader->m_Size, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
+		const uint8_t* nextCmd = cmd + alignSize(cmdHeader->m_Size, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
 		
 		if (skipCmds && cmdHeader->m_Type >= CommandType::FirstStrokerCommand && cmdHeader->m_Type <= CommandType::LastStrokerCommand) {
 			cmd = nextCmd;
@@ -5526,19 +5534,26 @@ static void freeCommandListCache(Context* ctx, CommandListCache* cache)
 
 static uint8_t* clAllocCommand(Context* ctx, CommandList* cl, CommandType::Enum cmdType, uint32_t dataSize)
 {
-	const uint32_t totalSize = alignSize(dataSize, VG_CONFIG_COMMAND_LIST_ALIGNMENT) + sizeof(CommandType::Enum) + sizeof(uint32_t);
+	const uint32_t totalSize = 0
+		+ kAlignedCommandHeaderSize
+		+ alignSize(dataSize, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
+
 	const uint32_t pos = cl->m_CommandBufferPos;
+	VG_CHECK(isAligned(pos, VG_CONFIG_COMMAND_LIST_ALIGNMENT), "Unaligned command buffer position");
+
 	if (pos + totalSize > cl->m_CommandBufferCapacity) {
 		cl->m_CommandBufferCapacity += bx::max<uint32_t>(totalSize, 256);
-		cl->m_CommandBuffer = (uint8_t*)BX_REALLOC(ctx->m_Allocator, cl->m_CommandBuffer, cl->m_CommandBufferCapacity);
+		cl->m_CommandBuffer = (uint8_t*)BX_ALIGNED_REALLOC(ctx->m_Allocator, cl->m_CommandBuffer, cl->m_CommandBufferCapacity, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
 	}
 
 	uint8_t* ptr = &cl->m_CommandBuffer[pos];
 	cl->m_CommandBufferPos += totalSize;
 
-	const CommandHeader header = { cmdType, dataSize };
-	bx::memCopy(ptr, &header, sizeof(CommandHeader));
-	ptr += sizeof(CommandHeader);
+	CommandHeader* hdr = (CommandHeader*)ptr;
+	ptr += kAlignedCommandHeaderSize;
+
+	hdr->m_Type = cmdType;
+	hdr->m_Size = dataSize;
 
 	return ptr;
 }
@@ -5679,7 +5694,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 	VG_CHECK(firstImagePatternID + numImagePatterns <= ctx->m_Config.m_MaxImagePatterns, "Not enough free image patterns for command list. Increase ContextConfig::m_MaxImagePatterns");
 	BX_UNUSED(numGradients, numImagePatterns); // For Release builds.
 
-	uint8_t* cmd = cl->m_CommandBuffer;
+	const uint8_t* cmd = cl->m_CommandBuffer;
 	const uint8_t* cmdListEnd = cl->m_CommandBuffer + cl->m_CommandBufferPos;
 	if (cmd == cmdListEnd) {
 		return;
@@ -5696,9 +5711,9 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 
 	while (cmd < cmdListEnd) {
 		const CommandHeader* cmdHeader = (CommandHeader*)cmd;
-		cmd += sizeof(CommandHeader);
+		cmd += kAlignedCommandHeaderSize;
 
-		uint8_t* nextCmd = cmd + alignSize(cmdHeader->m_Size, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
+		const uint8_t* nextCmd = cmd + alignSize(cmdHeader->m_Size, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
 
 		// Skip path commands.
 		if (cmdHeader->m_Type >= CommandType::FirstPathCommand && cmdHeader->m_Type <= CommandType::LastPathCommand) {
