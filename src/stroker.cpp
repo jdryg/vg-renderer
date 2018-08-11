@@ -5,6 +5,7 @@
 #endif
 #include <bx/allocator.h>
 #include <bx/math.h>
+#include <string.h> // memcpy
 
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4127) // conditional expression is constant
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4456) // declaration of X hides previous local decleration
@@ -2513,25 +2514,8 @@ static void addPos(Stroker* stroker, const Vec2* srcPos)
 {
 	VG_CHECK(stroker->m_NumVertices + N <= stroker->m_VertexCapacity, "Not enough free space for temporary geometry");
 
-#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
-	const uint64_t* srcPos64 = (const uint64_t*)&srcPos->x;
-	uint64_t* dstPos64 = (uint64_t*)&stroker->m_PosBuffer[stroker->m_NumVertices].x;
-
-	const __m128* srcPos128 = (const __m128*)&srcPos->x;
-	__m128* dstPos128 = (__m128*)&stroker->m_PosBuffer[stroker->m_NumVertices].x;
-
-	if (N == 1) {
-		dstPos64[0] = srcPos64[0]; // x0, y0
-	} else if (N == 2) {
-		dstPos128[0] = srcPos128[0]; // x0, y0, x1, y1
-	} else {
-		bx::memCopy(&stroker->m_PosBuffer[stroker->m_NumVertices], srcPos, sizeof(Vec2) * N);
-	}
-#else
 	float* dstPos = &stroker->m_PosBuffer[stroker->m_NumVertices].x;
-
-	bx::memCopy(dstPos, srcPos, sizeof(Vec2) * N);
-#endif
+	memcpy(dstPos, srcPos, sizeof(Vec2) * N);
 
 	stroker->m_NumVertices += N;
 }
@@ -2541,41 +2525,11 @@ static void addPosColor(Stroker* stroker, const Vec2* srcPos, const uint32_t* sr
 {
 	VG_CHECK(stroker->m_NumVertices + N <= stroker->m_VertexCapacity, "Not enough free space for temporary geometry");
 
-#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
-	const uint64_t* srcPos64 = (const uint64_t*)&srcPos->x;
-	const uint64_t* srcColor64 = (const uint64_t*)srcColor;
-	uint64_t* dstPos64 = (uint64_t*)&stroker->m_PosBuffer[stroker->m_NumVertices].x;
-	uint32_t* dstColor = &stroker->m_ColorBuffer[stroker->m_NumVertices];
-	uint64_t* dstColor64 = (uint64_t*)&stroker->m_ColorBuffer[stroker->m_NumVertices];
-
-	const __m128* srcPos128 = (const __m128*)&srcPos->x;
-	const __m128* srcColor128 = (const __m128*)srcColor;
-	__m128* dstPos128 = (__m128*)&stroker->m_PosBuffer[stroker->m_NumVertices].x;
-	__m128* dstColor128 = (__m128*)&stroker->m_ColorBuffer[stroker->m_NumVertices];
-
-	if (N == 2) {
-		*dstPos128 = *srcPos128; // x0, y0, x1, y1
-		*dstColor64 = *srcColor64; // c0, c1
-	} else if (N == 3) {
-		*dstPos128 = *srcPos128; // x0, y0, x1, y1
-		dstPos64[2] = srcPos64[2]; // x2, y2
-		*dstColor64 = *srcColor64; // c0, c1
-		dstColor[2] = srcColor[2]; // c2
-	} else if (N == 4) {
-		dstPos128[0] = srcPos128[0]; // x0, y0, x1, y1
-		dstPos128[1] = srcPos128[1]; // x2, y2, x3, y3
-		dstColor128[0] = srcColor128[0]; // c0, c1, c2, c3
-	} else {
-		bx::memCopy(dstPos64, srcPos, sizeof(Vec2) * N);
-		bx::memCopy(dstColor64, srcColor, sizeof(uint32_t) * N);
-	}
-#else
 	float* dstPos = &stroker->m_PosBuffer[stroker->m_NumVertices].x;
-	uint32_t* dstColor = &stroker->m_ColorBuffer[stroker->m_NumVertices];
+	memcpy(dstPos, srcPos, sizeof(Vec2) * N);
 
-	bx::memCopy(dstPos, srcPos, sizeof(Vec2) * N);
-	bx::memCopy(dstColor, srcColor, sizeof(uint32_t) * N);
-#endif
+	uint32_t* dstColor = &stroker->m_ColorBuffer[stroker->m_NumVertices];
+	memcpy(dstColor, srcColor, sizeof(uint32_t) * N);
 
 	stroker->m_NumVertices += N;
 }
@@ -2585,44 +2539,8 @@ static void addIndices(Stroker* stroker, const uint16_t* src)
 {
 	VG_CHECK(stroker->m_NumIndices + N <= stroker->m_IndexCapacity, "Not enough free space for temporary geometry");
 
-#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
-	const uint32_t* src32 = (const uint32_t*)src;
-	const uint64_t* src64 = (const uint64_t*)src;
 	uint16_t* dst = &stroker->m_IndexBuffer[stroker->m_NumIndices];
-	uint32_t* dst32 = (uint32_t*)dst;
-	uint64_t* dst64 = (uint64_t*)dst;
-
-	const __m128* src128 = (const __m128*)src;
-	__m128* dst128 = (__m128*)dst;
-
-	if (N == 3) {
-		dst32[0] = src32[0]; // 0, 1
-		dst[2] = src[2];     // 2
-	} else if (N == 6) {
-		dst64[0] = src64[0]; // 0, 1, 2, 3
-		dst32[2] = src32[2]; // 4, 5
-	} else if (N == 9) {
-		dst128[0] = src128[0]; // 0, 1, 2, 3, 4, 5, 6, 7
-		dst[8] = src[8];       // 8
-	} else if (N == 12) {
-		dst128[0] = src128[0]; // 0, 1, 2, 3, 4, 5, 6, 7
-		dst64[2] = src64[2];   // 8, 9, 10, 11
-	} else if (N == 18) {
-		dst128[0] = src128[0]; // 0, 1, 2, 3, 4, 5, 6, 7
-		dst128[1] = src128[1]; // 8, 9, 10, 11, 12, 13, 14, 15
-		dst32[8] = src32[8];   // 16, 17
-	} else if (N == 24) {
-		dst128[0] = src128[0]; // 0, 1, 2, 3, 4, 5, 6, 7
-		dst128[1] = src128[1]; // 8, 9, 10, 11, 12, 13, 14, 15
-		dst128[2] = src128[2]; // 16, 17, 18, 19, 20, 21, 22, 23
-	} else {
-		bx::memCopy(dst, src, sizeof(uint16_t) * N);
-	}
-#else
-	uint16_t* dst = &stroker->m_IndexBuffer[stroker->m_NumIndices];
-
-	bx::memCopy(dst, src, sizeof(uint16_t) * N);
-#endif
+	memcpy(dst, src, sizeof(uint16_t) * N);
 
 	stroker->m_NumIndices += N;
 }
