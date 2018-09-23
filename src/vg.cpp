@@ -2214,20 +2214,20 @@ ImageHandle createImage(Context* ctx, uint16_t w, uint16_t h, uint32_t flags, co
 	tex->m_Width = w;
 	tex->m_Height = h;
 
-	uint32_t bgfxFlags = BGFX_TEXTURE_NONE;
+	uint32_t bgfxFlags = BGFX_SAMPLER_NONE;
 
 #if BX_PLATFORM_EMSCRIPTEN
 	if (!bx::isPowerOf2(w) || !bx::isPowerOf2(h)) {
 		flags = ImageFlags::Filter_NearestUV | ImageFlags::Filter_NearestW;
-		bgfxFlags |= BGFX_TEXTURE_U_CLAMP | BGFX_TEXTURE_V_CLAMP | BGFX_TEXTURE_W_CLAMP;
+		bgfxFlags |= BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_W_CLAMP;
 	}
 #endif
 
 	if (flags & ImageFlags::Filter_NearestUV) {
-		bgfxFlags |= BGFX_TEXTURE_MIN_POINT | BGFX_TEXTURE_MAG_POINT;
+		bgfxFlags |= BGFX_SAMPLER_MIN_POINT | BGFX_SAMPLER_MAG_POINT;
 	}
 	if (flags & ImageFlags::Filter_NearestW) {
-		bgfxFlags |= BGFX_TEXTURE_MIP_POINT;
+		bgfxFlags |= BGFX_SAMPLER_MIP_POINT;
 	}
 	tex->m_Flags = bgfxFlags;
 
@@ -2260,10 +2260,10 @@ ImageHandle createImage(Context* ctx, uint32_t flags, const bgfx::TextureHandle&
 	uint32_t bgfxFlags = BGFX_TEXTURE_NONE;
 
 	if (flags & ImageFlags::Filter_NearestUV) {
-		bgfxFlags |= BGFX_TEXTURE_MIN_POINT | BGFX_TEXTURE_MAG_POINT;
+		bgfxFlags |= BGFX_SAMPLER_MIN_POINT | BGFX_SAMPLER_MAG_POINT;
 	}
 	if (flags & ImageFlags::Filter_NearestW) {
-		bgfxFlags |= BGFX_TEXTURE_MIP_POINT;
+		bgfxFlags |= BGFX_SAMPLER_MIP_POINT;
 	}
 	tex->m_Flags = bgfxFlags;
 
