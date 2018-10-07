@@ -2181,7 +2181,6 @@ static FONSglyph* fons__bakeGlyph(FONScontext* stash, FONSfont* font, int glyphI
 		glyph->glyphCode = MAKE_GLYPH_CODE(codepoint, isize, iblur);
 #endif
 
-		glyph->next = 0;
 		// Insert char to hash lookup.
 		glyph->next = font->lut[h];
 		font->lut[h] = font->nglyphs - 1;

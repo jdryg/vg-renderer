@@ -666,10 +666,10 @@ void strokerConvexFillAA(Stroker* stroker, Mesh* mesh, const float* vertexList, 
 			static const uint16_t delta0[8] = { 0, 2, 0, 1, 3, 0, 3, 2 };
 			static const uint16_t delta1[8] = { 2, 4, 2, 3, 5, 2, 5, 4 };
 			const __m128i xmm_delta0 = _mm_loadu_si128((const __m128i*)delta0);
-			const __m128i xmm_delta1 = _mm_loadu_si128((const __m128i*)delta1);
 
 			uint32_t rem = numFanTris & 3;
 			if (rem >= 2) {
+				const __m128i xmm_delta1 = _mm_loadu_si128((const __m128i*)delta1);
 				const __m128i xmm_id0 = _mm_add_epi16(xmm_stv, xmm_delta0);
 				const __m128i xmm_id1 = _mm_add_epi16(xmm_stv, xmm_delta1);
 
