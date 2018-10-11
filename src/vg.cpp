@@ -325,7 +325,7 @@ struct ContextVTable
 	void(*transformMult)(Context* ctx, const float* mtx, bool pre);
 	void(*setViewBox)(Context* ctx, float x, float y, float w, float h);
 	void(*text)(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
-	void(*textBox)(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end);
+	void(*textBox)(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, uint32_t textboxFlags);
 	void(*indexedTriList)(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* color, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 	void(*submitCommandList)(Context* ctx, CommandListHandle handle);
 };
@@ -523,7 +523,7 @@ static void clTransformRotate(Context* ctx, CommandList* cl, float ang_rad);
 static void clTransformMult(Context* ctx, CommandList* cl, const float* mtx, bool pre);
 static void clSetViewBox(Context* ctx, CommandList* cl, float x, float y, float w, float h);
 static void clText(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, const char* str, const char* end);
-static void clTextBox(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end);
+static void clTextBox(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
 static void clSubmitCommandList(Context* ctx, CommandList* cl, CommandListHandle childList);
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
@@ -581,7 +581,7 @@ static void ctxTransformMult(Context* ctx, const float* mtx, bool pre);
 static void ctxSetViewBox(Context* ctx, float x, float y, float w, float h);
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
-static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end);
+static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
 static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle);
 
 // Active command list wrappers
@@ -626,7 +626,7 @@ static void aclTransformMult(Context* ctx, const float* mtx, bool pre);
 static void aclSetViewBox(Context* ctx, float x, float y, float w, float h);
 static void aclIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 static void aclText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
-static void aclTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end);
+static void aclTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
 static void aclSubmitCommandList(Context* ctx, CommandListHandle handle);
 
 const ContextVTable g_CtxVTable = {
@@ -1709,12 +1709,12 @@ void text(Context* ctx, const TextConfig& cfg, float x, float y, const char* str
 #endif
 }
 
-void textBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end)
+void textBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags)
 {
 #if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
-	ctx->m_VTable->textBox(ctx, cfg, x, y, breakWidth, str, end);
+	ctx->m_VTable->textBox(ctx, cfg, x, y, breakWidth, str, end, textboxFlags);
 #else
-	ctxTextBox(ctx, cfg, x, y, breakWidth, str, end);
+	ctxTextBox(ctx, cfg, x, y, breakWidth, str, end, textboxFlags);
 #endif
 }
 
@@ -1973,7 +1973,7 @@ int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const c
 			break;
 		case 32:		// space 
 			// JD: Treat spaces as regular characters in order to be able to have pre and post spaces in an edit box.
-			if (flags & TextBreakFlags::SpacesAsChars) {
+			if (flags & TextBoxFlags::KeepSpaces) {
 				type = CP_CHAR;
 			} else {
 				type = CP_SPACE;
@@ -2710,12 +2710,12 @@ void clText(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float
 	clText(ctx, cl, cfg, x, y, str, end);
 }
 
-void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end)
+void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
 	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
-	clTextBox(ctx, cl, cfg, x, y, breakWidth, str, end);
+	clTextBox(ctx, cl, cfg, x, y, breakWidth, str, end, textboxFlags);
 }
 
 void clSubmitCommandList(Context* ctx, CommandListHandle parent, CommandListHandle child)
@@ -3985,7 +3985,7 @@ static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const
 	popState(ctx);
 }
 
-static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end)
+static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags)
 {
 	VG_CHECK(isValid(cfg.m_FontHandle), "Invalid font handle");
 
@@ -4005,7 +4005,7 @@ static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, fl
 
 	TextRow rows[2];
 	int nrows;
-	while ((nrows = textBreakLines(ctx, cfg, str, end, breakWidth, rows, 2, 0))) {
+	while ((nrows = textBreakLines(ctx, cfg, str, end, breakWidth, rows, 2, textboxFlags))) {
 		for (int i = 0; i < nrows; ++i) {
 			TextRow* row = &rows[i];
 
@@ -4283,12 +4283,13 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 			cmd += sizeof(float) * 3; // x, y, breakWidth
 			const uint32_t stringOffset = CMD_READ(cmd, uint32_t);
 			const uint32_t stringLen = CMD_READ(cmd, uint32_t);
+			const uint32_t textboxFlags = CMD_READ(cmd, uint32_t);
 			VG_CHECK(stringOffset < cl->m_StringBufferPos, "Invalid string offset");
 			VG_CHECK(stringOffset + stringLen <= cl->m_StringBufferPos, "Invalid string length");
 
 			const char* str = stringBuffer + stringOffset;
 			const char* end = str + stringLen;
-			ctxTextBox(ctx, *txtCfg, coords[0], coords[1], coords[2], str, end);
+			ctxTextBox(ctx, *txtCfg, coords[0], coords[1], coords[2], str, end, textboxFlags);
 		} break;
 		case CommandType::ResetScissor: {
 			ctxResetScissor(ctx);
@@ -4634,10 +4635,10 @@ static void aclText(Context* ctx, const TextConfig& cfg, float x, float y, const
 	clText(ctx, ctx->m_ActiveCommandList, cfg, x, y, str, end);
 }
 
-static void aclTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end)
+static void aclTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags)
 {
 	VG_CHECK(ctx->m_ActiveCommandList, "Invalid Context state");
-	clTextBox(ctx, ctx->m_ActiveCommandList, cfg, x, y, breakWidth, str, end);
+	clTextBox(ctx, ctx->m_ActiveCommandList, cfg, x, y, breakWidth, str, end, textboxFlags);
 }
 
 static void aclSubmitCommandList(Context* ctx, CommandListHandle handle)
@@ -5855,12 +5856,13 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			cmd += sizeof(float) * 3; // x, y, breakWidth
 			const uint32_t stringOffset = CMD_READ(cmd, uint32_t);
 			const uint32_t stringLen = CMD_READ(cmd, uint32_t);
+			const uint32_t textboxFlags = CMD_READ(cmd, uint32_t);
 			VG_CHECK(stringOffset < cl->m_StringBufferPos, "Invalid string offset");
 			VG_CHECK(stringOffset + stringLen <= cl->m_StringBufferPos, "Invalid string length");
 
 			const char* str = stringBuffer + stringOffset;
 			const char* end = str + stringLen;
-			ctxTextBox(ctx, *txtCfg, coords[0], coords[1], coords[2], str, end);
+			ctxTextBox(ctx, *txtCfg, coords[0], coords[1], coords[2], str, end, textboxFlags);
 		} break;
 		case CommandType::ResetScissor: {
 			ctxResetScissor(ctx);
@@ -6469,7 +6471,7 @@ static void clText(Context* ctx, CommandList* cl, const TextConfig& cfg, float x
 	CMD_WRITE(ptr, uint32_t, len);
 }
 
-static void clTextBox(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end)
+static void clTextBox(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags)
 {
 	const uint32_t len = end ? (uint32_t)(end - str) : (uint32_t)bx::strLen(str);
 	if (len == 0) {
@@ -6478,7 +6480,7 @@ static void clTextBox(Context* ctx, CommandList* cl, const TextConfig& cfg, floa
 
 	const uint32_t offset = clStoreString(ctx, cl, str, len);
 
-	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::TextBox, sizeof(TextConfig) + sizeof(float) * 3 + sizeof(uint32_t) * 2);
+	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::TextBox, sizeof(TextConfig) + sizeof(float) * 3 + sizeof(uint32_t) * 3);
 	bx::memCopy(ptr, &cfg, sizeof(TextConfig));
 	ptr += sizeof(TextConfig);
 	CMD_WRITE(ptr, float, x);
@@ -6486,6 +6488,7 @@ static void clTextBox(Context* ctx, CommandList* cl, const TextConfig& cfg, floa
 	CMD_WRITE(ptr, float, breakWidth);
 	CMD_WRITE(ptr, uint32_t, offset);
 	CMD_WRITE(ptr, uint32_t, len);
+	CMD_WRITE(ptr, uint32_t, textboxFlags);
 }
 
 static void clSubmitCommandList(Context* ctx, CommandList* cl, CommandListHandle childList)

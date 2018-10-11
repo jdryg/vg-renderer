@@ -334,9 +334,9 @@ inline void clText(CommandListRef& ref, const TextConfig& cfg, float x, float y,
 	clText(ref.m_Context, ref.m_Handle, cfg, x, y, str, end);
 }
 
-inline void clTextBox(CommandListRef& ref, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end)
+inline void clTextBox(CommandListRef& ref, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags)
 {
-	clTextBox(ref.m_Context, ref.m_Handle, cfg, x, y, breakWidth, str, end);
+	clTextBox(ref.m_Context, ref.m_Handle, cfg, x, y, breakWidth, str, end, textboxFlags);
 }
 
 inline void clSubmitCommandList(CommandListRef& ref, CommandListHandle child)

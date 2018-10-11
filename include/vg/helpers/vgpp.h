@@ -663,7 +663,7 @@ inline void Shape::Text(const Font& font, uint32_t alignment, Color color, float
 inline void Shape::TextBox(const Font& font, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* str, const char* end)
 {
 	TextConfig cfg = { font.m_Handle, font.m_Size, alignment, color };
-	clTextBox(m_CommandListRef, cfg, x, y, breakWidth, str, end);
+	clTextBox(m_CommandListRef, cfg, x, y, breakWidth, str, end, 0);
 }
 }
 

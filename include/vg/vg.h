@@ -246,11 +246,11 @@ struct Winding
 	};
 };
 
-struct TextBreakFlags
+struct TextBoxFlags
 {
 	enum Enum : uint32_t
 	{
-		SpacesAsChars = 1 << 0
+		KeepSpaces = 1 << 0
 	};
 };
 
@@ -498,7 +498,7 @@ void clTransformMult(Context* ctx, CommandListHandle handle, const float* mtx, b
 void clSetViewBox(Context* ctx, CommandListHandle handle, float x, float y, float w, float h);
 
 void clText(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, const char* str, const char* end);
-void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end);
+void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
 
 void clSubmitCommandList(Context* ctx, CommandListHandle parent, CommandListHandle child);
 
@@ -508,9 +508,9 @@ void clSubmitCommandList(Context* ctx, CommandListHandle parent, CommandListHand
 TextConfig makeTextConfig(Context* ctx, const char* fontName, float fontSize, uint32_t alignment, Color color);
 TextConfig makeTextConfig(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, Color color);
 void text(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, Color color, float x, float y, const char* str, const char* end);
-void textBox(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* str, const char* end);
+void textBox(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
 float measureText(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, float x, float y, const char* str, const char* end, float* bounds);
-void measureTextBox(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, float x, float y, float breakWidth, const char* str, const char* end, float* bounds, uint32_t flags);
+void measureTextBox(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, float x, float y, float breakWidth, const char* str, const char* end, float* bounds, uint32_t textboxFlags);
 float getTextLineHeight(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment);
 int textBreakLines(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, const char* str, const char* end, float breakRowWidth, TextRow* rows, int maxRows, uint32_t flags);
 int textGlyphPositions(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, float x, float y, const char* str, const char* end, GlyphPosition* positions, int maxPositions);
@@ -562,7 +562,7 @@ void clTransformTranslate(CommandListRef& ref, float x, float y);
 void clTransformRotate(CommandListRef& ref, float ang_rad);
 void clTransformMult(CommandListRef& ref, const float* mtx, bool pre);
 void clText(CommandListRef& ref, const TextConfig& cfg, float x, float y, const char* str, const char* end);
-void clTextBox(CommandListRef& ref, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end);
+void clTextBox(CommandListRef& ref, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
 void clSubmitCommandList(CommandListRef& ref, CommandListHandle child);
 }
 
