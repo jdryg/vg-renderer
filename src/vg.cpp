@@ -477,6 +477,7 @@ static bool allocTextAtlas(Context* ctx);
 static void flushTextAtlas(Context* ctx);
 
 static CommandListHandle allocCommandList(Context* ctx);
+static bool isCommandListHandleValid(Context* ctx, CommandListHandle handle);
 static uint8_t* clAllocCommand(Context* ctx, CommandList* cl, CommandType::Enum cmdType, uint32_t dataSize);
 static uint32_t clStoreString(Context* ctx, CommandList* cl, const char* str, uint32_t len);
 static void clCacheRender(Context* ctx, CommandList* cl);
@@ -4026,7 +4027,7 @@ static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, fl
 
 static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 {
-	VG_CHECK(isValid(handle), "Invalid command list handle");
+	VG_CHECK(isCommandListHandleValid(ctx, handle), "Invalid command list handle");
 	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	VG_CHECK(ctx->m_SubmitCmdListRecursionDepth < ctx->m_Config.m_MaxCommandListDepth, "Recursion limit reached");
@@ -4368,7 +4369,9 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 			const uint16_t cmdListID = CMD_READ(cmd, uint16_t);
 			const CommandListHandle cmdListHandle = { cmdListID };
 
-			ctxSubmitCommandList(ctx, cmdListHandle);
+			if (isCommandListHandleValid(ctx, cmdListHandle)) {
+				ctxSubmitCommandList(ctx, cmdListHandle);
+			}
 		} break;
 		default: {
 			VG_CHECK(false, "Unknown command");
@@ -5513,6 +5516,11 @@ static CommandListHandle allocCommandList(Context* ctx)
 	return handle;
 }
 
+static inline bool isCommandListHandleValid(Context* ctx, CommandListHandle handle)
+{
+	return isValid(handle) && ctx->m_CmdListHandleAlloc->isValid(handle.idx);
+}
+
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
 static CommandListCache* allocCommandListCache(Context* ctx)
 {
@@ -5939,7 +5947,9 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			const uint16_t cmdListID = CMD_READ(cmd, uint16_t);
 			const CommandListHandle cmdListHandle = { cmdListID };
 
-			ctxSubmitCommandList(ctx, cmdListHandle);
+			if (isCommandListHandleValid(ctx, cmdListHandle)) {
+				ctxSubmitCommandList(ctx, cmdListHandle);
+			}
 		} break;
 		default: {
 			VG_CHECK(false, "Unknown cached command");
