@@ -417,10 +417,12 @@ int fons__tt_loadFont(FONScontext *context, FONSttFontImpl *font, unsigned char 
 		const int numGlyphs = maxGlyphIndex - minGlyphIndex + 1;
 		const int totalPairs = numGlyphs * numGlyphs;
 		font->kern = (int*)FONSmalloc(sizeof(int) * totalPairs);
-		for (int second = minGlyphIndex; second <= maxGlyphIndex; ++second) {
-			const int mult = (second - minGlyphIndex) * numGlyphs;
-			for (int first = minGlyphIndex; first <= maxGlyphIndex; ++first) {
-				font->kern[first - minGlyphIndex + mult] = stbtt_GetGlyphKernAdvance(&font->font, first, second);
+		if (font->kern) {
+			for (int second = minGlyphIndex; second <= maxGlyphIndex; ++second) {
+				const int mult = (second - minGlyphIndex) * numGlyphs;
+				for (int first = minGlyphIndex; first <= maxGlyphIndex; ++first) {
+					font->kern[first - minGlyphIndex + mult] = stbtt_GetGlyphKernAdvance(&font->font, first, second);
+				}
 			}
 		}
 #endif
@@ -1349,7 +1351,6 @@ static FONSglyph* fons__getGlyph(FONScontext* stash, FONSfont* font, unsigned in
 		glyph->glyphCode = MAKE_GLYPH_CODE(codepoint, isize, iblur);
 #endif
 
-		glyph->next = 0;
 		// Insert char to hash lookup.
 		glyph->next = font->lut[h];
 		font->lut[h] = font->nglyphs - 1;

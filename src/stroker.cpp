@@ -334,8 +334,6 @@ void strokerPolylineStrokeAAThin(Stroker* stroker, Mesh* mesh, const float* vert
 
 void strokerConvexFill(Stroker* stroker, Mesh* mesh, const float* vertexList, uint32_t numVertices)
 {
-	const Vec2* vtx = (const Vec2*)vertexList;
-
 	const uint32_t numTris = numVertices - 2;
 	const uint32_t numIndices = numTris * 3; // N - 2 triangles in a N pt fan, 3 indices per triangle
 
@@ -360,7 +358,7 @@ void strokerConvexFill(Stroker* stroker, Mesh* mesh, const float* vertexList, ui
 		stroker->m_NumIndices += numIndices;
 	}
 
-	mesh->m_PosBuffer = &vtx[0].x;
+	mesh->m_PosBuffer = vertexList;
 	mesh->m_ColorBuffer = nullptr;
 	mesh->m_IndexBuffer = stroker->m_IndexBuffer;
 	mesh->m_NumVertices = numVertices;

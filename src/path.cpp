@@ -107,8 +107,8 @@ void pathCubicTo(Path* path, float c1x, float c1y, float c2x, float c2y, float x
 	while (!done) {
 		const float dx = x4 - x1;
 		const float dy = y4 - y1;
-		const float d2 = bx::abs(((x2 - x4) * dy - (y2 - y4) * dx));
-		const float d3 = bx::abs(((x3 - x4) * dy - (y3 - y4) * dx));
+		const float d2 = bx::abs((x2 - x4) * dy - (y2 - y4) * dx);
+		const float d3 = bx::abs((x3 - x4) * dy - (y3 - y4) * dx);
 		const float d23 = d2 + d3;
 
 		if (d23 * d23 <= tessTol * (dx * dx + dy * dy)) {
