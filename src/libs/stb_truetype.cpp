@@ -17,6 +17,7 @@
 
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4189) // local variable is initialized but not referenced
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4244) // 'argument': conversion from 'XXXX' to 'YYYY', possible loss of data
+BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wunused-variable")
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
