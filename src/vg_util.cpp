@@ -7,6 +7,8 @@
 #include <immintrin.h>
 #endif
 
+BX_PRAGMA_DIAGNOSTIC_IGNORED_GCC("-Wimplicit-fallthrough=0")
+
 namespace vgutil
 {
 bool invertMatrix3(const float* __restrict t, float* __restrict inv)

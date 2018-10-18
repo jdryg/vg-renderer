@@ -9,6 +9,7 @@
 
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4127) // conditional expression is constant
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4456) // declaration of X hides previous local decleration
+BX_PRAGMA_DIAGNOSTIC_IGNORED_GCC("-Wshadow")
 
 #define RSQRT_ALGORITHM 1
 #define RCP_ALGORITHM 1
