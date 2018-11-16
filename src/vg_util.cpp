@@ -149,10 +149,10 @@ void batchTransformPositions(const float* __restrict src, uint32_t n, float* __r
 	for (uint32_t i = 0; i < iter; ++i) {
 		// x' = m[0] * x + m[2] * y + m[4];
 		// y' = m[1] * x + m[3] * y + m[5];
-		const __m128 xy01 = _mm_load_ps(src + 0);  // { x0, y0, x1, y1 }
-		const __m128 xy23 = _mm_load_ps(src + 4);  // { x2, y2, x3, y3 }
-		const __m128 xy45 = _mm_load_ps(src + 8);  // { x4, y4, x5, y5 }
-		const __m128 xy67 = _mm_load_ps(src + 12); // { x6, y6, x7, y7 }
+		const __m128 xy01 = _mm_loadu_ps(src + 0);  // { x0, y0, x1, y1 }
+		const __m128 xy23 = _mm_loadu_ps(src + 4);  // { x2, y2, x3, y3 }
+		const __m128 xy45 = _mm_loadu_ps(src + 8);  // { x4, y4, x5, y5 }
+		const __m128 xy67 = _mm_loadu_ps(src + 12); // { x6, y6, x7, y7 }
 
 		const __m128 x0123 = _mm_shuffle_ps(xy01, xy23, _MM_SHUFFLE(2, 0, 2, 0)); // { x0, x1, x2, x3 }
 		const __m128 y0123 = _mm_shuffle_ps(xy01, xy23, _MM_SHUFFLE(3, 1, 3, 1)); // { y0, y1, y2, y3 }
@@ -174,10 +174,10 @@ void batchTransformPositions(const float* __restrict src, uint32_t n, float* __r
 		const __m128 resxy45 = _mm_shuffle_ps(resx45_resy45, resx45_resy45, _MM_SHUFFLE(3, 1, 2, 0)); // { rx4, ry4, rx5, ry5 }
 		const __m128 resxy67 = _mm_shuffle_ps(resx67_resy67, resx67_resy67, _MM_SHUFFLE(3, 1, 2, 0)); // { rx6, ry6, rx7, ry7 }
 
-		_mm_store_ps(dst + 0, resxy01);
-		_mm_store_ps(dst + 4, resxy23);
-		_mm_store_ps(dst + 8, resxy45);
-		_mm_store_ps(dst + 12, resxy67);
+		_mm_storeu_ps(dst + 0, resxy01);
+		_mm_storeu_ps(dst + 4, resxy23);
+		_mm_storeu_ps(dst + 8, resxy45);
+		_mm_storeu_ps(dst + 12, resxy67);
 
 		src += 16;
 		dst += 16;
@@ -185,8 +185,8 @@ void batchTransformPositions(const float* __restrict src, uint32_t n, float* __r
 
 	uint32_t rem = n & 7;
 	if (rem >= 4) {
-		const __m128 xy01 = _mm_load_ps(src + 0);
-		const __m128 xy23 = _mm_load_ps(src + 4);
+		const __m128 xy01 = _mm_loadu_ps(src + 0);
+		const __m128 xy23 = _mm_loadu_ps(src + 4);
 
 		const __m128 x0123 = _mm_shuffle_ps(xy01, xy23, _MM_SHUFFLE(2, 0, 2, 0));
 		const __m128 y0123 = _mm_shuffle_ps(xy01, xy23, _MM_SHUFFLE(3, 1, 3, 1));
@@ -200,8 +200,8 @@ void batchTransformPositions(const float* __restrict src, uint32_t n, float* __r
 		const __m128 resxy01 = _mm_shuffle_ps(resx01_resy01, resx01_resy01, _MM_SHUFFLE(3, 1, 2, 0));
 		const __m128 resxy23 = _mm_shuffle_ps(resx23_resy23, resx23_resy23, _MM_SHUFFLE(3, 1, 2, 0));
 
-		_mm_store_ps(dst + 0, resxy01);
-		_mm_store_ps(dst + 4, resxy23);
+		_mm_storeu_ps(dst + 0, resxy01);
+		_mm_storeu_ps(dst + 4, resxy23);
 
 		src += 8;
 		dst += 8;
@@ -444,64 +444,6 @@ void batchTransformTextQuads(const float* __restrict quads, uint32_t n, const fl
 #endif
 }
 
-void batchTransformPositions_Unaligned(const float* __restrict v, uint32_t n, float* __restrict p, const float* __restrict mtx)
-{
-#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
-	const float* src = v;
-	float* dst = p;
-
-	const bx::simd128_t mtx0 = bx::simd_splat(mtx[0]);
-	const bx::simd128_t mtx1 = bx::simd_splat(mtx[1]);
-	const bx::simd128_t mtx2 = bx::simd_splat(mtx[2]);
-	const bx::simd128_t mtx3 = bx::simd_splat(mtx[3]);
-	const bx::simd128_t mtx4 = bx::simd_splat(mtx[4]);
-	const bx::simd128_t mtx5 = bx::simd_splat(mtx[5]);
-
-	const uint32_t iter = n >> 2;
-	for (uint32_t i = 0; i < iter; ++i) {
-		bx::simd128_t src0123 = _mm_loadu_ps(src);
-		bx::simd128_t src4567 = _mm_loadu_ps(src + 4);
-
-		bx::simd128_t src0246 = bx::simd_shuf_xyAB(bx::simd_swiz_xzxz(src0123), bx::simd_swiz_xzxz(src4567));
-		bx::simd128_t src1357 = bx::simd_shuf_xyAB(bx::simd_swiz_ywyw(src0123), bx::simd_swiz_ywyw(src4567));
-
-		bx::simd128_t dst0246 = bx::simd_add(bx::simd_add(bx::simd_mul(src0246, mtx0), bx::simd_mul(src1357, mtx2)), mtx4);
-		bx::simd128_t dst1357 = bx::simd_add(bx::simd_add(bx::simd_mul(src0246, mtx1), bx::simd_mul(src1357, mtx3)), mtx5);
-
-		bx::simd128_t dst0123 = bx::simd_swiz_xzyw(bx::simd_shuf_xyAB(dst0246, dst1357));
-		bx::simd128_t dst4567 = bx::simd_swiz_xzyw(bx::simd_shuf_zwCD(dst0246, dst1357));
-
-		_mm_storeu_ps(dst, dst0123);
-		_mm_storeu_ps(dst + 4, dst4567);
-
-		src += 8;
-		dst += 8;
-	}
-
-	const uint32_t rem = n & 3;
-	switch (rem) {
-	case 3:
-		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
-		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
-		src += 2;
-	case 2:
-		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
-		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
-		src += 2;
-	case 1:
-		*dst++ = mtx[0] * src[0] + mtx[2] * src[1] + mtx[4];
-		*dst++ = mtx[1] * src[0] + mtx[3] * src[1] + mtx[5];
-		src += 2;
-	}
-#else
-	for (uint32_t i = 0; i < n; ++i) {
-		const uint32_t id = i << 1;
-		transformPos2D(v[id], v[id + 1], mtx, &p[id]);
-	}
-#endif
-}
-
-// NOTE: Assumes src is 16-byte aligned. Don't care about dst (unaligned stores)
 void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint16_t* __restrict dst, uint16_t delta)
 {
 	if (delta == 0) {
@@ -514,10 +456,10 @@ void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint1
 
 	const uint32_t iter32 = n >> 5;
 	for (uint32_t i = 0; i < iter32; ++i) {
-		const __m128i s0 = _mm_load_si128((const __m128i*)src);
-		const __m128i s1 = _mm_load_si128((const __m128i*)(src + 8));
-		const __m128i s2 = _mm_load_si128((const __m128i*)(src + 16));
-		const __m128i s3 = _mm_load_si128((const __m128i*)(src + 24));
+		const __m128i s0 = _mm_loadu_si128((const __m128i*)src);
+		const __m128i s1 = _mm_loadu_si128((const __m128i*)(src + 8));
+		const __m128i s2 = _mm_loadu_si128((const __m128i*)(src + 16));
+		const __m128i s3 = _mm_loadu_si128((const __m128i*)(src + 24));
 
 		const __m128i d0 = _mm_add_epi16(s0, xmm_delta);
 		const __m128i d1 = _mm_add_epi16(s1, xmm_delta);
@@ -536,8 +478,8 @@ void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint1
 
 	uint32_t rem = n & 31;
 	if (rem >= 16) {
-		const __m128i s0 = _mm_load_si128((const __m128i*)src);
-		const __m128i s1 = _mm_load_si128((const __m128i*)(src + 8));
+		const __m128i s0 = _mm_loadu_si128((const __m128i*)src);
+		const __m128i s1 = _mm_loadu_si128((const __m128i*)(src + 8));
 
 		const __m128i d0 = _mm_add_epi16(s0, xmm_delta);
 		const __m128i d1 = _mm_add_epi16(s1, xmm_delta);
@@ -551,7 +493,7 @@ void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint1
 	}
 
 	if (rem >= 8) {
-		__m128i s0 = _mm_load_si128((const __m128i*)src);
+		__m128i s0 = _mm_loadu_si128((const __m128i*)src);
 		__m128i d0 = _mm_add_epi16(s0, xmm_delta);
 		_mm_storeu_si128((__m128i*)dst, d0);
 

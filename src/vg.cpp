@@ -3896,7 +3896,7 @@ static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, ui
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 
 	float* dstPos = &vb->m_Pos[vbOffset << 1];
-	vgutil::batchTransformPositions_Unaligned(pos, numVertices, dstPos, stateTransform);
+	vgutil::batchTransformPositions(pos, numVertices, dstPos, stateTransform);
 
 	uv_t* dstUV = &vb->m_UV[vbOffset << 1];
 	if (uv) {

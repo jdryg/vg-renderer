@@ -12,7 +12,6 @@ void memset128(void* __restrict dst, uint32_t n128, const void* __restrict src);
 void genQuadIndices_unaligned(uint16_t* dst, uint32_t numQuads, uint16_t firstVertexID);
 
 void batchTransformDrawIndices(const uint16_t* __restrict src, uint32_t n, uint16_t* __restrict dst, uint16_t delta);
-void batchTransformPositions_Unaligned(const float* __restrict v, uint32_t n, float* __restrict p, const float* __restrict mtx);
 void batchTransformPositions(const float* __restrict v, uint32_t n, float* __restrict p, const float* __restrict mtx);
 
 // quads == FONSquad { x1, y1, x2, y2, u1, v1, u2, v2 }
