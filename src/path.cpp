@@ -633,7 +633,7 @@ void pathArc(Path* path, float cx, float cy, float r, float a0, float a1, Windin
 	}
 
 	if (a1 < a0) {
-		bx::xchg<float>(a0, a1);
+		bx::swap<float>(a0, a1);
 	}
 
 	if (dir == Winding::CCW) {
@@ -641,7 +641,7 @@ void pathArc(Path* path, float cx, float cy, float r, float a0, float a1, Windin
 			a0 += bx::kPi2;
 		}
 
-		bx::xchg<float>(a0, a1);
+		bx::swap<float>(a0, a1);
 	} else {
 		// CW order should be taken care from the common code at the top.
 	}
