@@ -1244,8 +1244,7 @@ void endFrame(Context* ctx)
 
 		GPUVertexBuffer* gpuvb = &ctx->m_GPUVertexBuffers[cmd->m_VertexBufferID];
 		bgfx::setVertexBuffer(0, gpuvb->m_PosBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
-		bgfx::setVertexBuffer(1, gpuvb->m_UVBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
-		bgfx::setVertexBuffer(2, gpuvb->m_ColorBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
+		bgfx::setVertexBuffer(1, gpuvb->m_ColorBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
 		bgfx::setIndexBuffer(gpuib->m_bgfxHandle, cmd->m_FirstIndexID, cmd->m_NumIndices);
 
 		// Set scissor.
@@ -1263,6 +1262,7 @@ void endFrame(Context* ctx)
 			VG_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid image handle");
 			Image* tex = &ctx->m_Images[cmd->m_HandleID];
 
+			bgfx::setVertexBuffer(2, gpuvb->m_UVBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
 			bgfx::setTexture(0, ctx->m_TexUniform, tex->m_bgfxHandle, tex->m_Flags);
 
 			int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
