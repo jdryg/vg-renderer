@@ -850,7 +850,7 @@ Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const Context
 		bgfx::createEmbeddedShader(s_EmbeddedShaders, bgfxRendererType, "fs_stencil"),
 		true);
 
-	ctx->m_TexUniform = bgfx::createUniform("s_tex", bgfx::UniformType::Int1, 1);
+	ctx->m_TexUniform = bgfx::createUniform("s_tex", bgfx::UniformType::Sampler, 1);
 	ctx->m_PaintMatUniform = bgfx::createUniform("u_paintMat", bgfx::UniformType::Mat3, 1);
 	ctx->m_ExtentRadiusFeatherUniform = bgfx::createUniform("u_extentRadiusFeather", bgfx::UniformType::Vec4, 1);
 	ctx->m_InnerColorUniform = bgfx::createUniform("u_innerCol", bgfx::UniformType::Vec4, 1);
