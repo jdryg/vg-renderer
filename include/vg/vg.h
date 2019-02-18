@@ -419,7 +419,7 @@ FontHandle createFont(Context* ctx, const char* name, uint8_t* data, uint32_t si
 FontHandle getFontByName(Context* ctx, const char* name);
 bool setFallbackFont(Context* ctx, FontHandle base, FontHandle fallback);
 void text(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
-void textBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end);
+void textBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, uint32_t textboxFlags);
 float measureText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end, float* bounds);
 void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, float* bounds, uint32_t flags);
 float getTextLineHeight(Context* ctx, const TextConfig& cfg);

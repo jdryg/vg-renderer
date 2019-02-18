@@ -442,7 +442,7 @@ inline void Renderer::Text(const Font& font, uint32_t alignment, Color color, fl
 
 inline void Renderer::TextBox(const Font& font, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* str, const char* end)
 {
-	textBox(m_Context, font.m_Handle, font.m_Size, alignment, color, x, y, breakWidth, str, end);
+	textBox(m_Context, font.m_Handle, font.m_Size, alignment, color, x, y, breakWidth, str, end, 0);
 }
 
 inline float Renderer::CalcTextBounds(const Font& font, uint32_t alignment, float x, float y, const char* str, const char* end, float* bounds)

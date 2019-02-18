@@ -98,9 +98,9 @@ inline void text(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t a
 	text(ctx, makeTextConfig(ctx, fontHandle, fontSize, alignment, color), x, y, str, end);
 }
 
-inline void textBox(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* str, const char* end)
+inline void textBox(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags)
 {
-	textBox(ctx, makeTextConfig(ctx, fontHandle, fontSize, alignment, color), x, y, breakWidth, str, end);
+	textBox(ctx, makeTextConfig(ctx, fontHandle, fontSize, alignment, color), x, y, breakWidth, str, end, textboxFlags);
 }
 
 inline float measureText(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, float x, float y, const char* str, const char* end, float* bounds)
