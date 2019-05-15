@@ -228,6 +228,7 @@ struct CommandType
 		TransformRotate,
 		TransformMult,
 		SetViewBox,
+		SetLayer,
 
 		// Text
 		Text,
@@ -327,6 +328,7 @@ struct ContextVTable
 	void(*transformRotate)(Context* ctx, float ang_rad);
 	void(*transformMult)(Context* ctx, const float* mtx, bool pre);
 	void(*setViewBox)(Context* ctx, float x, float y, float w, float h);
+	void(*setLayer)(Context* ctx, uint32_t layerID);
 	void(*text)(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 	void(*textBox)(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, uint32_t textboxFlags);
 	void(*indexedTriList)(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* color, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
@@ -351,7 +353,7 @@ struct Layer
 	uint32_t m_NumClipCommands;
 	uint32_t m_ClipCommandCapacity;
 
-	uint16_t m_ViewID;
+	bgfx::ViewId m_ViewID;
 
 	bool m_RecordClipCommands;
 	bool m_ForceNewClipCommand;
@@ -542,6 +544,7 @@ static void clTransformTranslate(Context* ctx, CommandList* cl, float x, float y
 static void clTransformRotate(Context* ctx, CommandList* cl, float ang_rad);
 static void clTransformMult(Context* ctx, CommandList* cl, const float* mtx, bool pre);
 static void clSetViewBox(Context* ctx, CommandList* cl, float x, float y, float w, float h);
+static void clSetLayer(Context* ctx, CommandList* cl, uint32_t layerID);
 static void clText(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void clTextBox(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
 static void clSubmitCommandList(Context* ctx, CommandList* cl, CommandListHandle childList);
@@ -599,6 +602,7 @@ static void ctxTransformTranslate(Context* ctx, float x, float y);
 static void ctxTransformRotate(Context* ctx, float ang_rad);
 static void ctxTransformMult(Context* ctx, const float* mtx, bool pre);
 static void ctxSetViewBox(Context* ctx, float x, float y, float w, float h);
+static void ctxSetLayer(Context* ctx, uint32_t layerID);
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
@@ -644,6 +648,7 @@ static void aclTransformTranslate(Context* ctx, float x, float y);
 static void aclTransformRotate(Context* ctx, float ang_rad);
 static void aclTransformMult(Context* ctx, const float* mtx, bool pre);
 static void aclSetViewBox(Context* ctx, float x, float y, float w, float h);
+static void aclSetLayer(Context* ctx, uint32_t layerID);
 static void aclIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 static void aclText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void aclTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
@@ -688,6 +693,7 @@ const ContextVTable g_CtxVTable = {
 	ctxTransformRotate,
 	ctxTransformMult,
 	ctxSetViewBox,
+	ctxSetLayer,
 	ctxText,
 	ctxTextBox,
 	ctxIndexedTriList,
@@ -733,6 +739,7 @@ const ContextVTable g_ActiveCmdListVTable = {
 	aclTransformRotate,
 	aclTransformMult,
 	aclSetViewBox,
+	aclSetLayer,
 	aclText,
 	aclTextBox,
 	aclIndexedTriList,
@@ -812,6 +819,7 @@ Context* createContext(const uint16_t* viewIDs, uint32_t numLayers, bx::Allocato
 	mem += alignSize(sizeof(Layer) * numLayers, alignment);
 
 	for (uint32_t iLayer = 0; iLayer < numLayers; ++iLayer) {
+		VG_CHECK(viewIDs[iLayer] < BGFX_CONFIG_MAX_VIEWS, "Invalid bgfx view ID");
 		Layer* layer = &ctx->m_Layers[iLayer];
 		layer->m_ViewID = viewIDs[iLayer];
 	}
@@ -1220,7 +1228,7 @@ void endFrame(Context* ctx)
 			bgfx::update(gpuib->m_bgfxHandle, 0, indexMem);
 		}
 
-		const uint16_t viewID = layer->m_ViewID;
+		const bgfx::ViewId viewID = layer->m_ViewID;
 
 		float viewMtx[16];
 		float projMtx[16];
@@ -1744,6 +1752,15 @@ void setViewBox(Context* ctx, float x, float y, float w, float h)
 	ctx->m_VTable->setViewBox(ctx, x, y, w, h);
 #else
 	ctxSetViewBox(ctx, x, y, w, h);
+#endif
+}
+
+void setLayer(Context* ctx, uint32_t layerID)
+{
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
+	ctx->m_VTable->setLayer(ctx, layerID);
+#else
+	ctxSetLayer(ctx, layerID);
 #endif
 }
 
@@ -2756,6 +2773,14 @@ void clSetViewBox(Context* ctx, CommandListHandle handle, float x, float y, floa
 	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	clSetViewBox(ctx, cl, x, y, w, h);
+}
+
+void clSetLayer(Context* ctx, CommandListHandle handle, uint32_t layerID)
+{
+	VG_CHECK(isValid(handle), "Invalid command list handle");
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
+
+	clSetLayer(ctx, cl, layerID);
 }
 
 void clText(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, const char* str, const char* end)
@@ -3960,6 +3985,12 @@ static void ctxSetViewBox(Context* ctx, float x, float y, float w, float h)
 	updateState(state);
 }
 
+static void ctxSetLayer(Context* ctx, uint32_t layerID)
+{
+	VG_CHECK(layerID < ctx->m_NumLayers, "Invalid layer ID");
+	ctx->m_ActiveLayerID = layerID;
+}
+
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
 {
 	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
@@ -4441,6 +4472,10 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 			cmd += sizeof(float) * 4;
 			ctxSetViewBox(ctx, viewBox[0], viewBox[1], viewBox[2], viewBox[3]);
 		} break;
+		case CommandType::SetLayer: {
+			const uint32_t layerID = CMD_READ(cmd, uint32_t);
+			ctxSetLayer(ctx, layerID);
+		} break;
 		case CommandType::BeginClip: {
 			const ClipRule::Enum rule = CMD_READ(cmd, ClipRule::Enum);
 			ctxBeginClip(ctx, rule);
@@ -4710,6 +4745,12 @@ static void aclSetViewBox(Context* ctx, float x, float y, float w, float h)
 {
 	VG_CHECK(ctx->m_ActiveCommandList, "Invalid Context state");
 	clSetViewBox(ctx, ctx->m_ActiveCommandList, x, y, w, h);
+}
+
+static void aclSetLayer(Context* ctx, uint32_t layerID)
+{
+	VG_CHECK(ctx->m_ActiveCommandList, "Invalid Context state");
+	clSetLayer(ctx, ctx->m_ActiveCommandList, layerID);
 }
 
 static void aclIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
@@ -6050,6 +6091,10 @@ static void clCacheRender(Context* ctx, Layer* layer, CommandList* cl)
 			cmd += sizeof(float) * 4;
 			ctxSetViewBox(ctx, viewBox[0], viewBox[1], viewBox[2], viewBox[3]);
 		} break;
+		case CommandType::SetLayer: {
+			const uint32_t layerID = CMD_READ(cmd, uint32_t);
+			ctxSetLayer(ctx, layerID);
+		} break;
 		case CommandType::BeginClip: {
 			const ClipRule::Enum rule = CMD_READ(cmd, ClipRule::Enum);
 			ctxBeginClip(ctx, rule);
@@ -6578,6 +6623,12 @@ static void clSetViewBox(Context* ctx, CommandList* cl, float x, float y, float 
 	CMD_WRITE(ptr, float, y);
 	CMD_WRITE(ptr, float, w);
 	CMD_WRITE(ptr, float, h);
+}
+
+static void clSetLayer(Context* ctx, CommandList* cl, uint32_t layerID)
+{
+	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::SetLayer, sizeof(uint32_t));
+	CMD_WRITE(ptr, uint32_t, layerID);
 }
 
 static void clText(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, const char* str, const char* end)
