@@ -97,6 +97,9 @@ struct ImagePattern
 	ImageHandle m_ImageHandle;
 };
 
+VG_HANDLE(VertexBufferHandle);
+VG_HANDLE(IndexBufferHandle);
+
 struct DrawCommand
 {
 	struct Type
@@ -122,7 +125,7 @@ struct DrawCommand
 
 	Type::Enum m_Type;
 	ClipState m_ClipState;
-	uint32_t m_VertexBufferID;
+	VertexBufferHandle m_VertexBufferHandle;
 	uint32_t m_FirstVertexID;
 	uint32_t m_FirstIndexID;
 	uint32_t m_NumVertices;
@@ -331,6 +334,28 @@ struct ContextVTable
 };
 #endif // VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 
+struct Layer
+{
+	VertexBufferHandle* m_VertexBufferHandles;
+	uint32_t m_NumVertexBufferHandles;
+	uint32_t m_VertexBufferHandleCapacity;
+
+	IndexBufferHandle m_IndexBufferHandle;
+
+	DrawCommand* m_DrawCommands;
+	uint32_t m_NumDrawCommands;
+	uint32_t m_DrawCommandCapacity;
+
+	ClipState m_ClipState;
+	DrawCommand* m_ClipCommands;
+	uint32_t m_NumClipCommands;
+	uint32_t m_ClipCommandCapacity;
+
+	bool m_RecordClipCommands;
+	bool m_ForceNewClipCommand;
+	bool m_ForceNewDrawCommand;
+};
+
 struct Context
 {
 #if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
@@ -360,7 +385,6 @@ struct Context
 	IndexBuffer* m_IndexBuffers;
 	GPUIndexBuffer* m_GPUIndexBuffers;
 	uint32_t m_NumIndexBuffers;
-	uint16_t m_ActiveIndexBufferID;
 
 	float** m_Vec2DataPool;
 	uint32_t m_Vec2DataPoolCapacity;
@@ -375,6 +399,10 @@ struct Context
 #if BX_CONFIG_SUPPORTS_THREADING
 	bx::Mutex* m_DataPoolMutex;
 #endif
+
+	Layer* m_Layers;
+	uint32_t m_NumLayers;
+	uint32_t m_ActiveLayerID;
 
 	Image* m_Images;
 	uint32_t m_ImageCapacity;
@@ -392,20 +420,8 @@ struct Context
 	uint32_t m_TransformedVertexCapacity;
 	bool m_PathTransformed;
 
-	DrawCommand* m_DrawCommands;
-	uint32_t m_NumDrawCommands;
-	uint32_t m_DrawCommandCapacity;
-
 	State* m_StateStack;
 	uint32_t m_StateStackTop;
-
-	ClipState m_ClipState;
-	DrawCommand* m_ClipCommands;
-	uint32_t m_NumClipCommands;
-	uint32_t m_ClipCommandCapacity;
-	bool m_RecordClipCommands;
-	bool m_ForceNewClipCommand;
-	bool m_ForceNewDrawCommand;
 
 	Gradient* m_Gradients;
 	uint32_t m_NextGradientID;
@@ -442,7 +458,7 @@ static void getWhitePixelUV(Context* ctx, uv_t* uv);
 static float* allocTransformedVertices(Context* ctx, uint32_t numVertices);
 static const float* transformPath(Context* ctx);
 
-static VertexBuffer* allocVertexBuffer(Context* ctx);
+static VertexBufferHandle allocVertexBuffer(Context* ctx);
 static float* allocVertexBufferData_Vec2(Context* ctx);
 static uint32_t* allocVertexBufferData_Uint32(Context* ctx);
 static void releaseVertexBufferData_Vec2(Context* ctx, float* data);
@@ -450,9 +466,11 @@ static void releaseVertexBufferData_Uint32(Context* ctx, uint32_t* data);
 static void releaseVertexBufferDataCallback_Vec2(void* ptr, void* userData);
 static void releaseVertexBufferDataCallback_Uint32(void* ptr, void* userData);
 
-static uint16_t allocIndexBuffer(Context* ctx);
+static IndexBufferHandle allocIndexBuffer(Context* ctx);
 static void releaseIndexBuffer(Context* ctx, uint16_t* data);
 static void releaseIndexBufferCallback(void* ptr, void* userData);
+
+static VertexBufferHandle layerAllocVertexBuffer(Context* ctx, Layer* layer);
 
 #if VG_CONFIG_UV_INT16
 static int16_t* allocVertexBufferData_UV(Context* ctx);
@@ -460,14 +478,14 @@ static void releaseVertexBufferData_UV(Context* ctx, int16_t* data);
 static void releaseVertexBufferDataCallback_UV(void* ptr, void* userData);
 #endif
 
-static DrawCommand* allocDrawCommand_Textured(Context* ctx, uint32_t numVertices, uint32_t numIndices, ImageHandle img);
-static DrawCommand* allocDrawCommand_ImagePattern(Context* ctx, uint32_t numVertices, uint32_t numIndices, ImagePatternHandle img);
-static DrawCommand* allocDrawCommand_ColorGradient(Context* ctx, uint32_t numVertices, uint32_t numIndices, GradientHandle gradientHandle);
-static DrawCommand* allocDrawCommand_Clip(Context* ctx, uint32_t numVertices, uint32_t numIndices);
-static void createDrawCommand_VertexColor(Context* ctx, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
-static void createDrawCommand_ImagePattern(Context* ctx, ImagePatternHandle handle, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
-static void createDrawCommand_ColorGradient(Context* ctx, GradientHandle handle, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
-static void createDrawCommand_Clip(Context* ctx, const float* vtx, uint32_t numVertices, const uint16_t* indices, uint32_t numIndices);
+static DrawCommand* allocDrawCommand_Textured(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices, ImageHandle img);
+static DrawCommand* allocDrawCommand_ImagePattern(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices, ImagePatternHandle img);
+static DrawCommand* allocDrawCommand_ColorGradient(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices, GradientHandle gradientHandle);
+static DrawCommand* allocDrawCommand_Clip(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices);
+static void createDrawCommand_VertexColor(Context* ctx, Layer* layer, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
+static void createDrawCommand_ImagePattern(Context* ctx, Layer* layer, ImagePatternHandle handle, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
+static void createDrawCommand_ColorGradient(Context* ctx, Layer* layer, GradientHandle handle, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
+static void createDrawCommand_Clip(Context* ctx, Layer* layer, const float* vtx, uint32_t numVertices, const uint16_t* indices, uint32_t numIndices);
 
 static ImageHandle allocImage(Context* ctx);
 static void resetImage(Image* img);
@@ -480,7 +498,7 @@ static CommandListHandle allocCommandList(Context* ctx);
 static bool isCommandListHandleValid(Context* ctx, CommandListHandle handle);
 static uint8_t* clAllocCommand(Context* ctx, CommandList* cl, CommandType::Enum cmdType, uint32_t dataSize);
 static uint32_t clStoreString(Context* ctx, CommandList* cl, const char* str, uint32_t len);
-static void clCacheRender(Context* ctx, CommandList* cl);
+static void clCacheRender(Context* ctx, Layer* layer, CommandList* cl);
 static void clCacheReset(Context* ctx, CommandListCache* cache);
 
 static void clReset(Context* ctx, CommandList* cl);
@@ -537,9 +555,9 @@ static CommandListCache* getCommandListCacheStackTop(Context* ctx);
 static void beginCachedCommand(Context* ctx);
 static void endCachedCommand(Context* ctx);
 static void addCachedCommand(Context* ctx, const float* pos, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
-static void submitCachedMesh(Context* ctx, Color col, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes);
-static void submitCachedMesh(Context* ctx, GradientHandle gradientHandle, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes);
-static void submitCachedMesh(Context* ctx, ImagePatternHandle imgPatter, Color color, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes);
+static void submitCachedMesh(Context* ctx, Layer* layer, Color col, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes);
+static void submitCachedMesh(Context* ctx, Layer* layer, GradientHandle gradientHandle, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes);
+static void submitCachedMesh(Context* ctx, Layer* layer, ImagePatternHandle imgPatter, Color color, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes);
 #endif
 
 static void ctxBeginPath(Context* ctx);
@@ -748,6 +766,8 @@ inline bool isLocal(ImagePatternHandle handle) { return isLocal(handle.flags); }
 //
 Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const ContextConfig* userCfg)
 {
+	const uint32_t numLayers = 4; // TODO: 
+
 	static const ContextConfig defaultConfig = {
 		64,                          // m_MaxGradients
 		64,                          // m_MaxImagePatterns
@@ -771,7 +791,8 @@ Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const Context
 		+ alignSize(sizeof(ImagePattern) * cfg->m_MaxImagePatterns, alignment)
 		+ alignSize(sizeof(State) * cfg->m_MaxStateStackSize, alignment)
 		+ alignSize(sizeof(FontData) * cfg->m_MaxFonts, alignment)
-		+ alignSize(sizeof(CommandList) * cfg->m_MaxCommandLists, alignment);
+		+ alignSize(sizeof(CommandList) * cfg->m_MaxCommandLists, alignment)
+		+ alignSize(sizeof(Layer) * numLayers, alignment);
 
 	uint8_t* mem = (uint8_t*)BX_ALIGNED_ALLOC(allocator, totalMem, alignment);
 	bx::memSet(mem, 0, totalMem);
@@ -788,6 +809,8 @@ Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const Context
 	mem += alignSize(sizeof(FontData) * cfg->m_MaxFonts, alignment);
 	ctx->m_CmdLists = (CommandList*)mem;
 	mem += alignSize(sizeof(CommandList) * cfg->m_MaxCommandLists, alignment);
+	ctx->m_Layers = (Layer*)mem;
+	mem += alignSize(sizeof(Layer) * numLayers, alignment);
 
 #if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable = &g_CtxVTable;
@@ -801,6 +824,7 @@ Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const Context
 	ctx->m_FringeWidth = 1.0f;
 	ctx->m_StateStackTop = 0;
 	ctx->m_StateStack[0].m_GlobalAlpha = 1.0f;
+	ctx->m_NumLayers = numLayers;
 	resetScissor(ctx);
 	transformIdentity(ctx);
 
@@ -914,8 +938,24 @@ void destroyContext(Context* ctx)
 	bgfx::destroy(ctx->m_InnerColorUniform);
 	bgfx::destroy(ctx->m_OuterColorUniform);
 
-	for (uint32_t i = 0; i < ctx->m_VertexBufferCapacity; ++i) {
-		GPUVertexBuffer* vb = &ctx->m_GPUVertexBuffers[i];
+	for (uint32_t iLayer = 0; iLayer < ctx->m_NumLayers; ++iLayer) {
+		Layer* layer = &ctx->m_Layers[iLayer];
+
+		BX_FREE(allocator, layer->m_VertexBufferHandles);
+		layer->m_VertexBufferHandles = nullptr;
+		layer->m_NumVertexBufferHandles = 0;
+
+		layer->m_IndexBufferHandle = VG_INVALID_HANDLE;
+
+		BX_FREE(allocator, layer->m_DrawCommands);
+		layer->m_DrawCommands = nullptr;
+
+		BX_FREE(allocator, layer->m_ClipCommands);
+		layer->m_ClipCommands = nullptr;
+	}
+
+	for (uint32_t iVB = 0; iVB < ctx->m_VertexBufferCapacity; ++iVB) {
+		GPUVertexBuffer* vb = &ctx->m_GPUVertexBuffers[iVB];
 		if (bgfx::isValid(vb->m_PosBufferHandle)) {
 			bgfx::destroy(vb->m_PosBufferHandle);
 			vb->m_PosBufferHandle = BGFX_INVALID_HANDLE;
@@ -936,14 +976,14 @@ void destroyContext(Context* ctx)
 	ctx->m_VertexBufferCapacity = 0;
 	ctx->m_NumVertexBuffers = 0;
 
-	for (uint32_t i = 0; i < ctx->m_NumIndexBuffers; ++i) {
-		GPUIndexBuffer* gpuib = &ctx->m_GPUIndexBuffers[i];
+	for (uint32_t iIB = 0; iIB < ctx->m_NumIndexBuffers; ++iIB) {
+		GPUIndexBuffer* gpuib = &ctx->m_GPUIndexBuffers[iIB];
 		if (bgfx::isValid(gpuib->m_bgfxHandle)) {
 			bgfx::destroy(gpuib->m_bgfxHandle);
 			gpuib->m_bgfxHandle = BGFX_INVALID_HANDLE;
 		}
 
-		IndexBuffer* ib = &ctx->m_IndexBuffers[i];
+		IndexBuffer* ib = &ctx->m_IndexBuffers[iIB];
 		BX_ALIGNED_FREE(allocator, ib->m_Indices, 16);
 		ib->m_Indices = nullptr;
 		ib->m_Capacity = 0;
@@ -953,7 +993,6 @@ void destroyContext(Context* ctx)
 	BX_FREE(allocator, ctx->m_IndexBuffers);
 	ctx->m_GPUIndexBuffers = nullptr;
 	ctx->m_IndexBuffers = nullptr;
-	ctx->m_ActiveIndexBufferID = UINT16_MAX;
 
 	for (uint32_t i = 0; i < ctx->m_Vec2DataPoolCapacity; ++i) {
 		float* buffer = ctx->m_Vec2DataPool[i];
@@ -998,12 +1037,6 @@ void destroyContext(Context* ctx)
 	BX_FREE(allocator, ctx->m_UVDataPool);
 	ctx->m_UVDataPoolCapacity = 0;
 #endif
-
-	BX_FREE(allocator, ctx->m_DrawCommands);
-	ctx->m_DrawCommands = nullptr;
-
-	BX_FREE(allocator, ctx->m_ClipCommands);
-	ctx->m_ClipCommands = nullptr;
 
 	// Font data
 	for (int i = 0; i < cfg->m_MaxFonts; ++i) {
@@ -1081,19 +1114,27 @@ void beginFrame(Context* ctx, uint16_t canvasWidth, uint16_t canvasHeight, float
 	transformIdentity(ctx);
 
 	ctx->m_NumVertexBuffers = 0;
-	allocVertexBuffer(ctx);
+	ctx->m_ActiveLayerID = 0;
 
-	ctx->m_ActiveIndexBufferID = allocIndexBuffer(ctx);
-	VG_CHECK(ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID].m_Count == 0, "Not empty index buffer");
+	for (uint32_t i = 0; i < ctx->m_NumLayers; ++i) {
+		Layer* layer = &ctx->m_Layers[i];
 
-	ctx->m_NumDrawCommands = 0;
-	ctx->m_ForceNewDrawCommand = true;
+		layer->m_NumVertexBufferHandles = 0;
+		layerAllocVertexBuffer(ctx, layer);
 
-	ctx->m_NumClipCommands = 0;
-	ctx->m_ForceNewClipCommand = true;
-	ctx->m_ClipState.m_FirstCmdID = ~0u;
-	ctx->m_ClipState.m_NumCmds = 0;
-	ctx->m_ClipState.m_Rule = ClipRule::In;
+		layer->m_IndexBufferHandle = allocIndexBuffer(ctx);
+		VG_CHECK(ctx->m_IndexBuffers[layer->m_IndexBufferHandle.idx].m_Count == 0, "Not empty index buffer");
+
+		layer->m_NumDrawCommands = 0;
+
+		layer->m_NumClipCommands = 0;
+		layer->m_ClipState.m_FirstCmdID = ~0u;
+		layer->m_ClipState.m_NumCmds = 0;
+		layer->m_ClipState.m_Rule = ClipRule::In;
+
+		layer->m_ForceNewDrawCommand = true;
+		layer->m_ForceNewClipCommand = true;
+	}
 
 	ctx->m_NextGradientID = 0;
 	ctx->m_NextImagePatternID = 0;
@@ -1104,212 +1145,222 @@ void endFrame(Context* ctx)
 	VG_CHECK(ctx->m_StateStackTop == 0, "pushState()/popState() mismatch");
 	VG_CHECK(ctx->m_ActiveCommandList == nullptr, "endCommandList() hasn't been called");
 
-	const uint32_t numDrawCommands = ctx->m_NumDrawCommands;
-	if (numDrawCommands == 0) {
-		// Release the vertex buffer allocated in beginFrame()
-		VertexBuffer* vb = &ctx->m_VertexBuffers[0];
-		releaseVertexBufferData_Vec2(ctx, vb->m_Pos);
-		releaseVertexBufferData_Uint32(ctx, vb->m_Color);
-
-#if VG_CONFIG_UV_INT16
-		releaseVertexBufferData_UV(ctx, vb->m_UV);
-#else
-		releaseVertexBufferData_Vec2(ctx, vb->m_UV);
-#endif
-
-		return;
-	}
-
 	flushTextAtlas(ctx);
 
-	// Update bgfx vertex buffers...
-	const uint32_t numVertexBuffers = ctx->m_NumVertexBuffers;
-	for (uint32_t iVB = 0; iVB < numVertexBuffers; ++iVB) {
-		VertexBuffer* vb = &ctx->m_VertexBuffers[iVB];
-		GPUVertexBuffer* gpuvb = &ctx->m_GPUVertexBuffers[iVB];
-		
-		const uint32_t maxVBVertices = ctx->m_Config.m_MaxVBVertices;
-		if (!bgfx::isValid(gpuvb->m_PosBufferHandle)) {
-			gpuvb->m_PosBufferHandle = bgfx::createDynamicVertexBuffer(maxVBVertices, ctx->m_PosVertexDecl, 0);
-		}
-		if (!bgfx::isValid(gpuvb->m_UVBufferHandle)) {
-			gpuvb->m_UVBufferHandle = bgfx::createDynamicVertexBuffer(maxVBVertices, ctx->m_UVVertexDecl, 0);
-		}
-		if (!bgfx::isValid(gpuvb->m_ColorBufferHandle)) {
-			gpuvb->m_ColorBufferHandle = bgfx::createDynamicVertexBuffer(maxVBVertices, ctx->m_ColorVertexDecl, 0);
-		}
+	const uint32_t numLayers = ctx->m_NumLayers;
+	for (uint32_t iLayer = 0; iLayer < numLayers; ++iLayer) {
+		Layer* layer = &ctx->m_Layers[iLayer];
 
-		const bgfx::Memory* posMem = bgfx::makeRef(vb->m_Pos, sizeof(float) * 2 * vb->m_Count, releaseVertexBufferDataCallback_Vec2, ctx);
-		const bgfx::Memory* colorMem = bgfx::makeRef(vb->m_Color, sizeof(uint32_t) * vb->m_Count, releaseVertexBufferDataCallback_Uint32, ctx);
+		const uint32_t numDrawCommands = layer->m_NumDrawCommands;
+		if (numDrawCommands == 0) {
+			// Release the vertex buffer allocated in beginFrame()
+			const VertexBufferHandle vbHandle = layer->m_VertexBufferHandles[0];
+			VertexBuffer* vb = &ctx->m_VertexBuffers[vbHandle.idx];
+			releaseVertexBufferData_Vec2(ctx, vb->m_Pos);
+			releaseVertexBufferData_Uint32(ctx, vb->m_Color);
+
 #if VG_CONFIG_UV_INT16
-		const bgfx::Memory* uvMem = bgfx::makeRef(vb->m_UV, sizeof(int16_t) * 2 * vb->m_Count, releaseVertexBufferDataCallback_UV, ctx);
+			releaseVertexBufferData_UV(ctx, vb->m_UV);
 #else
-		const bgfx::Memory* uvMem = bgfx::makeRef(vb->m_UV, sizeof(float) * 2 * vb->m_Count, releaseVertexBufferDataCallback_Vec2, ctx);
+			releaseVertexBufferData_Vec2(ctx, vb->m_UV);
 #endif
 
-		bgfx::update(gpuvb->m_PosBufferHandle, 0, posMem);
-		bgfx::update(gpuvb->m_UVBufferHandle, 0, uvMem);
-		bgfx::update(gpuvb->m_ColorBufferHandle, 0, colorMem);
+			continue;
+		}
 
-		vb->m_Pos = nullptr;
-		vb->m_UV = nullptr;
-		vb->m_Color = nullptr;
-	}
+		// Update bgfx vertex buffers...
+		const uint32_t numVertexBuffers = layer->m_NumVertexBufferHandles;
+		for (uint32_t iVB = 0; iVB < numVertexBuffers; ++iVB) {
+			const VertexBufferHandle vbHandle = layer->m_VertexBufferHandles[iVB];
+			VertexBuffer* vb = &ctx->m_VertexBuffers[vbHandle.idx];
+			GPUVertexBuffer* gpuvb = &ctx->m_GPUVertexBuffers[vbHandle.idx];
 
-	// Update bgfx index buffer...
-	IndexBuffer* ib = &ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID];
-	GPUIndexBuffer* gpuib = &ctx->m_GPUIndexBuffers[ctx->m_ActiveIndexBufferID];
-	const bgfx::Memory* indexMem = bgfx::makeRef(&ib->m_Indices[0], sizeof(uint16_t) * ib->m_Count, releaseIndexBufferCallback, ctx);
-	if (!bgfx::isValid(gpuib->m_bgfxHandle)) {
-		gpuib->m_bgfxHandle = bgfx::createDynamicIndexBuffer(indexMem, BGFX_BUFFER_ALLOW_RESIZE);
-	} else {
-		bgfx::update(gpuib->m_bgfxHandle, 0, indexMem);
-	}
+			const uint32_t maxVBVertices = ctx->m_Config.m_MaxVBVertices;
+			if (!bgfx::isValid(gpuvb->m_PosBufferHandle)) {
+				gpuvb->m_PosBufferHandle = bgfx::createDynamicVertexBuffer(maxVBVertices, ctx->m_PosVertexDecl, 0);
+			}
+			if (!bgfx::isValid(gpuvb->m_UVBufferHandle)) {
+				gpuvb->m_UVBufferHandle = bgfx::createDynamicVertexBuffer(maxVBVertices, ctx->m_UVVertexDecl, 0);
+			}
+			if (!bgfx::isValid(gpuvb->m_ColorBufferHandle)) {
+				gpuvb->m_ColorBufferHandle = bgfx::createDynamicVertexBuffer(maxVBVertices, ctx->m_ColorVertexDecl, 0);
+			}
 
-	const uint16_t viewID = ctx->m_ViewID;
-	const uint16_t canvasWidth = ctx->m_CanvasWidth;
-	const uint16_t canvasHeight = ctx->m_CanvasHeight;
+			const bgfx::Memory* posMem = bgfx::makeRef(vb->m_Pos, sizeof(float) * 2 * vb->m_Count, releaseVertexBufferDataCallback_Vec2, ctx);
+			const bgfx::Memory* colorMem = bgfx::makeRef(vb->m_Color, sizeof(uint32_t) * vb->m_Count, releaseVertexBufferDataCallback_Uint32, ctx);
+#if VG_CONFIG_UV_INT16
+			const bgfx::Memory* uvMem = bgfx::makeRef(vb->m_UV, sizeof(int16_t) * 2 * vb->m_Count, releaseVertexBufferDataCallback_UV, ctx);
+#else
+			const bgfx::Memory* uvMem = bgfx::makeRef(vb->m_UV, sizeof(float) * 2 * vb->m_Count, releaseVertexBufferDataCallback_Vec2, ctx);
+#endif
 
-	float viewMtx[16];
-	float projMtx[16];
-	bx::mtxIdentity(viewMtx);
-	bx::mtxOrtho(projMtx, 0.0f, (float)canvasWidth, (float)canvasHeight, 0.0f, 0.0f, 1.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
-	bgfx::setViewTransform(viewID, viewMtx, projMtx);
+			bgfx::update(gpuvb->m_PosBufferHandle, 0, posMem);
+			bgfx::update(gpuvb->m_UVBufferHandle, 0, uvMem);
+			bgfx::update(gpuvb->m_ColorBufferHandle, 0, colorMem);
 
-	uint16_t prevScissorRect[4] = { 0, 0, canvasWidth, canvasHeight};
-	uint16_t prevScissorID = UINT16_MAX;
-	uint32_t prevClipCmdID = UINT32_MAX;
-	uint32_t stencilState = BGFX_STENCIL_NONE;
-	uint8_t nextStencilValue = 1;
+			vb->m_Pos = nullptr;
+			vb->m_UV = nullptr;
+			vb->m_Color = nullptr;
+		}
 
-	for (uint32_t iCmd = 0; iCmd < numDrawCommands; ++iCmd) {
-		DrawCommand* cmd = &ctx->m_DrawCommands[iCmd];
+		// Update bgfx index buffer...
+		const IndexBufferHandle ibHandle = layer->m_IndexBufferHandle;
+		IndexBuffer* ib = &ctx->m_IndexBuffers[ibHandle.idx];
+		GPUIndexBuffer* gpuib = &ctx->m_GPUIndexBuffers[ibHandle.idx];
+		const bgfx::Memory* indexMem = bgfx::makeRef(&ib->m_Indices[0], sizeof(uint16_t) * ib->m_Count, releaseIndexBufferCallback, ctx);
+		if (!bgfx::isValid(gpuib->m_bgfxHandle)) {
+			gpuib->m_bgfxHandle = bgfx::createDynamicIndexBuffer(indexMem, BGFX_BUFFER_ALLOW_RESIZE);
+		} else {
+			bgfx::update(gpuib->m_bgfxHandle, 0, indexMem);
+		}
 
-		const ClipState* cmdClipState = &cmd->m_ClipState;
-		if (cmdClipState->m_FirstCmdID != prevClipCmdID) {
-			prevClipCmdID = cmdClipState->m_FirstCmdID;
-			const uint32_t numClipCommands = cmdClipState->m_NumCmds;
-			if (numClipCommands) {
-				for (uint32_t iClip = 0; iClip < numClipCommands; ++iClip) {
-					VG_CHECK(cmdClipState->m_FirstCmdID + iClip < ctx->m_NumClipCommands, "Invalid clip command index");
+		const uint16_t viewID = ctx->m_ViewID;
+		const uint16_t canvasWidth = ctx->m_CanvasWidth;
+		const uint16_t canvasHeight = ctx->m_CanvasHeight;
 
-					DrawCommand* clipCmd = &ctx->m_ClipCommands[cmdClipState->m_FirstCmdID + iClip];
+		float viewMtx[16];
+		float projMtx[16];
+		bx::mtxIdentity(viewMtx);
+		bx::mtxOrtho(projMtx, 0.0f, (float)canvasWidth, (float)canvasHeight, 0.0f, 0.0f, 1.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
+		bgfx::setViewTransform(viewID, viewMtx, projMtx);
 
-					GPUVertexBuffer* gpuvb = &ctx->m_GPUVertexBuffers[clipCmd->m_VertexBufferID];
-					bgfx::setVertexBuffer(0, gpuvb->m_PosBufferHandle, clipCmd->m_FirstVertexID, clipCmd->m_NumVertices);
-					bgfx::setIndexBuffer(gpuib->m_bgfxHandle, clipCmd->m_FirstIndexID, clipCmd->m_NumIndices);
+		uint16_t prevScissorRect[4] = { 0, 0, canvasWidth, canvasHeight };
+		uint16_t prevScissorID = UINT16_MAX;
+		uint32_t prevClipCmdID = UINT32_MAX;
+		uint32_t stencilState = BGFX_STENCIL_NONE;
+		uint8_t nextStencilValue = 1;
 
-					// Set scissor.
-					{
-						const uint16_t* cmdScissorRect = &clipCmd->m_ScissorRect[0];
-						if (!bx::memCmp(cmdScissorRect, &prevScissorRect[0], sizeof(uint16_t) * 4)) {
-							bgfx::setScissor(prevScissorID);
-						} else {
-							prevScissorID = bgfx::setScissor(cmdScissorRect[0], cmdScissorRect[1], cmdScissorRect[2], cmdScissorRect[3]);
-							bx::memCopy(prevScissorRect, cmdScissorRect, sizeof(uint16_t) * 4);
+		for (uint32_t iCmd = 0; iCmd < numDrawCommands; ++iCmd) {
+			DrawCommand* cmd = &layer->m_DrawCommands[iCmd];
+
+			const ClipState* cmdClipState = &cmd->m_ClipState;
+			if (cmdClipState->m_FirstCmdID != prevClipCmdID) {
+				prevClipCmdID = cmdClipState->m_FirstCmdID;
+				const uint32_t numClipCommands = cmdClipState->m_NumCmds;
+				if (numClipCommands) {
+					for (uint32_t iClip = 0; iClip < numClipCommands; ++iClip) {
+						VG_CHECK(cmdClipState->m_FirstCmdID + iClip < layer->m_NumClipCommands, "Invalid clip command index");
+
+						DrawCommand* clipCmd = &layer->m_ClipCommands[cmdClipState->m_FirstCmdID + iClip];
+						const VertexBufferHandle vbHandle = clipCmd->m_VertexBufferHandle;
+
+						GPUVertexBuffer* gpuvb = &ctx->m_GPUVertexBuffers[vbHandle.idx];
+						bgfx::setVertexBuffer(0, gpuvb->m_PosBufferHandle, clipCmd->m_FirstVertexID, clipCmd->m_NumVertices);
+						bgfx::setIndexBuffer(gpuib->m_bgfxHandle, clipCmd->m_FirstIndexID, clipCmd->m_NumIndices);
+
+						// Set scissor.
+						{
+							const uint16_t* cmdScissorRect = &clipCmd->m_ScissorRect[0];
+							if (!bx::memCmp(cmdScissorRect, &prevScissorRect[0], sizeof(uint16_t) * 4)) {
+								bgfx::setScissor(prevScissorID);
+							} else {
+								prevScissorID = bgfx::setScissor(cmdScissorRect[0], cmdScissorRect[1], cmdScissorRect[2], cmdScissorRect[3]);
+								bx::memCopy(prevScissorRect, cmdScissorRect, sizeof(uint16_t) * 4);
+							}
 						}
+
+						VG_CHECK(clipCmd->m_Type == DrawCommand::Type::Clip, "Invalid clip command");
+						VG_CHECK(clipCmd->m_HandleID == UINT16_MAX, "Invalid clip command image handle");
+
+						int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
+						bgfx::setState(0);
+						bgfx::setStencil(0
+							| BGFX_STENCIL_TEST_ALWAYS                // pass always
+							| BGFX_STENCIL_FUNC_REF(nextStencilValue) // value = nextStencilValue
+							| BGFX_STENCIL_FUNC_RMASK(0xff)
+							| BGFX_STENCIL_OP_FAIL_S_REPLACE
+							| BGFX_STENCIL_OP_FAIL_Z_REPLACE
+							| BGFX_STENCIL_OP_PASS_Z_REPLACE, BGFX_STENCIL_NONE);
+
+						// TODO: Check if it's better to use Type_TexturedVertexColor program here to avoid too many 
+						// state switches.
+						bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::Clip], cmdDepth, false);
 					}
 
-					VG_CHECK(clipCmd->m_Type == DrawCommand::Type::Clip, "Invalid clip command");
-					VG_CHECK(clipCmd->m_HandleID == UINT16_MAX, "Invalid clip command image handle");
-
-					int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
-					bgfx::setState(0);
-					bgfx::setStencil(0
-						| BGFX_STENCIL_TEST_ALWAYS                // pass always
-						| BGFX_STENCIL_FUNC_REF(nextStencilValue) // value = nextStencilValue
+					stencilState = 0
+						| (cmdClipState->m_Rule == ClipRule::In ? BGFX_STENCIL_TEST_EQUAL : BGFX_STENCIL_TEST_NOTEQUAL)
+						| BGFX_STENCIL_FUNC_REF(nextStencilValue)
 						| BGFX_STENCIL_FUNC_RMASK(0xff)
-						| BGFX_STENCIL_OP_FAIL_S_REPLACE
-						| BGFX_STENCIL_OP_FAIL_Z_REPLACE
-						| BGFX_STENCIL_OP_PASS_Z_REPLACE, BGFX_STENCIL_NONE);
+						| BGFX_STENCIL_OP_FAIL_S_KEEP
+						| BGFX_STENCIL_OP_FAIL_Z_KEEP
+						| BGFX_STENCIL_OP_PASS_Z_KEEP;
 
-					// TODO: Check if it's better to use Type_TexturedVertexColor program here to avoid too many 
-					// state switches.
-					bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::Clip], cmdDepth, false);
+					++nextStencilValue;
+				} else {
+					stencilState = BGFX_STENCIL_NONE;
 				}
-
-				stencilState = 0
-					| (cmdClipState->m_Rule == ClipRule::In ? BGFX_STENCIL_TEST_EQUAL : BGFX_STENCIL_TEST_NOTEQUAL)
-					| BGFX_STENCIL_FUNC_REF(nextStencilValue)
-					| BGFX_STENCIL_FUNC_RMASK(0xff)
-					| BGFX_STENCIL_OP_FAIL_S_KEEP
-					| BGFX_STENCIL_OP_FAIL_Z_KEEP
-					| BGFX_STENCIL_OP_PASS_Z_KEEP;
-
-				++nextStencilValue;
-			} else {
-				stencilState = BGFX_STENCIL_NONE;
 			}
-		}
 
-		GPUVertexBuffer* gpuvb = &ctx->m_GPUVertexBuffers[cmd->m_VertexBufferID];
-		bgfx::setVertexBuffer(0, gpuvb->m_PosBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
-		bgfx::setVertexBuffer(1, gpuvb->m_ColorBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
-		bgfx::setIndexBuffer(gpuib->m_bgfxHandle, cmd->m_FirstIndexID, cmd->m_NumIndices);
+			const VertexBufferHandle vbHandle = cmd->m_VertexBufferHandle;
+			GPUVertexBuffer* gpuvb = &ctx->m_GPUVertexBuffers[vbHandle.idx];
+			bgfx::setVertexBuffer(0, gpuvb->m_PosBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
+			bgfx::setVertexBuffer(1, gpuvb->m_ColorBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
+			bgfx::setIndexBuffer(gpuib->m_bgfxHandle, cmd->m_FirstIndexID, cmd->m_NumIndices);
 
-		// Set scissor.
-		{
-			const uint16_t* cmdScissorRect = &cmd->m_ScissorRect[0];
-			if (!bx::memCmp(cmdScissorRect, &prevScissorRect[0], sizeof(uint16_t) * 4)) {
-				bgfx::setScissor(prevScissorID);
-			} else {
-				prevScissorID = bgfx::setScissor(cmdScissorRect[0], cmdScissorRect[1], cmdScissorRect[2], cmdScissorRect[3]);
-				bx::memCopy(prevScissorRect, cmdScissorRect, sizeof(uint16_t) * 4);
+			// Set scissor.
+			{
+				const uint16_t* cmdScissorRect = &cmd->m_ScissorRect[0];
+				if (!bx::memCmp(cmdScissorRect, &prevScissorRect[0], sizeof(uint16_t) * 4)) {
+					bgfx::setScissor(prevScissorID);
+				} else {
+					prevScissorID = bgfx::setScissor(cmdScissorRect[0], cmdScissorRect[1], cmdScissorRect[2], cmdScissorRect[3]);
+					bx::memCopy(prevScissorRect, cmdScissorRect, sizeof(uint16_t) * 4);
+				}
 			}
-		}
 
-		if (cmd->m_Type == DrawCommand::Type::Textured) {
-			VG_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid image handle");
-			Image* tex = &ctx->m_Images[cmd->m_HandleID];
+			if (cmd->m_Type == DrawCommand::Type::Textured) {
+				VG_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid image handle");
+				Image* tex = &ctx->m_Images[cmd->m_HandleID];
 
-			bgfx::setVertexBuffer(2, gpuvb->m_UVBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
-			bgfx::setTexture(0, ctx->m_TexUniform, tex->m_bgfxHandle, tex->m_Flags);
+				bgfx::setVertexBuffer(2, gpuvb->m_UVBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
+				bgfx::setTexture(0, ctx->m_TexUniform, tex->m_bgfxHandle, tex->m_Flags);
 
-			int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
-			bgfx::setState(0
-				| BGFX_STATE_WRITE_A
-				| BGFX_STATE_WRITE_RGB
-				| BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
-			bgfx::setStencil(stencilState);
+				int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
+				bgfx::setState(0
+					| BGFX_STATE_WRITE_A
+					| BGFX_STATE_WRITE_RGB
+					| BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
+				bgfx::setStencil(stencilState);
 
-			bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::Textured], cmdDepth, false);
-		} else if (cmd->m_Type == DrawCommand::Type::ColorGradient) {
-			VG_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid gradient handle");
-			Gradient* grad = &ctx->m_Gradients[cmd->m_HandleID];
+				bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::Textured], cmdDepth, false);
+			} else if (cmd->m_Type == DrawCommand::Type::ColorGradient) {
+				VG_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid gradient handle");
+				Gradient* grad = &ctx->m_Gradients[cmd->m_HandleID];
 
-			bgfx::setUniform(ctx->m_PaintMatUniform, grad->m_Matrix, 1);
-			bgfx::setUniform(ctx->m_ExtentRadiusFeatherUniform, grad->m_Params, 1);
-			bgfx::setUniform(ctx->m_InnerColorUniform, grad->m_InnerColor, 1);
-			bgfx::setUniform(ctx->m_OuterColorUniform, grad->m_OuterColor, 1);
+				bgfx::setUniform(ctx->m_PaintMatUniform, grad->m_Matrix, 1);
+				bgfx::setUniform(ctx->m_ExtentRadiusFeatherUniform, grad->m_Params, 1);
+				bgfx::setUniform(ctx->m_InnerColorUniform, grad->m_InnerColor, 1);
+				bgfx::setUniform(ctx->m_OuterColorUniform, grad->m_OuterColor, 1);
 
-			int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
-			bgfx::setState(0
-				| BGFX_STATE_WRITE_A
-				| BGFX_STATE_WRITE_RGB
-				| BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
-			bgfx::setStencil(stencilState);
+				int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
+				bgfx::setState(0
+					| BGFX_STATE_WRITE_A
+					| BGFX_STATE_WRITE_RGB
+					| BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
+				bgfx::setStencil(stencilState);
 
-			bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::ColorGradient], cmdDepth, false);
-		} else if(cmd->m_Type == DrawCommand::Type::ImagePattern) {
-			VG_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid image pattern handle");
-			ImagePattern* imgPattern = &ctx->m_ImagePatterns[cmd->m_HandleID];
+				bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::ColorGradient], cmdDepth, false);
+			} else if (cmd->m_Type == DrawCommand::Type::ImagePattern) {
+				VG_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid image pattern handle");
+				ImagePattern* imgPattern = &ctx->m_ImagePatterns[cmd->m_HandleID];
 
-			VG_CHECK(isValid(imgPattern->m_ImageHandle), "Invalid image handle in pattern");
-			Image* tex = &ctx->m_Images[imgPattern->m_ImageHandle.idx];
+				VG_CHECK(isValid(imgPattern->m_ImageHandle), "Invalid image handle in pattern");
+				Image* tex = &ctx->m_Images[imgPattern->m_ImageHandle.idx];
 
-			bgfx::setTexture(0, ctx->m_TexUniform, tex->m_bgfxHandle, tex->m_Flags);
-			bgfx::setUniform(ctx->m_PaintMatUniform, imgPattern->m_Matrix, 1);
+				bgfx::setTexture(0, ctx->m_TexUniform, tex->m_bgfxHandle, tex->m_Flags);
+				bgfx::setUniform(ctx->m_PaintMatUniform, imgPattern->m_Matrix, 1);
 
-			int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
-			bgfx::setState(0
-				| BGFX_STATE_WRITE_A
-				| BGFX_STATE_WRITE_RGB
-				| BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
-			bgfx::setStencil(stencilState);
+				int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
+				bgfx::setState(0
+					| BGFX_STATE_WRITE_A
+					| BGFX_STATE_WRITE_RGB
+					| BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
+				bgfx::setStencil(stencilState);
 
-			bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::ImagePattern], cmdDepth, false);
-		} else {
-			VG_CHECK(false, "Unknown draw command type");
+				bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::ImagePattern], cmdDepth, false);
+			} else {
+				VG_CHECK(false, "Unknown draw command type");
+			}
 		}
 	}
 
@@ -2822,7 +2873,9 @@ static void ctxClosePath(Context* ctx)
 
 static void ctxFillPathColor(Context* ctx, Color color, uint32_t flags)
 {
-	const bool recordClipCommands = ctx->m_RecordClipCommands;
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+
+	const bool recordClipCommands = layer->m_RecordClipCommands;
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
 	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
 #else
@@ -2885,9 +2938,9 @@ static void ctxFillPathColor(Context* ctx, Color color, uint32_t flags)
 #endif
 
 			if (recordClipCommands) {
-				createDrawCommand_Clip(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
+				createDrawCommand_Clip(ctx, layer, mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
 			} else {
-				createDrawCommand_VertexColor(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+				createDrawCommand_VertexColor(ctx, layer, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
 			}
 		}
 	} else if (pathType == PathType::Concave) {
@@ -2922,9 +2975,9 @@ static void ctxFillPathColor(Context* ctx, Color color, uint32_t flags)
 #endif
 
 				if (recordClipCommands) {
-					createDrawCommand_Clip(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
+					createDrawCommand_Clip(ctx, layer, mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
 				} else {
-					createDrawCommand_VertexColor(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+					createDrawCommand_VertexColor(ctx, layer, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
 				}
 			}
 		}
@@ -2939,7 +2992,9 @@ static void ctxFillPathColor(Context* ctx, Color color, uint32_t flags)
 
 static void ctxFillPathGradient(Context* ctx, GradientHandle gradientHandle, uint32_t flags)
 {
-	VG_CHECK(!ctx->m_RecordClipCommands, "Only fillPath(Color) is supported inside BeginClip()/EndClip()");
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+
+	VG_CHECK(!layer->m_RecordClipCommands, "Only fillPath(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
 	VG_CHECK(!isLocal(gradientHandle), "Invalid gradient handle");
 
@@ -2998,7 +3053,7 @@ static void ctxFillPathGradient(Context* ctx, GradientHandle gradientHandle, uin
 			}
 #endif
 
-			createDrawCommand_ColorGradient(ctx, gradientHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+			createDrawCommand_ColorGradient(ctx, layer, gradientHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
 		}
 	} else if (pathType == PathType::Concave) {
 		for (uint32_t i = 0; i < numSubPaths; ++i) {
@@ -3033,7 +3088,7 @@ static void ctxFillPathGradient(Context* ctx, GradientHandle gradientHandle, uin
 				}
 #endif
 
-				createDrawCommand_ColorGradient(ctx, gradientHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+				createDrawCommand_ColorGradient(ctx, layer, gradientHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
 			}
 		}
 	}
@@ -3047,7 +3102,9 @@ static void ctxFillPathGradient(Context* ctx, GradientHandle gradientHandle, uin
 
 static void ctxFillPathImagePattern(Context* ctx, ImagePatternHandle imgPatternHandle, Color color, uint32_t flags)
 {
-	VG_CHECK(!ctx->m_RecordClipCommands, "Only fillPath(Color) is supported inside BeginClip()/EndClip()");
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+
+	VG_CHECK(!layer->m_RecordClipCommands, "Only fillPath(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(imgPatternHandle), "Invalid image pattern handle");
 	VG_CHECK(!isLocal(imgPatternHandle), "Invalid gradient handle");
 
@@ -3112,7 +3169,7 @@ static void ctxFillPathImagePattern(Context* ctx, ImagePatternHandle imgPatternH
 			}
 #endif
 
-			createDrawCommand_ImagePattern(ctx, imgPatternHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+			createDrawCommand_ImagePattern(ctx, layer, imgPatternHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
 		}
 	} else if (pathType == PathType::Concave) {
 		for (uint32_t i = 0; i < numSubPaths; ++i) {
@@ -3145,7 +3202,7 @@ static void ctxFillPathImagePattern(Context* ctx, ImagePatternHandle imgPatternH
 				}
 #endif
 
-				createDrawCommand_ImagePattern(ctx, imgPatternHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+				createDrawCommand_ImagePattern(ctx, layer, imgPatternHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
 			}
 		}
 	}
@@ -3159,7 +3216,9 @@ static void ctxFillPathImagePattern(Context* ctx, ImagePatternHandle imgPatternH
 
 static void ctxStrokePathColor(Context* ctx, Color color, float width, uint32_t flags)
 {
-	const bool recordClipCommands = ctx->m_RecordClipCommands;
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+
+	const bool recordClipCommands = layer->m_RecordClipCommands;
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
 	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
@@ -3237,9 +3296,9 @@ static void ctxStrokePathColor(Context* ctx, Color color, float width, uint32_t 
 #endif
 
 		if (recordClipCommands) {
-			createDrawCommand_Clip(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
+			createDrawCommand_Clip(ctx, layer, mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
 		} else {
-			createDrawCommand_VertexColor(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+			createDrawCommand_VertexColor(ctx, layer, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
 		}
 	}
 
@@ -3252,7 +3311,9 @@ static void ctxStrokePathColor(Context* ctx, Color color, float width, uint32_t 
 
 static void ctxStrokePathGradient(Context* ctx, GradientHandle gradientHandle, float width, uint32_t flags)
 {
-	VG_CHECK(!ctx->m_RecordClipCommands, "Only strokePath(Color) is supported inside BeginClip()/EndClip()");
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+
+	VG_CHECK(!layer->m_RecordClipCommands, "Only strokePath(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
 	VG_CHECK(!isLocal(gradientHandle), "Invalid gradient handle");
 
@@ -3326,7 +3387,7 @@ static void ctxStrokePathGradient(Context* ctx, GradientHandle gradientHandle, f
 		}
 #endif
 
-		createDrawCommand_ColorGradient(ctx, gradientHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+		createDrawCommand_ColorGradient(ctx, layer, gradientHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
 	}
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
@@ -3338,7 +3399,9 @@ static void ctxStrokePathGradient(Context* ctx, GradientHandle gradientHandle, f
 
 static void ctxStrokePathImagePattern(Context* ctx, ImagePatternHandle imgPatternHandle, Color color, float width, uint32_t flags)
 {
-	VG_CHECK(!ctx->m_RecordClipCommands, "Only strokePath(Color) is supported inside BeginClip()/EndClip()");
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+
+	VG_CHECK(!layer->m_RecordClipCommands, "Only strokePath(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(imgPatternHandle), "Invalid image pattern handle");
 	VG_CHECK(!isLocal(imgPatternHandle), "Invalid gradient handle");
 
@@ -3418,7 +3481,7 @@ static void ctxStrokePathImagePattern(Context* ctx, ImagePatternHandle imgPatter
 		}
 #endif
 
-		createDrawCommand_ImagePattern(ctx, imgPatternHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+		createDrawCommand_ImagePattern(ctx, layer, imgPatternHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
 	}
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
@@ -3430,43 +3493,49 @@ static void ctxStrokePathImagePattern(Context* ctx, ImagePatternHandle imgPatter
 
 static void ctxBeginClip(Context* ctx, ClipRule::Enum rule)
 {
-	VG_CHECK(!ctx->m_RecordClipCommands, "Already inside beginClip()/endClip() block");
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
 
-	ClipState* clipState = &ctx->m_ClipState;
-	const uint32_t nextClipCmdID = ctx->m_NumClipCommands;
+	VG_CHECK(!layer->m_RecordClipCommands, "Already inside beginClip()/endClip() block");
+	
+	ClipState* clipState = &layer->m_ClipState;
+	const uint32_t nextClipCmdID = layer->m_NumClipCommands;
 
 	clipState->m_Rule = rule;
 	clipState->m_FirstCmdID = nextClipCmdID;
 	clipState->m_NumCmds = 0;
 
-	ctx->m_RecordClipCommands = true;
-	ctx->m_ForceNewClipCommand = true;
+	layer->m_RecordClipCommands = true;
+	layer->m_ForceNewClipCommand = true;
 }
 
 static void ctxEndClip(Context* ctx)
 {
-	VG_CHECK(ctx->m_RecordClipCommands, "Must be called once after beginClip()");
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
 
-	ClipState* clipState = &ctx->m_ClipState;
-	const uint32_t nextClipCmdID = ctx->m_NumClipCommands;
+	VG_CHECK(layer->m_RecordClipCommands, "Must be called once after beginClip()");
+
+	ClipState* clipState = &layer->m_ClipState;
+	const uint32_t nextClipCmdID = layer->m_NumClipCommands;
 
 	clipState->m_NumCmds = nextClipCmdID - clipState->m_FirstCmdID;
 
-	ctx->m_RecordClipCommands = false;
-	ctx->m_ForceNewDrawCommand = true;
+	layer->m_RecordClipCommands = false;
+	layer->m_ForceNewDrawCommand = true;
 }
 
 static void ctxResetClip(Context* ctx)
 {
-	VG_CHECK(!ctx->m_RecordClipCommands, "Must be called outside beginClip()/endClip() pair.");
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
 
-	ClipState* clipState = &ctx->m_ClipState;
+	VG_CHECK(!layer->m_RecordClipCommands, "Must be called outside beginClip()/endClip() pair.");
+
+	ClipState* clipState = &layer->m_ClipState;
 
 	if (clipState->m_FirstCmdID != ~0u) {
 		clipState->m_FirstCmdID = ~0u;
 		clipState->m_NumCmds = 0;
 
-		ctx->m_ForceNewDrawCommand = true;
+		layer->m_ForceNewDrawCommand = true;
 	}
 }
 
@@ -3710,18 +3779,20 @@ static void ctxPopState(Context* ctx)
 
 	// If the new state has a different scissor rect than the last draw command 
 	// force creating a new command.
-	const uint32_t numDrawCommands = ctx->m_NumDrawCommands;
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	const uint32_t numDrawCommands = layer->m_NumDrawCommands;
 	if (numDrawCommands != 0) {
 		const State* state = getState(ctx);
-		const DrawCommand* lastDrawCommand = &ctx->m_DrawCommands[numDrawCommands - 1];
+		const DrawCommand* lastDrawCommand = &layer->m_DrawCommands[numDrawCommands - 1];
 		const uint16_t* lastScissor = &lastDrawCommand->m_ScissorRect[0];
 		const float* stateScissor = &state->m_ScissorRect[0];
 		if (lastScissor[0] != (uint16_t)stateScissor[0] ||
 			lastScissor[1] != (uint16_t)stateScissor[1] ||
 			lastScissor[2] != (uint16_t)stateScissor[2] ||
-			lastScissor[3] != (uint16_t)stateScissor[3]) {
-			ctx->m_ForceNewDrawCommand = true;
-			ctx->m_ForceNewClipCommand = true;
+			lastScissor[3] != (uint16_t)stateScissor[3]) 
+		{
+			layer->m_ForceNewDrawCommand = true;
+			layer->m_ForceNewClipCommand = true;
 		}
 	}
 }
@@ -3732,8 +3803,10 @@ static void ctxResetScissor(Context* ctx)
 	state->m_ScissorRect[0] = state->m_ScissorRect[1] = 0.0f;
 	state->m_ScissorRect[2] = (float)ctx->m_CanvasWidth;
 	state->m_ScissorRect[3] = (float)ctx->m_CanvasHeight;
-	ctx->m_ForceNewDrawCommand = true;
-	ctx->m_ForceNewClipCommand = true;
+
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	layer->m_ForceNewDrawCommand = true;
+	layer->m_ForceNewClipCommand = true;
 }
 
 static void ctxSetScissor(Context* ctx, float x, float y, float w, float h)
@@ -3756,8 +3829,10 @@ static void ctxSetScissor(Context* ctx, float x, float y, float w, float h)
 	state->m_ScissorRect[1] = miny;
 	state->m_ScissorRect[2] = maxx - minx;
 	state->m_ScissorRect[3] = maxy - miny;
-	ctx->m_ForceNewDrawCommand = true;
-	ctx->m_ForceNewClipCommand = true;
+
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	layer->m_ForceNewDrawCommand = true;
+	layer->m_ForceNewClipCommand = true;
 }
 
 static bool ctxIntersectScissor(Context* ctx, float x, float y, float w, float h)
@@ -3783,8 +3858,9 @@ static bool ctxIntersectScissor(Context* ctx, float x, float y, float w, float h
 	state->m_ScissorRect[2] = newRectWidth;
 	state->m_ScissorRect[3] = newRectHeight;
 
-	ctx->m_ForceNewDrawCommand = true;
-	ctx->m_ForceNewClipCommand = true;
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	layer->m_ForceNewDrawCommand = true;
+	layer->m_ForceNewClipCommand = true;
 
 	return newRectWidth >= 1.0f && newRectHeight >= 1.0f;
 }
@@ -3882,6 +3958,8 @@ static void ctxSetViewBox(Context* ctx, float x, float y, float w, float h)
 
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
 {
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+
 	if (!isValid(img)) {
 		img = ctx->m_FontImages[0];
 	}
@@ -3889,10 +3967,11 @@ static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, ui
 	const State* state = getState(ctx);
 	const float* stateTransform = state->m_TransformMtx;
 
-	DrawCommand* cmd = allocDrawCommand_Textured(ctx, numVertices, numIndices, img);
+	DrawCommand* cmd = allocDrawCommand_Textured(ctx, layer, numVertices, numIndices, img);
 
 	// Vertex buffer
-	VertexBuffer* vb = &ctx->m_VertexBuffers[cmd->m_VertexBufferID];
+	const VertexBufferHandle vbHandle = cmd->m_VertexBufferHandle;
+	VertexBuffer* vb = &ctx->m_VertexBuffers[vbHandle.idx];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 
 	float* dstPos = &vb->m_Pos[vbOffset << 1];
@@ -3921,7 +4000,8 @@ static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, ui
 	}
 
 	// Index buffer
-	IndexBuffer* ib = &ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID];
+	const IndexBufferHandle ibHandle = layer->m_IndexBufferHandle;
+	IndexBuffer* ib = &ctx->m_IndexBuffers[ibHandle.idx];
 	uint16_t* dstIndex = &ib->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	vgutil::batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);
 
@@ -4027,6 +4107,8 @@ static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, fl
 
 static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 {
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+
 	VG_CHECK(isCommandListHandleValid(ctx, handle), "Invalid command list handle");
 	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
@@ -4048,7 +4130,7 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 		const float cachedScale = clCache->m_AvgScale;
 		const float stateScale = state->m_AvgScale;
 		if (cachedScale == stateScale) {
-			clCacheRender(ctx, cl);
+			clCacheRender(ctx, layer, cl);
 			--ctx->m_SubmitCmdListRecursionDepth;
 			return;
 		} else {
@@ -4718,7 +4800,23 @@ static const float* transformPath(Context* ctx)
 	return transformedVertices;
 }
 
-static VertexBuffer* allocVertexBuffer(Context* ctx)
+static VertexBufferHandle layerAllocVertexBuffer(Context* ctx, Layer* layer)
+{
+	if (layer->m_NumVertexBufferHandles + 1 > layer->m_VertexBufferHandleCapacity) {
+		layer->m_VertexBufferHandleCapacity++;
+		layer->m_VertexBufferHandles = (VertexBufferHandle*)BX_REALLOC(ctx->m_Allocator, layer->m_VertexBufferHandles, sizeof(VertexBufferHandle) * layer->m_VertexBufferHandleCapacity);
+	}
+
+	const uint32_t idx = layer->m_NumVertexBufferHandles;
+	layer->m_NumVertexBufferHandles++;
+
+	const VertexBufferHandle vbHandle = allocVertexBuffer(ctx);
+	layer->m_VertexBufferHandles[idx] = vbHandle;
+
+	return vbHandle;
+}
+
+static VertexBufferHandle allocVertexBuffer(Context* ctx)
 {
 	if (ctx->m_NumVertexBuffers + 1 > ctx->m_VertexBufferCapacity) {
 		ctx->m_VertexBufferCapacity++;
@@ -4732,7 +4830,10 @@ static VertexBuffer* allocVertexBuffer(Context* ctx)
 		gpuvb->m_ColorBufferHandle = BGFX_INVALID_HANDLE;
 	}
 
-	VertexBuffer* vb = &ctx->m_VertexBuffers[ctx->m_NumVertexBuffers++];
+	const uint16_t idx = (uint16_t)ctx->m_NumVertexBuffers;
+	ctx->m_NumVertexBuffers++;
+
+	VertexBuffer* vb = &ctx->m_VertexBuffers[idx];
 	vb->m_Pos = allocVertexBufferData_Vec2(ctx);
 #if VG_CONFIG_UV_INT16
 	vb->m_UV = allocVertexBufferData_UV(ctx);
@@ -4742,10 +4843,10 @@ static VertexBuffer* allocVertexBuffer(Context* ctx)
 	vb->m_Color = allocVertexBufferData_Uint32(ctx);
 	vb->m_Count = 0;
 
-	return vb;
+	return { idx };
 }
 
-static uint16_t allocIndexBuffer(Context* ctx)
+static IndexBufferHandle allocIndexBuffer(Context* ctx)
 {
 #if BX_CONFIG_SUPPORTS_THREADING
 	bx::MutexScope ms(*ctx->m_DataPoolMutex);
@@ -4776,7 +4877,7 @@ static uint16_t allocIndexBuffer(Context* ctx)
 		gpuib->m_bgfxHandle = BGFX_INVALID_HANDLE;
 	}
 
-	return ibID;
+	return { ibID };
 }
 
 static float* allocVertexBufferData_Vec2(Context* ctx)
@@ -4948,14 +5049,15 @@ static void releaseIndexBuffer(Context* ctx, uint16_t* data)
 	}
 }
 
-static void createDrawCommand_VertexColor(Context* ctx, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
+static void createDrawCommand_VertexColor(Context* ctx, Layer* layer, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
 {
 	// Allocate the draw command
 	const ImageHandle fontImg = ctx->m_FontImages[0];
-	DrawCommand* cmd = allocDrawCommand_Textured(ctx, numVertices, numIndices, fontImg);
+	DrawCommand* cmd = allocDrawCommand_Textured(ctx, layer, numVertices, numIndices, fontImg);
 
 	// Vertex buffer
-	VertexBuffer* vb = &ctx->m_VertexBuffers[cmd->m_VertexBufferID];
+	const VertexBufferHandle vbHandle = cmd->m_VertexBufferHandle;
+	VertexBuffer* vb = &ctx->m_VertexBuffers[vbHandle.idx];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 
 	float* dstPos = &vb->m_Pos[vbOffset << 1];
@@ -4980,7 +5082,8 @@ static void createDrawCommand_VertexColor(Context* ctx, const float* vtx, uint32
 	}
 
 	// Index buffer
-	IndexBuffer* ib = &ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID];
+	const IndexBufferHandle ibHandle = layer->m_IndexBufferHandle;
+	IndexBuffer* ib = &ctx->m_IndexBuffers[ibHandle.idx];
 	uint16_t* dstIndex = &ib->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	vgutil::batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);
 
@@ -4988,11 +5091,12 @@ static void createDrawCommand_VertexColor(Context* ctx, const float* vtx, uint32
 	cmd->m_NumIndices += numIndices;
 }
 
-static void createDrawCommand_ImagePattern(Context* ctx, ImagePatternHandle imgPatternHandle, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
+static void createDrawCommand_ImagePattern(Context* ctx, Layer* layer, ImagePatternHandle imgPatternHandle, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
 {
-	DrawCommand* cmd = allocDrawCommand_ImagePattern(ctx, numVertices, numIndices, imgPatternHandle);
+	DrawCommand* cmd = allocDrawCommand_ImagePattern(ctx, layer, numVertices, numIndices, imgPatternHandle);
 
-	VertexBuffer* vb = &ctx->m_VertexBuffers[cmd->m_VertexBufferID];
+	const VertexBufferHandle vbHandle = cmd->m_VertexBufferHandle;
+	VertexBuffer* vb = &ctx->m_VertexBuffers[vbHandle.idx];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 
 	float* dstPos = &vb->m_Pos[vbOffset << 1];
@@ -5006,7 +5110,8 @@ static void createDrawCommand_ImagePattern(Context* ctx, ImagePatternHandle imgP
 		vgutil::memset32(dstColor, numVertices, colors);
 	}
 
-	IndexBuffer* ib = &ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID];
+	const IndexBufferHandle ibHandle = layer->m_IndexBufferHandle;
+	IndexBuffer* ib = &ctx->m_IndexBuffers[ibHandle.idx];
 	uint16_t* dstIndex = &ib->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	vgutil::batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);
 
@@ -5014,11 +5119,12 @@ static void createDrawCommand_ImagePattern(Context* ctx, ImagePatternHandle imgP
 	cmd->m_NumIndices += numIndices;
 }
 
-static void createDrawCommand_ColorGradient(Context* ctx, GradientHandle gradientHandle, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
+static void createDrawCommand_ColorGradient(Context* ctx, Layer* layer, GradientHandle gradientHandle, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
 {
-	DrawCommand* cmd = allocDrawCommand_ColorGradient(ctx, numVertices, numIndices, gradientHandle);
+	DrawCommand* cmd = allocDrawCommand_ColorGradient(ctx, layer, numVertices, numIndices, gradientHandle);
 
-	VertexBuffer* vb = &ctx->m_VertexBuffers[cmd->m_VertexBufferID];
+	const VertexBufferHandle vbHandle = cmd->m_VertexBufferHandle;
+	VertexBuffer* vb = &ctx->m_VertexBuffers[vbHandle.idx];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 
 	float* dstPos = &vb->m_Pos[vbOffset << 1];
@@ -5032,7 +5138,8 @@ static void createDrawCommand_ColorGradient(Context* ctx, GradientHandle gradien
 		vgutil::memset32(dstColor, numVertices, colors);
 	}
 
-	IndexBuffer* ib = &ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID];
+	const IndexBufferHandle ibHandle = layer->m_IndexBufferHandle;
+	IndexBuffer* ib = &ctx->m_IndexBuffers[ibHandle.idx];
 	uint16_t* dstIndex = &ib->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	vgutil::batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);
 
@@ -5040,20 +5147,22 @@ static void createDrawCommand_ColorGradient(Context* ctx, GradientHandle gradien
 	cmd->m_NumIndices += numIndices;
 }
 
-static void createDrawCommand_Clip(Context* ctx, const float* vtx, uint32_t numVertices, const uint16_t* indices, uint32_t numIndices)
+static void createDrawCommand_Clip(Context* ctx, Layer* layer, const float* vtx, uint32_t numVertices, const uint16_t* indices, uint32_t numIndices)
 {
 	// Allocate the draw command
-	DrawCommand* cmd = allocDrawCommand_Clip(ctx, numVertices, numIndices);
+	DrawCommand* cmd = allocDrawCommand_Clip(ctx, layer, numVertices, numIndices);
 
 	// Vertex buffer
-	VertexBuffer* vb = &ctx->m_VertexBuffers[cmd->m_VertexBufferID];
+	const VertexBufferHandle vbHandle = cmd->m_VertexBufferHandle;
+	VertexBuffer* vb = &ctx->m_VertexBuffers[vbHandle.idx];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 
 	float* dstPos = &vb->m_Pos[vbOffset << 1];
 	bx::memCopy(dstPos, vtx, sizeof(float) * 2 * numVertices);
 
 	// Index buffer
-	IndexBuffer* ib = &ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID];
+	const IndexBufferHandle ibHandle = layer->m_IndexBufferHandle;
+	IndexBuffer* ib = &ctx->m_IndexBuffers[ibHandle.idx];
 	uint16_t* dstIndex = &ib->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	vgutil::batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);
 
@@ -5063,32 +5172,33 @@ static void createDrawCommand_Clip(Context* ctx, const float* vtx, uint32_t numV
 
 // NOTE: Side effect: Resets m_ForceNewDrawCommand and m_ForceNewClipCommand if the current
 // vertex buffer cannot hold the specified amount of vertices.
-static uint32_t allocVertices(Context* ctx, uint32_t numVertices, uint32_t* vbID)
+static uint32_t layerAllocVertices(Context* ctx, Layer* layer, uint32_t numVertices, VertexBufferHandle* vbHandle)
 {
 	VG_CHECK(numVertices < ctx->m_Config.m_MaxVBVertices, "A single draw call cannot have more than %d vertices", ctx->m_Config.m_MaxVBVertices);
 
 	// Check if the current vertex buffer can hold the specified amount of vertices
-	VertexBuffer* vb = &ctx->m_VertexBuffers[ctx->m_NumVertexBuffers - 1];
+	*vbHandle = layer->m_VertexBufferHandles[layer->m_NumVertexBufferHandles - 1];
+	VertexBuffer* vb = &ctx->m_VertexBuffers[vbHandle->idx];
 	if (vb->m_Count + numVertices > ctx->m_Config.m_MaxVBVertices) {
 		// It cannot. Allocate a new vb.
-		vb = allocVertexBuffer(ctx);
-		VG_CHECK(vb, "Failed to allocate new Vertex Buffer");
+		*vbHandle = layerAllocVertexBuffer(ctx, layer);
+		VG_CHECK(vbHandle->idx != UINT16_MAX, "Failed to allocate new Vertex Buffer");
+		vb = &ctx->m_VertexBuffers[vbHandle->idx];
 
 		// The currently active vertex buffer has changed so force a new draw command.
-		ctx->m_ForceNewDrawCommand = true;
-		ctx->m_ForceNewClipCommand = true;
+		layer->m_ForceNewDrawCommand = true;
+		layer->m_ForceNewClipCommand = true;
 	}
 
-	*vbID = (uint32_t)(vb - ctx->m_VertexBuffers);
-	
 	const uint32_t firstVertexID = vb->m_Count;
 	vb->m_Count += numVertices;
 	return firstVertexID;
 }
 
-static uint32_t allocIndices(Context* ctx, uint32_t numIndices)
+static uint32_t layerAllocIndices(Context* ctx, Layer* layer, uint32_t numIndices)
 {
-	IndexBuffer* ib = &ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID];
+	const IndexBufferHandle ibHandle = layer->m_IndexBufferHandle;
+	IndexBuffer* ib = &ctx->m_IndexBuffers[ibHandle.idx];
 	if (ib->m_Count + numIndices > ib->m_Capacity) {
 		const uint32_t nextCapacity = ib->m_Capacity != 0 ? (ib->m_Capacity * 3) / 2 : 32;
 
@@ -5101,45 +5211,45 @@ static uint32_t allocIndices(Context* ctx, uint32_t numIndices)
 	return firstIndexID;
 }
 
-static DrawCommand* allocDrawCommand(Context* ctx)
+static DrawCommand* allocDrawCommand(Context* ctx, Layer* layer)
 {
-	if (ctx->m_NumDrawCommands + 1 >= ctx->m_DrawCommandCapacity) {
-		ctx->m_DrawCommandCapacity = ctx->m_DrawCommandCapacity + 32;
-		ctx->m_DrawCommands = (DrawCommand*)BX_REALLOC(ctx->m_Allocator, ctx->m_DrawCommands, sizeof(DrawCommand) * ctx->m_DrawCommandCapacity);
+	if (layer->m_NumDrawCommands + 1 >= layer->m_DrawCommandCapacity) {
+		layer->m_DrawCommandCapacity = layer->m_DrawCommandCapacity + 32;
+		layer->m_DrawCommands = (DrawCommand*)BX_REALLOC(ctx->m_Allocator, layer->m_DrawCommands, sizeof(DrawCommand) * layer->m_DrawCommandCapacity);
 	}
 
-	DrawCommand* cmd = &ctx->m_DrawCommands[ctx->m_NumDrawCommands];
-	ctx->m_NumDrawCommands++;
+	DrawCommand* cmd = &layer->m_DrawCommands[layer->m_NumDrawCommands];
+	layer->m_NumDrawCommands++;
 	return cmd;
 }
 
-static DrawCommand* allocClipCommand(Context* ctx)
+static DrawCommand* allocClipCommand(Context* ctx, Layer* layer)
 {
-	if (ctx->m_NumClipCommands + 1 >= ctx->m_ClipCommandCapacity) {
-		ctx->m_ClipCommandCapacity = ctx->m_ClipCommandCapacity + 32;
-		ctx->m_ClipCommands = (DrawCommand*)BX_REALLOC(ctx->m_Allocator, ctx->m_ClipCommands, sizeof(DrawCommand) * ctx->m_ClipCommandCapacity);
+	if (layer->m_NumClipCommands + 1 >= layer->m_ClipCommandCapacity) {
+		layer->m_ClipCommandCapacity = layer->m_ClipCommandCapacity + 32;
+		layer->m_ClipCommands = (DrawCommand*)BX_REALLOC(ctx->m_Allocator, layer->m_ClipCommands, sizeof(DrawCommand) * layer->m_ClipCommandCapacity);
 	}
 
-	DrawCommand* cmd = &ctx->m_ClipCommands[ctx->m_NumClipCommands];
-	ctx->m_NumClipCommands++;
+	DrawCommand* cmd = &layer->m_ClipCommands[layer->m_NumClipCommands];
+	layer->m_NumClipCommands++;
 	return cmd;
 }
 
-static DrawCommand* allocDrawCommand_Textured(Context* ctx, uint32_t numVertices, uint32_t numIndices, ImageHandle imgHandle)
+static DrawCommand* allocDrawCommand_Textured(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices, ImageHandle imgHandle)
 {
 	VG_CHECK(isValid(imgHandle), "Invalid image handle");
 
-	uint32_t vertexBufferID;
-	const uint32_t firstVertexID = allocVertices(ctx, numVertices, &vertexBufferID);
-	const uint32_t firstIndexID = allocIndices(ctx, numIndices);
+	VertexBufferHandle vbHandle;
+	const uint32_t firstVertexID = layerAllocVertices(ctx, layer, numVertices, &vbHandle);
+	const uint32_t firstIndexID = layerAllocIndices(ctx, layer, numIndices);
 
 	const State* state = getState(ctx);
 	const float* scissor = state->m_ScissorRect;
 
-	if (!ctx->m_ForceNewDrawCommand && ctx->m_NumDrawCommands != 0) {
-		DrawCommand* prevCmd = &ctx->m_DrawCommands[ctx->m_NumDrawCommands - 1];
+	if (!layer->m_ForceNewDrawCommand && layer->m_NumDrawCommands != 0) {
+		DrawCommand* prevCmd = &layer->m_DrawCommands[layer->m_NumDrawCommands - 1];
 
-		VG_CHECK(prevCmd->m_VertexBufferID == vertexBufferID, "Cannot merge draw commands with different vertex buffers");
+		VG_CHECK(prevCmd->m_VertexBufferHandle.idx == vbHandle.idx, "Cannot merge draw commands with different vertex buffers");
 		VG_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0] && 
 		         prevCmd->m_ScissorRect[1] == (uint16_t)scissor[1] && 
 		         prevCmd->m_ScissorRect[2] == (uint16_t)scissor[2] && 
@@ -5153,8 +5263,8 @@ static DrawCommand* allocDrawCommand_Textured(Context* ctx, uint32_t numVertices
 	}
 
 	// The new draw command cannot be combined with the previous one. Create a new one.
-	DrawCommand* cmd = allocDrawCommand(ctx);
-	cmd->m_VertexBufferID = vertexBufferID;
+	DrawCommand* cmd = allocDrawCommand(ctx, layer);
+	cmd->m_VertexBufferHandle = vbHandle;
 	cmd->m_FirstVertexID = firstVertexID;
 	cmd->m_FirstIndexID = firstIndexID;
 	cmd->m_NumVertices = 0;
@@ -5165,28 +5275,28 @@ static DrawCommand* allocDrawCommand_Textured(Context* ctx, uint32_t numVertices
 	cmd->m_ScissorRect[1] = (uint16_t)scissor[1];
 	cmd->m_ScissorRect[2] = (uint16_t)scissor[2];
 	cmd->m_ScissorRect[3] = (uint16_t)scissor[3];
-	bx::memCopy(&cmd->m_ClipState, &ctx->m_ClipState, sizeof(ClipState));
+	bx::memCopy(&cmd->m_ClipState, &layer->m_ClipState, sizeof(ClipState));
 
-	ctx->m_ForceNewDrawCommand = false;
+	layer->m_ForceNewDrawCommand = false;
 
 	return cmd;
 }
 
-static DrawCommand* allocDrawCommand_ImagePattern(Context* ctx, uint32_t numVertices, uint32_t numIndices, ImagePatternHandle handle)
+static DrawCommand* allocDrawCommand_ImagePattern(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices, ImagePatternHandle handle)
 {
 	VG_CHECK(isValid(handle), "Invalid image pattern handle");
 
-	uint32_t vertexBufferID;
-	const uint32_t firstVertexID = allocVertices(ctx, numVertices, &vertexBufferID);
-	const uint32_t firstIndexID = allocIndices(ctx, numIndices);
+	VertexBufferHandle vbHandle;
+	const uint32_t firstVertexID = layerAllocVertices(ctx, layer, numVertices, &vbHandle);
+	const uint32_t firstIndexID = layerAllocIndices(ctx, layer, numIndices);
 
 	const State* state = getState(ctx);
 	const float* scissor = state->m_ScissorRect;
 
-	if (!ctx->m_ForceNewDrawCommand && ctx->m_NumDrawCommands != 0) {
-		DrawCommand* prevCmd = &ctx->m_DrawCommands[ctx->m_NumDrawCommands - 1];
+	if (!layer->m_ForceNewDrawCommand && layer->m_NumDrawCommands != 0) {
+		DrawCommand* prevCmd = &layer->m_DrawCommands[layer->m_NumDrawCommands - 1];
 
-		VG_CHECK(prevCmd->m_VertexBufferID == vertexBufferID, "Cannot merge draw commands with different vertex buffers");
+		VG_CHECK(prevCmd->m_VertexBufferHandle.idx == vbHandle.idx, "Cannot merge draw commands with different vertex buffers");
 		VG_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0] &&
 			prevCmd->m_ScissorRect[1] == (uint16_t)scissor[1] &&
 			prevCmd->m_ScissorRect[2] == (uint16_t)scissor[2] &&
@@ -5199,8 +5309,8 @@ static DrawCommand* allocDrawCommand_ImagePattern(Context* ctx, uint32_t numVert
 	}
 
 	// The new draw command cannot be combined with the previous one. Create a new one.
-	DrawCommand* cmd = allocDrawCommand(ctx);
-	cmd->m_VertexBufferID = vertexBufferID;
+	DrawCommand* cmd = allocDrawCommand(ctx, layer);
+	cmd->m_VertexBufferHandle = vbHandle;
 	cmd->m_FirstVertexID = firstVertexID;
 	cmd->m_FirstIndexID = firstIndexID;
 	cmd->m_NumVertices = 0;
@@ -5211,28 +5321,28 @@ static DrawCommand* allocDrawCommand_ImagePattern(Context* ctx, uint32_t numVert
 	cmd->m_ScissorRect[1] = (uint16_t)scissor[1];
 	cmd->m_ScissorRect[2] = (uint16_t)scissor[2];
 	cmd->m_ScissorRect[3] = (uint16_t)scissor[3];
-	bx::memCopy(&cmd->m_ClipState, &ctx->m_ClipState, sizeof(ClipState));
+	bx::memCopy(&cmd->m_ClipState, &layer->m_ClipState, sizeof(ClipState));
 
-	ctx->m_ForceNewDrawCommand = false;
+	layer->m_ForceNewDrawCommand = false;
 
 	return cmd;
 }
 
-static DrawCommand* allocDrawCommand_ColorGradient(Context* ctx, uint32_t numVertices, uint32_t numIndices, GradientHandle gradientHandle)
+static DrawCommand* allocDrawCommand_ColorGradient(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices, GradientHandle gradientHandle)
 {
 	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
 
-	uint32_t vertexBufferID;
-	const uint32_t firstVertexID = allocVertices(ctx, numVertices, &vertexBufferID);
-	const uint32_t firstIndexID = allocIndices(ctx, numIndices);
+	VertexBufferHandle vbHandle;
+	const uint32_t firstVertexID = layerAllocVertices(ctx, layer, numVertices, &vbHandle);
+	const uint32_t firstIndexID = layerAllocIndices(ctx, layer, numIndices);
 
 	const State* state = getState(ctx);
 	const float* scissor = state->m_ScissorRect;
 
-	if (!ctx->m_ForceNewDrawCommand && ctx->m_NumDrawCommands != 0) {
-		DrawCommand* prevCmd = &ctx->m_DrawCommands[ctx->m_NumDrawCommands - 1];
+	if (!layer->m_ForceNewDrawCommand && layer->m_NumDrawCommands != 0) {
+		DrawCommand* prevCmd = &layer->m_DrawCommands[layer->m_NumDrawCommands - 1];
 
-		VG_CHECK(prevCmd->m_VertexBufferID == vertexBufferID, "Cannot merge draw commands with different vertex buffers");
+		VG_CHECK(prevCmd->m_VertexBufferHandle.idx == vbHandle.idx, "Cannot merge draw commands with different vertex buffers");
 		VG_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0] && 
 		         prevCmd->m_ScissorRect[1] == (uint16_t)scissor[1] &&
 		         prevCmd->m_ScissorRect[2] == (uint16_t)scissor[2] && 
@@ -5246,8 +5356,8 @@ static DrawCommand* allocDrawCommand_ColorGradient(Context* ctx, uint32_t numVer
 	}
 
 	// The new draw command cannot be combined with the previous one. Create a new one.
-	DrawCommand* cmd = allocDrawCommand(ctx);
-	cmd->m_VertexBufferID = vertexBufferID;
+	DrawCommand* cmd = allocDrawCommand(ctx, layer);
+	cmd->m_VertexBufferHandle = vbHandle;
 	cmd->m_FirstVertexID = firstVertexID;
 	cmd->m_FirstIndexID = firstIndexID;
 	cmd->m_NumVertices = 0;
@@ -5258,26 +5368,26 @@ static DrawCommand* allocDrawCommand_ColorGradient(Context* ctx, uint32_t numVer
 	cmd->m_ScissorRect[1] = (uint16_t)scissor[1];
 	cmd->m_ScissorRect[2] = (uint16_t)scissor[2];
 	cmd->m_ScissorRect[3] = (uint16_t)scissor[3];
-	bx::memCopy(&cmd->m_ClipState, &ctx->m_ClipState, sizeof(ClipState));
+	bx::memCopy(&cmd->m_ClipState, &layer->m_ClipState, sizeof(ClipState));
 
-	ctx->m_ForceNewDrawCommand = false;
+	layer->m_ForceNewDrawCommand = false;
 
 	return cmd;
 }
 
-static DrawCommand* allocDrawCommand_Clip(Context* ctx, uint32_t numVertices, uint32_t numIndices)
+static DrawCommand* allocDrawCommand_Clip(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices)
 {
-	uint32_t vertexBufferID;
-	const uint32_t firstVertexID = allocVertices(ctx, numVertices, &vertexBufferID);
-	const uint32_t firstIndexID = allocIndices(ctx, numIndices);
+	VertexBufferHandle vbHandle;
+	const uint32_t firstVertexID = layerAllocVertices(ctx, layer, numVertices, &vbHandle);
+	const uint32_t firstIndexID = layerAllocIndices(ctx, layer, numIndices);
 	
 	const State* state = getState(ctx);
 	const float* scissor = state->m_ScissorRect;
 
-	if (!ctx->m_ForceNewClipCommand && ctx->m_NumClipCommands != 0) {
-		DrawCommand* prevCmd = &ctx->m_ClipCommands[ctx->m_NumClipCommands - 1];
+	if (!layer->m_ForceNewClipCommand && layer->m_NumClipCommands != 0) {
+		DrawCommand* prevCmd = &layer->m_ClipCommands[layer->m_NumClipCommands - 1];
 
-		VG_CHECK(prevCmd->m_VertexBufferID == vertexBufferID, "Cannot merge clip commands with different vertex buffers");
+		VG_CHECK(prevCmd->m_VertexBufferHandle.idx == vbHandle.idx, "Cannot merge clip commands with different vertex buffers");
 		VG_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0] && 
 		         prevCmd->m_ScissorRect[1] == (uint16_t)scissor[1] && 
 		         prevCmd->m_ScissorRect[2] == (uint16_t)scissor[2] && 
@@ -5288,8 +5398,8 @@ static DrawCommand* allocDrawCommand_Clip(Context* ctx, uint32_t numVertices, ui
 	}
 
 	// The new clip command cannot be combined with the previous one. Create a new one.
-	DrawCommand* cmd = allocClipCommand(ctx);
-	cmd->m_VertexBufferID = vertexBufferID;
+	DrawCommand* cmd = allocClipCommand(ctx, layer);
+	cmd->m_VertexBufferHandle = vbHandle;
 	cmd->m_FirstVertexID = firstVertexID;
 	cmd->m_FirstIndexID = firstIndexID;
 	cmd->m_NumVertices = 0;
@@ -5303,7 +5413,7 @@ static DrawCommand* allocDrawCommand_Clip(Context* ctx, uint32_t numVertices, ui
 	cmd->m_ClipState.m_FirstCmdID = ~0u;
 	cmd->m_ClipState.m_NumCmds = 0;
 
-	ctx->m_ForceNewClipCommand = false;
+	layer->m_ForceNewClipCommand = false;
 
 	return cmd;
 }
@@ -5412,9 +5522,11 @@ static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color)
 	const uint32_t numDrawVertices = numQuads * 4;
 	const uint32_t numDrawIndices = numQuads * 6;
 
-	DrawCommand* cmd = allocDrawCommand_Textured(ctx, numDrawVertices, numDrawIndices, ctx->m_FontImages[ctx->m_FontImageID]);
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	DrawCommand* cmd = allocDrawCommand_Textured(ctx, layer, numDrawVertices, numDrawIndices, ctx->m_FontImages[ctx->m_FontImageID]);
 
-	VertexBuffer* vb = &ctx->m_VertexBuffers[cmd->m_VertexBufferID];
+	const VertexBufferHandle vbHandle = cmd->m_VertexBufferHandle;
+	VertexBuffer* vb = &ctx->m_VertexBuffers[vbHandle.idx];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
 
 	float* dstPos = &vb->m_Pos[vbOffset << 1];
@@ -5461,7 +5573,8 @@ static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color)
 	}
 #endif
 
-	IndexBuffer* ib = &ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID];
+	const IndexBufferHandle ibHandle = layer->m_IndexBufferHandle;
+	IndexBuffer* ib = &ctx->m_IndexBuffers[ibHandle.idx];
 	uint16_t* dstIndex = &ib->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
 	vgutil::genQuadIndices_unaligned(dstIndex, numQuads, (uint16_t)cmd->m_NumVertices);
 
@@ -5686,7 +5799,7 @@ static void addCachedCommand(Context* ctx, const float* pos, uint32_t numVertice
 
 // Walk the command list; avoid Path commands and use CachedMesh(es) on Stroker commands. 
 // Everything else (state, clip, text) is executed similarly to the uncached version (see submitCommandList).
-static void clCacheRender(Context* ctx, CommandList* cl)
+static void clCacheRender(Context* ctx, Layer* layer, CommandList* cl)
 {
 	const uint16_t numGradients = cl->m_NumGradients;
 	const uint16_t numImagePatterns = cl->m_NumImagePatterns;
@@ -5743,7 +5856,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			const uint32_t flags = CMD_READ(cmd, uint32_t);
 			const Color color = CMD_READ(cmd, Color);
 			BX_UNUSED(flags);
-			submitCachedMesh(ctx, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
+			submitCachedMesh(ctx, layer, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
 		case CommandType::FillPathGradient: {
@@ -5753,7 +5866,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			BX_UNUSED(flags);
 
 			const GradientHandle gradient = { isLocal(gradientFlags) ? (uint16_t)(gradientHandle + firstGradientID) : gradientHandle, 0 };
-			submitCachedMesh(ctx, gradient, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
+			submitCachedMesh(ctx, layer, gradient, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
 		case CommandType::FillPathImagePattern: {
@@ -5764,7 +5877,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			BX_UNUSED(flags);
 
 			const ImagePatternHandle imgPattern = { isLocal(imgPatternFlags) ? (uint16_t)(imgPatternHandle + firstImagePatternID) : imgPatternHandle, 0 };
-			submitCachedMesh(ctx, imgPattern, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
+			submitCachedMesh(ctx, layer, imgPattern, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
 		case CommandType::StrokePathColor: {
@@ -5773,7 +5886,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			const Color color = CMD_READ(cmd, Color);
 			BX_UNUSED(flags, width);
 
-			submitCachedMesh(ctx, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
+			submitCachedMesh(ctx, layer, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
 		case CommandType::StrokePathGradient: {
@@ -5784,7 +5897,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			BX_UNUSED(flags, width);
 
 			const GradientHandle gradient = { isLocal(gradientFlags) ? (uint16_t)(gradientHandle + firstGradientID) : gradientHandle, 0 };
-			submitCachedMesh(ctx, gradient, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
+			submitCachedMesh(ctx, layer, gradient, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
 		case CommandType::StrokePathImagePattern: {
@@ -5796,7 +5909,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			BX_UNUSED(flags, width);
 
 			const ImagePatternHandle imgPattern = { isLocal(imgPatternFlags) ? (uint16_t)(imgPatternHandle + firstImagePatternID) : imgPatternHandle, 0 };
-			submitCachedMesh(ctx, imgPattern, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
+			submitCachedMesh(ctx, layer, imgPattern, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
 		case CommandType::IndexedTriList: {
@@ -5982,9 +6095,9 @@ static void clCacheReset(Context* ctx, CommandListCache* cache)
 	bx::memSet(cache, 0, sizeof(CommandListCache));
 }
 
-static void submitCachedMesh(Context* ctx, Color col, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes)
+static void submitCachedMesh(Context* ctx, Layer* layer, Color col, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes)
 {
-	const bool recordClipCommands = ctx->m_RecordClipCommands;
+	const bool recordClipCommands = layer->m_RecordClipCommands;
 
 	const State* state = getState(ctx);
 	const float* stateTransform = state->m_TransformMtx;
@@ -5999,7 +6112,7 @@ static void submitCachedMesh(Context* ctx, Color col, const float* invTransform,
 			float* transformedVertices = allocTransformedVertices(ctx, numVertices);
 
 			vgutil::batchTransformPositions(mesh->m_Pos, numVertices, transformedVertices, mtx);
-			createDrawCommand_Clip(ctx, transformedVertices, numVertices, mesh->m_Indices, mesh->m_NumIndices);
+			createDrawCommand_Clip(ctx, layer, transformedVertices, numVertices, mesh->m_Indices, mesh->m_NumIndices);
 		}
 	} else {
 		for (uint32_t i = 0; i < numMeshes; ++i) {
@@ -6011,14 +6124,14 @@ static void submitCachedMesh(Context* ctx, Color col, const float* invTransform,
 			const uint32_t numColors = mesh->m_Colors ? numVertices : 1;
 			
 			vgutil::batchTransformPositions(mesh->m_Pos, numVertices, transformedVertices, mtx);
-			createDrawCommand_VertexColor(ctx, transformedVertices, numVertices, colors, numColors, mesh->m_Indices, mesh->m_NumIndices);
+			createDrawCommand_VertexColor(ctx, layer, transformedVertices, numVertices, colors, numColors, mesh->m_Indices, mesh->m_NumIndices);
 		}
 	}
 }
 
-static void submitCachedMesh(Context* ctx, GradientHandle gradientHandle, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes)
+static void submitCachedMesh(Context* ctx, Layer* layer, GradientHandle gradientHandle, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes)
 {
-	VG_CHECK(!ctx->m_RecordClipCommands, "Only submitCachedMesh(Color) is supported inside BeginClip()/EndClip()");
+	VG_CHECK(!layer->m_RecordClipCommands, "Only submitCachedMesh(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
 	VG_CHECK(!isLocal(gradientHandle), "Invalid gradient handle");
 
@@ -6038,13 +6151,13 @@ static void submitCachedMesh(Context* ctx, GradientHandle gradientHandle, const 
 		const uint32_t numColors = mesh->m_Colors ? numVertices : 1;
 
 		vgutil::batchTransformPositions(mesh->m_Pos, numVertices, transformedVertices, mtx);
-		createDrawCommand_ColorGradient(ctx, gradientHandle, transformedVertices, numVertices, colors, numColors, mesh->m_Indices, mesh->m_NumIndices);
+		createDrawCommand_ColorGradient(ctx, layer, gradientHandle, transformedVertices, numVertices, colors, numColors, mesh->m_Indices, mesh->m_NumIndices);
 	}
 }
 
-static void submitCachedMesh(Context* ctx, ImagePatternHandle imgPattern, Color col, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes)
+static void submitCachedMesh(Context* ctx, Layer* layer, ImagePatternHandle imgPattern, Color col, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes)
 {
-	VG_CHECK(!ctx->m_RecordClipCommands, "Only submitCachedMesh(Color) is supported inside BeginClip()/EndClip()");
+	VG_CHECK(!layer->m_RecordClipCommands, "Only submitCachedMesh(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(imgPattern), "Invalid image pattern handle");
 	VG_CHECK(!isLocal(imgPattern), "Invalid image pattern handle");
 
@@ -6063,7 +6176,7 @@ static void submitCachedMesh(Context* ctx, ImagePatternHandle imgPattern, Color 
 		const uint32_t numColors = mesh->m_Colors ? numVertices : 1;
 
 		vgutil::batchTransformPositions(mesh->m_Pos, numVertices, transformedVertices, mtx);
-		createDrawCommand_ImagePattern(ctx, imgPattern, transformedVertices, numVertices, colors, numColors, mesh->m_Indices, mesh->m_NumIndices);
+		createDrawCommand_ImagePattern(ctx, layer, imgPattern, transformedVertices, numVertices, colors, numColors, mesh->m_Indices, mesh->m_NumIndices);
 	}
 }
 #endif // VG_CONFIG_ENABLE_SHAPE_CACHING
