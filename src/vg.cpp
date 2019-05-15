@@ -351,6 +351,8 @@ struct Layer
 	uint32_t m_NumClipCommands;
 	uint32_t m_ClipCommandCapacity;
 
+	uint16_t m_ViewID;
+
 	bool m_RecordClipCommands;
 	bool m_ForceNewClipCommand;
 	bool m_ForceNewDrawCommand;
@@ -364,7 +366,6 @@ struct Context
 
 	ContextConfig m_Config;
 	bx::AllocatorI* m_Allocator;
-	uint16_t m_ViewID;
 	uint16_t m_CanvasWidth;
 	uint16_t m_CanvasHeight;
 	float m_DevicePixelRatio;
@@ -764,10 +765,8 @@ inline bool isLocal(ImagePatternHandle handle) { return isLocal(handle.flags); }
 //////////////////////////////////////////////////////////////////////////
 // Public interface
 //
-Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const ContextConfig* userCfg)
+Context* createContext(const uint16_t* viewIDs, uint32_t numLayers, bx::AllocatorI* allocator, const ContextConfig* userCfg)
 {
-	const uint32_t numLayers = 4; // TODO: 
-
 	static const ContextConfig defaultConfig = {
 		64,                          // m_MaxGradients
 		64,                          // m_MaxImagePatterns
@@ -812,13 +811,17 @@ Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const Context
 	ctx->m_Layers = (Layer*)mem;
 	mem += alignSize(sizeof(Layer) * numLayers, alignment);
 
+	for (uint32_t iLayer = 0; iLayer < numLayers; ++iLayer) {
+		Layer* layer = &ctx->m_Layers[iLayer];
+		layer->m_ViewID = viewIDs[iLayer];
+	}
+
 #if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable = &g_CtxVTable;
 #endif
 
 	bx::memCopy(&ctx->m_Config, cfg, sizeof(ContextConfig));
 	ctx->m_Allocator = allocator;
-	ctx->m_ViewID = viewID;
 	ctx->m_DevicePixelRatio = 1.0f;
 	ctx->m_TesselationTolerance = 0.25f;
 	ctx->m_FringeWidth = 1.0f;
@@ -1147,6 +1150,9 @@ void endFrame(Context* ctx)
 
 	flushTextAtlas(ctx);
 
+	const uint16_t canvasWidth = ctx->m_CanvasWidth;
+	const uint16_t canvasHeight = ctx->m_CanvasHeight;
+
 	const uint32_t numLayers = ctx->m_NumLayers;
 	for (uint32_t iLayer = 0; iLayer < numLayers; ++iLayer) {
 		Layer* layer = &ctx->m_Layers[iLayer];
@@ -1214,9 +1220,7 @@ void endFrame(Context* ctx)
 			bgfx::update(gpuib->m_bgfxHandle, 0, indexMem);
 		}
 
-		const uint16_t viewID = ctx->m_ViewID;
-		const uint16_t canvasWidth = ctx->m_CanvasWidth;
-		const uint16_t canvasHeight = ctx->m_CanvasHeight;
+		const uint16_t viewID = layer->m_ViewID;
 
 		float viewMtx[16];
 		float projMtx[16];

@@ -179,7 +179,8 @@ inline Renderer::~Renderer()
 inline bool Renderer::init(uint8_t viewID, bx::AllocatorI* allocator)
 {
 	m_Allocator = allocator;
-	m_Context = createContext(viewID, allocator);
+	const uint16_t viewIDs[] = { (uint16_t)viewID };
+	m_Context = createContext(viewIDs, 1, allocator);
 	return m_Context != nullptr;
 }
 

@@ -365,7 +365,7 @@ struct FontFlags
 struct Context;
 
 // Context
-Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const ContextConfig* cfg = nullptr);
+Context* createContext(const uint16_t* viewID, uint32_t numLayers, bx::AllocatorI* allocator, const ContextConfig* cfg = nullptr);
 void destroyContext(Context* ctx);
 
 void beginFrame(Context* ctx, uint16_t canvasWidth, uint16_t canvasHeight, float devicePixelRatio);
