@@ -493,7 +493,7 @@ static void createDrawCommand_Clip(Context* ctx, Layer* layer, const float* vtx,
 static ImageHandle allocImage(Context* ctx);
 static void resetImage(Image* img);
 
-static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color);
+static void renderTextQuads(Context* ctx, Layer* layer, uint32_t numQuads, Color color);
 static bool allocTextAtlas(Context* ctx);
 static void flushTextAtlas(Context* ctx);
 
@@ -4047,6 +4047,8 @@ static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, ui
 static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end)
 {
 	VG_CHECK(isValid(cfg.m_FontHandle), "Invalid font handle");
+	
+	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
 
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
@@ -4097,7 +4099,7 @@ static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const
 
 	pushState(ctx);
 	transformTranslate(ctx, x + dx / scale, y + dy / scale);
-	renderTextQuads(ctx, numBakedChars, cfg.m_Color);
+	renderTextQuads(ctx, layer, numBakedChars, cfg.m_Color);
 	popState(ctx);
 }
 
@@ -5542,7 +5544,7 @@ static bool allocTextAtlas(Context* ctx)
 	return true;
 }
 
-static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color)
+static void renderTextQuads(Context* ctx, Layer* layer, uint32_t numQuads, Color color)
 {
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
@@ -5567,7 +5569,6 @@ static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color)
 	const uint32_t numDrawVertices = numQuads * 4;
 	const uint32_t numDrawIndices = numQuads * 6;
 
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
 	DrawCommand* cmd = allocDrawCommand_Textured(ctx, layer, numDrawVertices, numDrawIndices, ctx->m_FontImages[ctx->m_FontImageID]);
 
 	const VertexBufferHandle vbHandle = cmd->m_VertexBufferHandle;
