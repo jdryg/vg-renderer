@@ -119,12 +119,12 @@ struct Colors
 {
 	enum Enum : uint32_t
 	{
-		Transparent = 0x00000000,
-		Black = 0xFF000000,
-		Red = 0xFF0000FF,
-		Green = 0xFF00FF00,
-		Blue = 0xFFFF0000,
-		White = 0xFFFFFFFF
+		Transparent = VG_COLOR32(0, 0, 0, 0),
+		Black       = VG_COLOR32(0, 0, 0, 255),
+		Red         = VG_COLOR32(255, 0, 0, 255),
+		Green       = VG_COLOR32(0, 255, 0, 255),
+		Blue        = VG_COLOR32(0, 0, 255, 255),
+		White       = VG_COLOR32(255, 255, 255, 255),
 	};
 };
 
