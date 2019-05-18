@@ -66,6 +66,7 @@ struct State
 	float m_GlobalAlpha;
 	float m_FontScale;
 	float m_AvgScale;
+	uint32_t m_ActiveLayerID;
 };
 
 struct ClipState
@@ -405,7 +406,6 @@ struct Context
 
 	Layer* m_Layers;
 	uint32_t m_NumLayers;
-	uint32_t m_ActiveLayerID;
 
 	Image* m_Images;
 	uint32_t m_ImageCapacity;
@@ -455,6 +455,7 @@ struct Context
 };
 
 static State* getState(Context* ctx);
+static Layer* getActiveLayer(Context* ctx);
 static void updateState(State* state);
 static void getWhitePixelUV(Context* ctx, uv_t* uv);
 
@@ -1070,11 +1071,11 @@ void beginFrame(Context* ctx, uint16_t canvasWidth, uint16_t canvasHeight, float
 #endif
 
 	VG_CHECK(ctx->m_StateStackTop == 0, "State stack hasn't been properly reset in the previous frame");
-	resetScissor(ctx);
-	transformIdentity(ctx);
+	ctxResetScissor(ctx);
+	ctxTransformIdentity(ctx);
+	ctxSetLayer(ctx, 0);
 
 	ctx->m_NumVertexBuffers = 0;
-	ctx->m_ActiveLayerID = 0;
 
 	for (uint32_t i = 0; i < ctx->m_NumLayers; ++i) {
 		Layer* layer = &ctx->m_Layers[i];
@@ -3075,7 +3076,7 @@ static void ctxClosePath(Context* ctx)
 
 static void ctxFillPathColor(Context* ctx, Color color, uint32_t flags)
 {
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	Layer* layer = getActiveLayer(ctx);
 
 	const bool recordClipCommands = layer->m_RecordClipCommands;
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
@@ -3194,7 +3195,7 @@ static void ctxFillPathColor(Context* ctx, Color color, uint32_t flags)
 
 static void ctxFillPathGradient(Context* ctx, GradientHandle gradientHandle, uint32_t flags)
 {
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	Layer* layer = getActiveLayer(ctx);
 
 	VG_CHECK(!layer->m_RecordClipCommands, "Only fillPath(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
@@ -3304,7 +3305,7 @@ static void ctxFillPathGradient(Context* ctx, GradientHandle gradientHandle, uin
 
 static void ctxFillPathImagePattern(Context* ctx, ImagePatternHandle imgPatternHandle, Color color, uint32_t flags)
 {
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	Layer* layer = getActiveLayer(ctx);
 
 	VG_CHECK(!layer->m_RecordClipCommands, "Only fillPath(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(imgPatternHandle), "Invalid image pattern handle");
@@ -3418,7 +3419,7 @@ static void ctxFillPathImagePattern(Context* ctx, ImagePatternHandle imgPatternH
 
 static void ctxStrokePathColor(Context* ctx, Color color, float width, uint32_t flags)
 {
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	Layer* layer = getActiveLayer(ctx);
 
 	const bool recordClipCommands = layer->m_RecordClipCommands;
 
@@ -3513,7 +3514,7 @@ static void ctxStrokePathColor(Context* ctx, Color color, float width, uint32_t 
 
 static void ctxStrokePathGradient(Context* ctx, GradientHandle gradientHandle, float width, uint32_t flags)
 {
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	Layer* layer = getActiveLayer(ctx);
 
 	VG_CHECK(!layer->m_RecordClipCommands, "Only strokePath(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
@@ -3601,7 +3602,7 @@ static void ctxStrokePathGradient(Context* ctx, GradientHandle gradientHandle, f
 
 static void ctxStrokePathImagePattern(Context* ctx, ImagePatternHandle imgPatternHandle, Color color, float width, uint32_t flags)
 {
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	Layer* layer = getActiveLayer(ctx);
 
 	VG_CHECK(!layer->m_RecordClipCommands, "Only strokePath(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(imgPatternHandle), "Invalid image pattern handle");
@@ -3695,7 +3696,7 @@ static void ctxStrokePathImagePattern(Context* ctx, ImagePatternHandle imgPatter
 
 static void ctxBeginClip(Context* ctx, ClipRule::Enum rule)
 {
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	Layer* layer = getActiveLayer(ctx);
 
 	VG_CHECK(!layer->m_RecordClipCommands, "Already inside beginClip()/endClip() block");
 	
@@ -3712,7 +3713,7 @@ static void ctxBeginClip(Context* ctx, ClipRule::Enum rule)
 
 static void ctxEndClip(Context* ctx)
 {
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	Layer* layer = getActiveLayer(ctx);
 
 	VG_CHECK(layer->m_RecordClipCommands, "Must be called once after beginClip()");
 
@@ -3727,7 +3728,7 @@ static void ctxEndClip(Context* ctx)
 
 static void ctxResetClip(Context* ctx)
 {
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	Layer* layer = getActiveLayer(ctx);
 
 	VG_CHECK(!layer->m_RecordClipCommands, "Must be called outside beginClip()/endClip() pair.");
 
@@ -3981,10 +3982,10 @@ static void ctxPopState(Context* ctx)
 
 	// If the new state has a different scissor rect than the last draw command 
 	// force creating a new command.
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	const State* state = getState(ctx);
+	Layer* layer = &ctx->m_Layers[state->m_ActiveLayerID];
 	const uint32_t numDrawCommands = layer->m_NumDrawCommands;
 	if (numDrawCommands != 0) {
-		const State* state = getState(ctx);
 		const DrawCommand* lastDrawCommand = &layer->m_DrawCommands[numDrawCommands - 1];
 		const uint16_t* lastScissor = &lastDrawCommand->m_ScissorRect[0];
 		const float* stateScissor = &state->m_ScissorRect[0];
@@ -4006,7 +4007,7 @@ static void ctxResetScissor(Context* ctx)
 	state->m_ScissorRect[2] = (float)ctx->m_CanvasWidth;
 	state->m_ScissorRect[3] = (float)ctx->m_CanvasHeight;
 
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	Layer* layer = &ctx->m_Layers[state->m_ActiveLayerID];
 	layer->m_ForceNewDrawCommand = true;
 	layer->m_ForceNewClipCommand = true;
 }
@@ -4032,7 +4033,7 @@ static void ctxSetScissor(Context* ctx, float x, float y, float w, float h)
 	state->m_ScissorRect[2] = maxx - minx;
 	state->m_ScissorRect[3] = maxy - miny;
 
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	Layer* layer = &ctx->m_Layers[state->m_ActiveLayerID];
 	layer->m_ForceNewDrawCommand = true;
 	layer->m_ForceNewClipCommand = true;
 }
@@ -4060,7 +4061,7 @@ static bool ctxIntersectScissor(Context* ctx, float x, float y, float w, float h
 	state->m_ScissorRect[2] = newRectWidth;
 	state->m_ScissorRect[3] = newRectHeight;
 
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	Layer* layer = &ctx->m_Layers[state->m_ActiveLayerID];
 	layer->m_ForceNewDrawCommand = true;
 	layer->m_ForceNewClipCommand = true;
 
@@ -4161,12 +4162,13 @@ static void ctxSetViewBox(Context* ctx, float x, float y, float w, float h)
 static void ctxSetLayer(Context* ctx, uint32_t layerID)
 {
 	VG_CHECK(layerID < ctx->m_NumLayers, "Invalid layer ID");
-	ctx->m_ActiveLayerID = layerID;
+	State* state = getState(ctx);
+	state->m_ActiveLayerID = layerID;
 }
 
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
 {
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	Layer* layer = getActiveLayer(ctx);
 
 	if (!isValid(img)) {
 		img = ctx->m_FontImages[0];
@@ -4221,7 +4223,7 @@ static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const
 {
 	VG_CHECK(isValid(cfg.m_FontHandle), "Invalid font handle");
 	
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	Layer* layer = getActiveLayer(ctx);
 
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
@@ -4317,7 +4319,7 @@ static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, fl
 
 static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 {
-	Layer* layer = &ctx->m_Layers[ctx->m_ActiveLayerID];
+	Layer* layer = getActiveLayer(ctx);
 
 	VG_CHECK(isCommandListHandleValid(ctx, handle), "Invalid command list handle");
 	CommandList* cl = &ctx->m_CmdLists[handle.idx];
@@ -4972,6 +4974,12 @@ static State* getState(Context* ctx)
 {
 	const uint32_t top = ctx->m_StateStackTop;
 	return &ctx->m_StateStack[top];
+}
+
+static Layer* getActiveLayer(Context* ctx)
+{
+	const State* state = getState(ctx);
+	return &ctx->m_Layers[state->m_ActiveLayerID];
 }
 
 static void updateState(State* state)
