@@ -758,20 +758,13 @@ Context* createContext(const uint16_t* viewIDs, uint32_t numLayers, bx::Allocato
 	uint8_t* mem = (uint8_t*)BX_ALIGNED_ALLOC(allocator, totalMem, alignment);
 	bx::memSet(mem, 0, totalMem);
 
-	Context* ctx = (Context*)mem;
-	mem += alignSize(sizeof(Context), alignment);
-	ctx->m_Gradients = (Gradient*)mem;
-	mem += alignSize(sizeof(Gradient) * cfg->m_MaxGradients, alignment);
-	ctx->m_ImagePatterns = (ImagePattern*)mem;
-	mem += alignSize(sizeof(ImagePattern) * cfg->m_MaxImagePatterns, alignment);
-	ctx->m_StateStack = (State*)mem;
-	mem += alignSize(sizeof(State) * cfg->m_MaxStateStackSize, alignment);
-	ctx->m_FontData = (FontData*)mem;
-	mem += alignSize(sizeof(FontData) * cfg->m_MaxFonts, alignment);
-	ctx->m_CmdLists = (CommandList*)mem;
-	mem += alignSize(sizeof(CommandList) * cfg->m_MaxCommandLists, alignment);
-	ctx->m_Layers = (Layer*)mem;
-	mem += alignSize(sizeof(Layer) * numLayers, alignment);
+	Context* ctx = (Context*)mem;              mem += alignSize(sizeof(Context), alignment);
+	ctx->m_Gradients = (Gradient*)mem;         mem += alignSize(sizeof(Gradient) * cfg->m_MaxGradients, alignment);
+	ctx->m_ImagePatterns = (ImagePattern*)mem; mem += alignSize(sizeof(ImagePattern) * cfg->m_MaxImagePatterns, alignment);
+	ctx->m_StateStack = (State*)mem;           mem += alignSize(sizeof(State) * cfg->m_MaxStateStackSize, alignment);
+	ctx->m_FontData = (FontData*)mem;          mem += alignSize(sizeof(FontData) * cfg->m_MaxFonts, alignment);
+	ctx->m_CmdLists = (CommandList*)mem;       mem += alignSize(sizeof(CommandList) * cfg->m_MaxCommandLists, alignment);
+	ctx->m_Layers = (Layer*)mem;               mem += alignSize(sizeof(Layer) * numLayers, alignment);
 
 	for (uint32_t iLayer = 0; iLayer < numLayers; ++iLayer) {
 		VG_CHECK(viewIDs[iLayer] < BGFX_CONFIG_MAX_VIEWS, "Invalid bgfx view ID");
