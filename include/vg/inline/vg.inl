@@ -134,7 +134,7 @@ inline CommandListRef makeCommandListRef(Context* ctx, CommandListHandle handle)
 	return { ctx, handle };
 }
 
-inline void clReset(CommandListRef& ref)
+inline void resetCommandList(CommandListRef& ref)
 {
 	resetCommandList(ref.m_Context, ref.m_Handle);
 }

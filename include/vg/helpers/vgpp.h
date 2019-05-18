@@ -501,7 +501,7 @@ inline Shape::~Shape()
 
 inline void Shape::Reset()
 {
-	clReset(m_CommandListRef);
+	resetCommandList(m_CommandListRef);
 }
 
 inline void Shape::BeginPath()

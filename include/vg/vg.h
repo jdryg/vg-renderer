@@ -525,7 +525,7 @@ struct CommandListRef
 };
 
 CommandListRef makeCommandListRef(Context* ctx, CommandListHandle handle);
-void clReset(CommandListRef& ref);
+void resetCommandList(CommandListRef& ref);
 void clBeginPath(CommandListRef& ref);
 void clMoveTo(CommandListRef& ref, float x, float y);
 void clLineTo(CommandListRef& ref, float x, float y);
