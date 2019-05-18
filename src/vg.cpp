@@ -500,6 +500,7 @@ static void flushTextAtlas(Context* ctx);
 
 static CommandListHandle allocCommandList(Context* ctx);
 static bool isCommandListHandleValid(Context* ctx, CommandListHandle handle);
+static uint8_t* clAllocCommandData(Context* ctx, CommandList* cl, uint32_t size);
 static uint8_t* clAllocCommand(Context* ctx, CommandList* cl, CommandType::Enum cmdType, uint32_t dataSize);
 static uint32_t clStoreString(Context* ctx, CommandList* cl, const char* str, uint32_t len);
 static void clCacheRender(Context* ctx, Layer* layer, CommandList* cl);
@@ -2972,13 +2973,24 @@ void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, fl
 	CMD_WRITE(ptr, uint32_t, textboxFlags);
 }
 
-void clSubmitCommandList(Context* ctx, CommandListHandle parent, CommandListHandle child)
+void clSubmitCommandList(Context* ctx, CommandListHandle parentHandle, CommandListHandle childHandle)
 {
-	VG_CHECK(isValid(parent), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CmdLists[parent.idx];
+	VG_CHECK(isValid(parentHandle), "Invalid command list handle");
+	VG_CHECK(isValid(childHandle), "Invalid command list handle");
 
-	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::SubmitCommandList, sizeof(uint16_t));
-	CMD_WRITE(ptr, uint16_t, child.idx);
+	CommandList* parent = &ctx->m_CmdLists[parentHandle.idx];
+	const CommandList* child = &ctx->m_CmdLists[childHandle.idx];
+
+	if ((child->m_Flags & CommandListFlags::Transient) != 0) {
+		VG_WARN((child->m_Flags & CommandListFlags::Cacheable) == 0, "Caching doesn't work with Transient command lists");
+		const uint32_t childDataSize = child->m_CommandBufferPos;
+		uint8_t* dst = clAllocCommandData(ctx, parent, childDataSize);
+		const uint8_t* src = child->m_CommandBuffer;
+		bx::memCopy(dst, src, childDataSize);
+	} else {
+		uint8_t* ptr = clAllocCommand(ctx, parent, CommandType::SubmitCommandList, sizeof(uint16_t));
+		CMD_WRITE(ptr, uint16_t, childHandle.idx);
+	}
 }
 
 // Context
@@ -5881,22 +5893,29 @@ static void freeCommandListCache(Context* ctx, CommandListCache* cache)
 }
 #endif
 
+static uint8_t* clAllocCommandData(Context* ctx, CommandList* cl, uint32_t size)
+{
+	const uint32_t pos = cl->m_CommandBufferPos;
+	VG_CHECK(isAligned(pos, VG_CONFIG_COMMAND_LIST_ALIGNMENT), "Unaligned command buffer position");
+
+	if (pos + size > cl->m_CommandBufferCapacity) {
+		cl->m_CommandBufferCapacity += bx::max<uint32_t>(size, 256);
+		cl->m_CommandBuffer = (uint8_t*)BX_ALIGNED_REALLOC(ctx->m_Allocator, cl->m_CommandBuffer, cl->m_CommandBufferCapacity, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
+	}
+
+	uint8_t* ptr = &cl->m_CommandBuffer[pos];
+	cl->m_CommandBufferPos += size;
+
+	return ptr;
+}
+
 static uint8_t* clAllocCommand(Context* ctx, CommandList* cl, CommandType::Enum cmdType, uint32_t dataSize)
 {
 	const uint32_t totalSize = 0
 		+ kAlignedCommandHeaderSize
 		+ alignSize(dataSize, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
 
-	const uint32_t pos = cl->m_CommandBufferPos;
-	VG_CHECK(isAligned(pos, VG_CONFIG_COMMAND_LIST_ALIGNMENT), "Unaligned command buffer position");
-
-	if (pos + totalSize > cl->m_CommandBufferCapacity) {
-		cl->m_CommandBufferCapacity += bx::max<uint32_t>(totalSize, 256);
-		cl->m_CommandBuffer = (uint8_t*)BX_ALIGNED_REALLOC(ctx->m_Allocator, cl->m_CommandBuffer, cl->m_CommandBufferCapacity, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
-	}
-
-	uint8_t* ptr = &cl->m_CommandBuffer[pos];
-	cl->m_CommandBufferPos += totalSize;
+	uint8_t* ptr = clAllocCommandData(ctx, cl, totalSize);
 
 	CommandHeader* hdr = (CommandHeader*)ptr;
 	ptr += kAlignedCommandHeaderSize;

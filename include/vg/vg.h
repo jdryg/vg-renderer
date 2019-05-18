@@ -349,8 +349,21 @@ struct CommandListFlags
 {
 	enum Enum : uint32_t
 	{
-		Cacheable           = 1 << 0, // Cache the generated geometry in order to avoid retesselation every frame; uses extra memory
-		AllowCommandCulling = 1 << 1, // If the scissor rect ends up being zero-sized, don't execute fill/stroke commands.
+		// Cache the generated geometry in order to avoid path tesselation 
+		// every frame. Use only if the geometry is static and/or is expected
+		// to be rendered multiple times during a frame.
+		// 
+		// Caveats: Uses extra memory for the tesselated paths; clearing a cachable 
+		// command list is expensive
+		Cacheable           = 1 << 0,
+
+		// If the scissor rect ends up being zero-sized, don't execute fill/stroke commands.
+		// All other commands are executed (e.g. state changes).
+		AllowCommandCulling = 1 << 1,
+
+		// Submitting a transient command list copies its data to the parent command list, 
+		// instead of inserting a SubmitCommandList command to it.
+		Transient           = 1 << 2,
 	};
 };
 
