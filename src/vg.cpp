@@ -481,10 +481,8 @@ static void releaseVertexBufferData_UV(Context* ctx, int16_t* data);
 static void releaseVertexBufferDataCallback_UV(void* ptr, void* userData);
 #endif
 
-static DrawCommand* allocDrawCommand_Textured(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices, ImageHandle img);
-static DrawCommand* allocDrawCommand_ImagePattern(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices, ImagePatternHandle img);
-static DrawCommand* allocDrawCommand_ColorGradient(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices, GradientHandle gradientHandle);
-static DrawCommand* allocDrawCommand_Clip(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices);
+static DrawCommand* layerAllocDrawCommand(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices, DrawCommand::Type::Enum type, uint16_t handle);
+static DrawCommand* layerAllocClipCommand(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices);
 static void createDrawCommand_VertexColor(Context* ctx, Layer* layer, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
 static void createDrawCommand_ImagePattern(Context* ctx, Layer* layer, ImagePatternHandle handle, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
 static void createDrawCommand_ColorGradient(Context* ctx, Layer* layer, GradientHandle handle, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
@@ -4209,7 +4207,7 @@ static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, ui
 	const State* state = getState(layer);
 	const float* stateTransform = state->m_TransformMtx;
 
-	DrawCommand* cmd = allocDrawCommand_Textured(ctx, layer, numVertices, numIndices, img);
+	DrawCommand* cmd = layerAllocDrawCommand(ctx, layer, numVertices, numIndices, DrawCommand::Type::Textured, img.idx);
 
 	// Vertex buffer
 	const VertexBufferHandle vbHandle = cmd->m_VertexBufferHandle;
@@ -5307,7 +5305,7 @@ static void createDrawCommand_VertexColor(Context* ctx, Layer* layer, const floa
 {
 	// Allocate the draw command
 	const ImageHandle fontImg = ctx->m_FontImages[0];
-	DrawCommand* cmd = allocDrawCommand_Textured(ctx, layer, numVertices, numIndices, fontImg);
+	DrawCommand* cmd = layerAllocDrawCommand(ctx, layer, numVertices, numIndices, DrawCommand::Type::Textured, fontImg.idx);
 
 	// Vertex buffer
 	const VertexBufferHandle vbHandle = cmd->m_VertexBufferHandle;
@@ -5347,7 +5345,7 @@ static void createDrawCommand_VertexColor(Context* ctx, Layer* layer, const floa
 
 static void createDrawCommand_ImagePattern(Context* ctx, Layer* layer, ImagePatternHandle imgPatternHandle, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
 {
-	DrawCommand* cmd = allocDrawCommand_ImagePattern(ctx, layer, numVertices, numIndices, imgPatternHandle);
+	DrawCommand* cmd = layerAllocDrawCommand(ctx, layer, numVertices, numIndices, DrawCommand::Type::ImagePattern, imgPatternHandle.idx);
 
 	const VertexBufferHandle vbHandle = cmd->m_VertexBufferHandle;
 	VertexBuffer* vb = &ctx->m_VertexBuffers[vbHandle.idx];
@@ -5375,7 +5373,7 @@ static void createDrawCommand_ImagePattern(Context* ctx, Layer* layer, ImagePatt
 
 static void createDrawCommand_ColorGradient(Context* ctx, Layer* layer, GradientHandle gradientHandle, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
 {
-	DrawCommand* cmd = allocDrawCommand_ColorGradient(ctx, layer, numVertices, numIndices, gradientHandle);
+	DrawCommand* cmd = layerAllocDrawCommand(ctx, layer, numVertices, numIndices, DrawCommand::Type::ColorGradient, gradientHandle.idx);
 
 	const VertexBufferHandle vbHandle = cmd->m_VertexBufferHandle;
 	VertexBuffer* vb = &ctx->m_VertexBuffers[vbHandle.idx];
@@ -5404,7 +5402,7 @@ static void createDrawCommand_ColorGradient(Context* ctx, Layer* layer, Gradient
 static void createDrawCommand_Clip(Context* ctx, Layer* layer, const float* vtx, uint32_t numVertices, const uint16_t* indices, uint32_t numIndices)
 {
 	// Allocate the draw command
-	DrawCommand* cmd = allocDrawCommand_Clip(ctx, layer, numVertices, numIndices);
+	DrawCommand* cmd = layerAllocClipCommand(ctx, layer, numVertices, numIndices);
 
 	// Vertex buffer
 	const VertexBufferHandle vbHandle = cmd->m_VertexBufferHandle;
@@ -5465,66 +5463,46 @@ static uint32_t layerAllocIndices(Context* ctx, Layer* layer, uint32_t numIndice
 	return firstIndexID;
 }
 
-static DrawCommand* allocDrawCommand(Context* ctx, Layer* layer)
+static DrawCommand* layerAllocDrawCommand(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices, DrawCommand::Type::Enum type, uint16_t handle)
 {
-	if (layer->m_NumDrawCommands + 1 >= layer->m_DrawCommandCapacity) {
+	VertexBufferHandle vbHandle;
+	const uint32_t firstVertexID = layerAllocVertices(ctx, layer, numVertices, &vbHandle);
+	const uint32_t firstIndexID = layerAllocIndices(ctx, layer, numIndices);
+
+	const State* state = getState(layer);
+	const float* scissor = state->m_ScissorRect;
+
+	if (!layer->m_ForceNewDrawCommand && layer->m_NumDrawCommands != 0) {
+		DrawCommand* prevCmd = &layer->m_DrawCommands[layer->m_NumDrawCommands - 1];
+
+		VG_CHECK(prevCmd->m_VertexBufferHandle.idx == vbHandle.idx, "Cannot merge draw commands with different vertex buffers");
+		VG_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0] 
+		      && prevCmd->m_ScissorRect[1] == (uint16_t)scissor[1] 
+		      && prevCmd->m_ScissorRect[2] == (uint16_t)scissor[2] 
+		      && prevCmd->m_ScissorRect[3] == (uint16_t)scissor[3], "Invalid scissor rect");
+
+		if (prevCmd->m_Type == type && prevCmd->m_HandleID == handle) {
+			return prevCmd;
+		}
+	}
+
+	if (layer->m_NumDrawCommands == layer->m_DrawCommandCapacity) {
 		layer->m_DrawCommandCapacity = layer->m_DrawCommandCapacity + 32;
 		layer->m_DrawCommands = (DrawCommand*)BX_REALLOC(ctx->m_Allocator, layer->m_DrawCommands, sizeof(DrawCommand) * layer->m_DrawCommandCapacity);
+		VG_CHECK(layer->m_DrawCommands != nullptr, "Failed to allocate draw commands");
 	}
 
-	DrawCommand* cmd = &layer->m_DrawCommands[layer->m_NumDrawCommands];
+	const uint32_t cmdID = layer->m_NumDrawCommands;
 	layer->m_NumDrawCommands++;
-	return cmd;
-}
 
-static DrawCommand* allocClipCommand(Context* ctx, Layer* layer)
-{
-	if (layer->m_NumClipCommands + 1 >= layer->m_ClipCommandCapacity) {
-		layer->m_ClipCommandCapacity = layer->m_ClipCommandCapacity + 32;
-		layer->m_ClipCommands = (DrawCommand*)BX_REALLOC(ctx->m_Allocator, layer->m_ClipCommands, sizeof(DrawCommand) * layer->m_ClipCommandCapacity);
-	}
-
-	DrawCommand* cmd = &layer->m_ClipCommands[layer->m_NumClipCommands];
-	layer->m_NumClipCommands++;
-	return cmd;
-}
-
-static DrawCommand* allocDrawCommand_Textured(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices, ImageHandle imgHandle)
-{
-	VG_CHECK(isValid(imgHandle), "Invalid image handle");
-
-	VertexBufferHandle vbHandle;
-	const uint32_t firstVertexID = layerAllocVertices(ctx, layer, numVertices, &vbHandle);
-	const uint32_t firstIndexID = layerAllocIndices(ctx, layer, numIndices);
-
-	const State* state = getState(layer);
-	const float* scissor = state->m_ScissorRect;
-
-	if (!layer->m_ForceNewDrawCommand && layer->m_NumDrawCommands != 0) {
-		DrawCommand* prevCmd = &layer->m_DrawCommands[layer->m_NumDrawCommands - 1];
-
-		VG_CHECK(prevCmd->m_VertexBufferHandle.idx == vbHandle.idx, "Cannot merge draw commands with different vertex buffers");
-		VG_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0] && 
-		         prevCmd->m_ScissorRect[1] == (uint16_t)scissor[1] && 
-		         prevCmd->m_ScissorRect[2] == (uint16_t)scissor[2] && 
-		         prevCmd->m_ScissorRect[3] == (uint16_t)scissor[3], "Invalid scissor rect");
-
-		if (prevCmd->m_Type == DrawCommand::Type::Textured &&
-			prevCmd->m_HandleID == imgHandle.idx) 
-		{
-			return prevCmd;
-		}
-	}
-
-	// The new draw command cannot be combined with the previous one. Create a new one.
-	DrawCommand* cmd = allocDrawCommand(ctx, layer);
+	DrawCommand* cmd = &layer->m_DrawCommands[cmdID];
 	cmd->m_VertexBufferHandle = vbHandle;
 	cmd->m_FirstVertexID = firstVertexID;
 	cmd->m_FirstIndexID = firstIndexID;
 	cmd->m_NumVertices = 0;
 	cmd->m_NumIndices = 0;
-	cmd->m_Type = DrawCommand::Type::Textured;
-	cmd->m_HandleID = imgHandle.idx;
+	cmd->m_Type = type;
+	cmd->m_HandleID = handle;
 	cmd->m_ScissorRect[0] = (uint16_t)scissor[0];
 	cmd->m_ScissorRect[1] = (uint16_t)scissor[1];
 	cmd->m_ScissorRect[2] = (uint16_t)scissor[2];
@@ -5536,123 +5514,38 @@ static DrawCommand* allocDrawCommand_Textured(Context* ctx, Layer* layer, uint32
 	return cmd;
 }
 
-static DrawCommand* allocDrawCommand_ImagePattern(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices, ImagePatternHandle handle)
-{
-	VG_CHECK(isValid(handle), "Invalid image pattern handle");
-
-	VertexBufferHandle vbHandle;
-	const uint32_t firstVertexID = layerAllocVertices(ctx, layer, numVertices, &vbHandle);
-	const uint32_t firstIndexID = layerAllocIndices(ctx, layer, numIndices);
-
-	const State* state = getState(layer);
-	const float* scissor = state->m_ScissorRect;
-
-	if (!layer->m_ForceNewDrawCommand && layer->m_NumDrawCommands != 0) {
-		DrawCommand* prevCmd = &layer->m_DrawCommands[layer->m_NumDrawCommands - 1];
-
-		VG_CHECK(prevCmd->m_VertexBufferHandle.idx == vbHandle.idx, "Cannot merge draw commands with different vertex buffers");
-		VG_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0] &&
-			prevCmd->m_ScissorRect[1] == (uint16_t)scissor[1] &&
-			prevCmd->m_ScissorRect[2] == (uint16_t)scissor[2] &&
-			prevCmd->m_ScissorRect[3] == (uint16_t)scissor[3], "Invalid scissor rect");
-
-		if (prevCmd->m_Type == DrawCommand::Type::ImagePattern &&
-			prevCmd->m_HandleID == handle.idx) {
-			return prevCmd;
-		}
-	}
-
-	// The new draw command cannot be combined with the previous one. Create a new one.
-	DrawCommand* cmd = allocDrawCommand(ctx, layer);
-	cmd->m_VertexBufferHandle = vbHandle;
-	cmd->m_FirstVertexID = firstVertexID;
-	cmd->m_FirstIndexID = firstIndexID;
-	cmd->m_NumVertices = 0;
-	cmd->m_NumIndices = 0;
-	cmd->m_Type = DrawCommand::Type::ImagePattern;
-	cmd->m_HandleID = handle.idx;
-	cmd->m_ScissorRect[0] = (uint16_t)scissor[0];
-	cmd->m_ScissorRect[1] = (uint16_t)scissor[1];
-	cmd->m_ScissorRect[2] = (uint16_t)scissor[2];
-	cmd->m_ScissorRect[3] = (uint16_t)scissor[3];
-	bx::memCopy(&cmd->m_ClipState, &layer->m_ClipState, sizeof(ClipState));
-
-	layer->m_ForceNewDrawCommand = false;
-
-	return cmd;
-}
-
-static DrawCommand* allocDrawCommand_ColorGradient(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices, GradientHandle gradientHandle)
-{
-	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
-
-	VertexBufferHandle vbHandle;
-	const uint32_t firstVertexID = layerAllocVertices(ctx, layer, numVertices, &vbHandle);
-	const uint32_t firstIndexID = layerAllocIndices(ctx, layer, numIndices);
-
-	const State* state = getState(layer);
-	const float* scissor = state->m_ScissorRect;
-
-	if (!layer->m_ForceNewDrawCommand && layer->m_NumDrawCommands != 0) {
-		DrawCommand* prevCmd = &layer->m_DrawCommands[layer->m_NumDrawCommands - 1];
-
-		VG_CHECK(prevCmd->m_VertexBufferHandle.idx == vbHandle.idx, "Cannot merge draw commands with different vertex buffers");
-		VG_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0] && 
-		         prevCmd->m_ScissorRect[1] == (uint16_t)scissor[1] &&
-		         prevCmd->m_ScissorRect[2] == (uint16_t)scissor[2] && 
-		         prevCmd->m_ScissorRect[3] == (uint16_t)scissor[3], "Invalid scissor rect");
-
-		if (prevCmd->m_Type == DrawCommand::Type::ColorGradient &&
-			prevCmd->m_HandleID == gradientHandle.idx) 
-		{
-			return prevCmd;
-		}
-	}
-
-	// The new draw command cannot be combined with the previous one. Create a new one.
-	DrawCommand* cmd = allocDrawCommand(ctx, layer);
-	cmd->m_VertexBufferHandle = vbHandle;
-	cmd->m_FirstVertexID = firstVertexID;
-	cmd->m_FirstIndexID = firstIndexID;
-	cmd->m_NumVertices = 0;
-	cmd->m_NumIndices = 0;
-	cmd->m_Type = DrawCommand::Type::ColorGradient;
-	cmd->m_HandleID = gradientHandle.idx;
-	cmd->m_ScissorRect[0] = (uint16_t)scissor[0];
-	cmd->m_ScissorRect[1] = (uint16_t)scissor[1];
-	cmd->m_ScissorRect[2] = (uint16_t)scissor[2];
-	cmd->m_ScissorRect[3] = (uint16_t)scissor[3];
-	bx::memCopy(&cmd->m_ClipState, &layer->m_ClipState, sizeof(ClipState));
-
-	layer->m_ForceNewDrawCommand = false;
-
-	return cmd;
-}
-
-static DrawCommand* allocDrawCommand_Clip(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices)
+static DrawCommand* layerAllocClipCommand(Context* ctx, Layer* layer, uint32_t numVertices, uint32_t numIndices)
 {
 	VertexBufferHandle vbHandle;
 	const uint32_t firstVertexID = layerAllocVertices(ctx, layer, numVertices, &vbHandle);
 	const uint32_t firstIndexID = layerAllocIndices(ctx, layer, numIndices);
-	
+
 	const State* state = getState(layer);
 	const float* scissor = state->m_ScissorRect;
 
 	if (!layer->m_ForceNewClipCommand && layer->m_NumClipCommands != 0) {
 		DrawCommand* prevCmd = &layer->m_ClipCommands[layer->m_NumClipCommands - 1];
 
-		VG_CHECK(prevCmd->m_VertexBufferHandle.idx == vbHandle.idx, "Cannot merge clip commands with different vertex buffers");
-		VG_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0] && 
-		         prevCmd->m_ScissorRect[1] == (uint16_t)scissor[1] && 
-		         prevCmd->m_ScissorRect[2] == (uint16_t)scissor[2] && 
-		         prevCmd->m_ScissorRect[3] == (uint16_t)scissor[3], "Invalid scissor rect");
+		VG_CHECK(prevCmd->m_VertexBufferHandle.idx == vbHandle.idx, "Cannot merge draw commands with different vertex buffers");
+		VG_CHECK(prevCmd->m_ScissorRect[0] == (uint16_t)scissor[0]
+			&& prevCmd->m_ScissorRect[1] == (uint16_t)scissor[1]
+			&& prevCmd->m_ScissorRect[2] == (uint16_t)scissor[2]
+			&& prevCmd->m_ScissorRect[3] == (uint16_t)scissor[3], "Invalid scissor rect");
 		VG_CHECK(prevCmd->m_Type == DrawCommand::Type::Clip, "Invalid draw command type");
 
 		return prevCmd;
 	}
 
-	// The new clip command cannot be combined with the previous one. Create a new one.
-	DrawCommand* cmd = allocClipCommand(ctx, layer);
+	if (layer->m_NumClipCommands == layer->m_ClipCommandCapacity) {
+		layer->m_ClipCommandCapacity = layer->m_ClipCommandCapacity + 32;
+		layer->m_ClipCommands = (DrawCommand*)BX_REALLOC(ctx->m_Allocator, layer->m_ClipCommands, sizeof(DrawCommand) * layer->m_ClipCommandCapacity);
+		VG_CHECK(layer->m_ClipCommands != nullptr, "Failed to allocate clip commands");
+	}
+
+	const uint32_t cmdID = layer->m_NumClipCommands;
+	layer->m_NumClipCommands++;
+
+	DrawCommand* cmd = &layer->m_ClipCommands[cmdID];
 	cmd->m_VertexBufferHandle = vbHandle;
 	cmd->m_FirstVertexID = firstVertexID;
 	cmd->m_FirstIndexID = firstIndexID;
@@ -5776,7 +5669,7 @@ static void renderTextQuads(Context* ctx, Layer* layer, uint32_t numQuads, Color
 	const uint32_t numDrawVertices = numQuads * 4;
 	const uint32_t numDrawIndices = numQuads * 6;
 
-	DrawCommand* cmd = allocDrawCommand_Textured(ctx, layer, numDrawVertices, numDrawIndices, ctx->m_FontImages[ctx->m_FontImageID]);
+	DrawCommand* cmd = layerAllocDrawCommand(ctx, layer, numDrawVertices, numDrawIndices, DrawCommand::Type::Textured, ctx->m_FontImages[ctx->m_FontImageID].idx);
 
 	const VertexBufferHandle vbHandle = cmd->m_VertexBufferHandle;
 	VertexBuffer* vb = &ctx->m_VertexBuffers[vbHandle.idx];
