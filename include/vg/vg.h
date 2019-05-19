@@ -424,7 +424,7 @@ void transformTranslate(Context* ctx, float x, float y);
 void transformRotate(Context* ctx, float ang_rad);
 void transformMult(Context* ctx, const float* mtx, bool pre);
 void setViewBox(Context* ctx, float x, float y, float w, float h);
-void setLayer(Context* ctx, uint32_t layerID);
+uint32_t setLayer(Context* ctx, uint32_t layerID);
 
 void getTransform(Context* ctx, float* mtx);
 void getScissor(Context* ctx, float* rect);

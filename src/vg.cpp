@@ -771,7 +771,7 @@ Context* createContext(const uint16_t* viewIDs, uint32_t numLayers, bx::Allocato
 		layer->m_StateStackTop = 0;
 		layer->m_StateStack[0].m_GlobalAlpha = 1.0f;
 
-		mem += alignSize(sizeof(State) * numLayers, alignment);
+		mem += alignSize(sizeof(State) * cfg->m_MaxStateStackSize, alignment);
 	}
 
 #if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
@@ -1722,11 +1722,13 @@ void setViewBox(Context* ctx, float x, float y, float w, float h)
 #endif
 }
 
-void setLayer(Context* ctx, uint32_t layerID)
+uint32_t setLayer(Context* ctx, uint32_t layerID)
 {
 	VG_CHECK(layerID < ctx->m_NumLayers, "Invalid layer ID");
 	VG_CHECK(!isValid(ctx->m_ActiveCommandList), "Cannot change layer inside a beginCommandList()/endCommandList() block");
+	const uint32_t prevLayerID = ctx->m_ActiveLayerID;
 	ctx->m_ActiveLayerID = layerID;
+	return prevLayerID;
 }
 
 void indexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
