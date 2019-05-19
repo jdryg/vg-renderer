@@ -66,7 +66,6 @@ struct State
 	float m_GlobalAlpha;
 	float m_FontScale;
 	float m_AvgScale;
-	uint32_t m_ActiveLayerID;
 };
 
 struct ClipState
@@ -229,7 +228,6 @@ struct CommandType
 		TransformRotate,
 		TransformMult,
 		SetViewBox,
-		SetLayer,
 
 		// Text
 		Text,
@@ -329,7 +327,6 @@ struct ContextVTable
 	void(*transformRotate)(Context* ctx, float ang_rad);
 	void(*transformMult)(Context* ctx, const float* mtx, bool pre);
 	void(*setViewBox)(Context* ctx, float x, float y, float w, float h);
-	void(*setLayer)(Context* ctx, uint32_t layerID);
 	void(*text)(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 	void(*textBox)(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, uint32_t textboxFlags);
 	void(*indexedTriList)(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* color, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
@@ -339,6 +336,9 @@ struct ContextVTable
 
 struct Layer
 {
+	State* m_StateStack;
+	uint32_t m_StateStackTop;
+
 	VertexBufferHandle* m_VertexBufferHandles;
 	uint32_t m_NumVertexBufferHandles;
 	uint32_t m_VertexBufferHandleCapacity;
@@ -406,6 +406,7 @@ struct Context
 
 	Layer* m_Layers;
 	uint32_t m_NumLayers;
+	uint32_t m_ActiveLayerID;
 
 	Image* m_Images;
 	uint32_t m_ImageCapacity;
@@ -422,9 +423,6 @@ struct Context
 	float* m_TransformedVertices;
 	uint32_t m_TransformedVertexCapacity;
 	bool m_PathTransformed;
-
-	State* m_StateStack;
-	uint32_t m_StateStackTop;
 
 	Gradient* m_Gradients;
 	uint32_t m_NextGradientID;
@@ -454,13 +452,14 @@ struct Context
 	bgfx::UniformHandle m_OuterColorUniform;
 };
 
-static State* getState(Context* ctx);
 static Layer* getActiveLayer(Context* ctx);
+static State* getState(Layer* layer);
+static const State* getState(const Layer* layer);
 static void updateState(State* state);
 static void getWhitePixelUV(Context* ctx, uv_t* uv);
 
 static float* allocTransformedVertices(Context* ctx, uint32_t numVertices);
-static const float* transformPath(Context* ctx);
+static const float* transformPath(Context* ctx, Layer* layer);
 
 static VertexBufferHandle allocVertexBuffer(Context* ctx);
 static float* allocVertexBufferData_Vec2(Context* ctx);
@@ -559,7 +558,6 @@ static void ctxTransformTranslate(Context* ctx, float x, float y);
 static void ctxTransformRotate(Context* ctx, float ang_rad);
 static void ctxTransformMult(Context* ctx, const float* mtx, bool pre);
 static void ctxSetViewBox(Context* ctx, float x, float y, float w, float h);
-static void ctxSetLayer(Context* ctx, uint32_t layerID);
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
@@ -605,7 +603,6 @@ static void aclTransformTranslate(Context* ctx, float x, float y);
 static void aclTransformRotate(Context* ctx, float ang_rad);
 static void aclTransformMult(Context* ctx, const float* mtx, bool pre);
 static void aclSetViewBox(Context* ctx, float x, float y, float w, float h);
-static void aclSetLayer(Context* ctx, uint32_t layerID);
 static void aclIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 static void aclText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void aclTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
@@ -650,7 +647,6 @@ const ContextVTable g_CtxVTable = {
 	ctxTransformRotate,
 	ctxTransformMult,
 	ctxSetViewBox,
-	ctxSetLayer,
 	ctxText,
 	ctxTextBox,
 	ctxIndexedTriList,
@@ -696,7 +692,6 @@ const ContextVTable g_ActiveCmdListVTable = {
 	aclTransformRotate,
 	aclTransformMult,
 	aclSetViewBox,
-	aclSetLayer,
 	aclText,
 	aclTextBox,
 	aclIndexedTriList,
@@ -752,7 +747,7 @@ Context* createContext(const uint16_t* viewIDs, uint32_t numLayers, bx::Allocato
 		+ alignSize(sizeof(Context), alignment)
 		+ alignSize(sizeof(Gradient) * cfg->m_MaxGradients, alignment)
 		+ alignSize(sizeof(ImagePattern) * cfg->m_MaxImagePatterns, alignment)
-		+ alignSize(sizeof(State) * cfg->m_MaxStateStackSize, alignment)
+		+ alignSize(sizeof(State) * cfg->m_MaxStateStackSize, alignment) * numLayers
 		+ alignSize(sizeof(FontData) * cfg->m_MaxFonts, alignment)
 		+ alignSize(sizeof(CommandList) * cfg->m_MaxCommandLists, alignment)
 		+ alignSize(sizeof(Layer) * numLayers, alignment);
@@ -763,7 +758,6 @@ Context* createContext(const uint16_t* viewIDs, uint32_t numLayers, bx::Allocato
 	Context* ctx = (Context*)mem;              mem += alignSize(sizeof(Context), alignment);
 	ctx->m_Gradients = (Gradient*)mem;         mem += alignSize(sizeof(Gradient) * cfg->m_MaxGradients, alignment);
 	ctx->m_ImagePatterns = (ImagePattern*)mem; mem += alignSize(sizeof(ImagePattern) * cfg->m_MaxImagePatterns, alignment);
-	ctx->m_StateStack = (State*)mem;           mem += alignSize(sizeof(State) * cfg->m_MaxStateStackSize, alignment);
 	ctx->m_FontData = (FontData*)mem;          mem += alignSize(sizeof(FontData) * cfg->m_MaxFonts, alignment);
 	ctx->m_CmdLists = (CommandList*)mem;       mem += alignSize(sizeof(CommandList) * cfg->m_MaxCommandLists, alignment);
 	ctx->m_Layers = (Layer*)mem;               mem += alignSize(sizeof(Layer) * numLayers, alignment);
@@ -772,6 +766,11 @@ Context* createContext(const uint16_t* viewIDs, uint32_t numLayers, bx::Allocato
 		VG_CHECK(viewIDs[iLayer] < BGFX_CONFIG_MAX_VIEWS, "Invalid bgfx view ID");
 		Layer* layer = &ctx->m_Layers[iLayer];
 		layer->m_ViewID = viewIDs[iLayer];
+		layer->m_StateStack = (State*)mem;
+		layer->m_StateStackTop = 0;
+		layer->m_StateStack[0].m_GlobalAlpha = 1.0f;
+
+		mem += alignSize(sizeof(State) * numLayers, alignment);
 	}
 
 #if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
@@ -784,8 +783,6 @@ Context* createContext(const uint16_t* viewIDs, uint32_t numLayers, bx::Allocato
 	ctx->m_DevicePixelRatio = 1.0f;
 	ctx->m_TesselationTolerance = 0.25f;
 	ctx->m_FringeWidth = 1.0f;
-	ctx->m_StateStackTop = 0;
-	ctx->m_StateStack[0].m_GlobalAlpha = 1.0f;
 	ctx->m_NumLayers = numLayers;
 	resetScissor(ctx);
 	transformIdentity(ctx);
@@ -1071,32 +1068,51 @@ void beginFrame(Context* ctx, uint16_t canvasWidth, uint16_t canvasHeight, float
 	ctx->m_CmdListCacheStackTop = ~0u;
 #endif
 
-	VG_CHECK(ctx->m_StateStackTop == 0, "State stack hasn't been properly reset in the previous frame");
-	ctxResetScissor(ctx);
-	ctxTransformIdentity(ctx);
-	ctxSetLayer(ctx, 0);
-
 	ctx->m_NumVertexBuffers = 0;
 
 	for (uint32_t i = 0; i < ctx->m_NumLayers; ++i) {
 		Layer* layer = &ctx->m_Layers[i];
+		VG_CHECK(layer->m_StateStackTop == 0, "State stack hasn't been properly reset in the previous frame");
 
+		// Reset scissor
+		State* state = &layer->m_StateStack[0];
+		state->m_ScissorRect[0] = state->m_ScissorRect[1] = 0.0f;
+		state->m_ScissorRect[2] = (float)ctx->m_CanvasWidth;
+		state->m_ScissorRect[3] = (float)ctx->m_CanvasHeight;
+
+		// Reset transformation
+		state->m_TransformMtx[0] = 1.0f;
+		state->m_TransformMtx[1] = 0.0f;
+		state->m_TransformMtx[2] = 0.0f;
+		state->m_TransformMtx[3] = 1.0f;
+		state->m_TransformMtx[4] = 0.0f;
+		state->m_TransformMtx[5] = 0.0f;
+
+		updateState(state);
+
+		// Reset vertex buffers
 		layer->m_NumVertexBufferHandles = 0;
 		layerAllocVertexBuffer(ctx, layer);
 
+		// Reset index buffer
 		layer->m_IndexBufferHandle = allocIndexBuffer(ctx);
 		VG_CHECK(ctx->m_IndexBuffers[layer->m_IndexBufferHandle.idx].m_Count == 0, "Not empty index buffer");
 
+		// Reset draw commands
 		layer->m_NumDrawCommands = 0;
 
+		// Reset clip state
 		layer->m_NumClipCommands = 0;
 		layer->m_ClipState.m_FirstCmdID = ~0u;
 		layer->m_ClipState.m_NumCmds = 0;
 		layer->m_ClipState.m_Rule = ClipRule::In;
 
+		// Reset flags
+		layer->m_RecordClipCommands = false;
 		layer->m_ForceNewDrawCommand = true;
 		layer->m_ForceNewClipCommand = true;
 	}
+	ctx->m_ActiveLayerID = 0;
 
 	ctx->m_NextGradientID = 0;
 	ctx->m_NextImagePatternID = 0;
@@ -1104,7 +1120,6 @@ void beginFrame(Context* ctx, uint16_t canvasWidth, uint16_t canvasHeight, float
 
 void endFrame(Context* ctx)
 {
-	VG_CHECK(ctx->m_StateStackTop == 0, "pushState()/popState() mismatch");
 	VG_CHECK(!isValid(ctx->m_ActiveCommandList), "endCommandList() hasn't been called");
 
 	flushTextAtlas(ctx);
@@ -1115,6 +1130,8 @@ void endFrame(Context* ctx)
 	const uint32_t numLayers = ctx->m_NumLayers;
 	for (uint32_t iLayer = 0; iLayer < numLayers; ++iLayer) {
 		Layer* layer = &ctx->m_Layers[iLayer];
+
+		VG_CHECK(layer->m_StateStackTop == 0, "pushState()/popState() mismatch for layer %d", iLayer);
 
 		const uint32_t numDrawCommands = layer->m_NumDrawCommands;
 		if (numDrawCommands == 0) {
@@ -1708,11 +1725,9 @@ void setViewBox(Context* ctx, float x, float y, float w, float h)
 
 void setLayer(Context* ctx, uint32_t layerID)
 {
-#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
-	ctx->m_VTable->setLayer(ctx, layerID);
-#else
-	ctxSetLayer(ctx, layerID);
-#endif
+	VG_CHECK(layerID < ctx->m_NumLayers, "Invalid layer ID");
+	VG_CHECK(!isValid(ctx->m_ActiveCommandList), "Cannot change layer inside a beginCommandList()/endCommandList() block");
+	ctx->m_ActiveLayerID = layerID;
 }
 
 void indexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
@@ -1753,19 +1768,22 @@ void submitCommandList(Context* ctx, CommandListHandle handle)
 
 void setGlobalAlpha(Context* ctx, float alpha)
 {
-	State* state = getState(ctx);
+	Layer* layer = getActiveLayer(ctx);
+	State* state = getState(layer);
 	state->m_GlobalAlpha = alpha;
 }
 
 void getTransform(Context* ctx, float* mtx)
 {
-	const State* state = getState(ctx);
+	const Layer* layer = getActiveLayer(ctx);
+	const State* state = getState(layer);
 	bx::memCopy(mtx, state->m_TransformMtx, sizeof(float) * 6);
 }
 
 void getScissor(Context* ctx, float* rect)
 {
-	const State* state = getState(ctx);
+	const Layer* layer = getActiveLayer(ctx);
+	const State* state = getState(layer);
 	bx::memCopy(rect, state->m_ScissorRect, sizeof(float) * 4);
 }
 
@@ -1818,7 +1836,8 @@ bool setFallbackFont(Context* ctx, FontHandle base, FontHandle fallback)
 float measureText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end, float* bounds)
 {
 	// nvgTextBounds()
-	const State* state = getState(ctx);
+	const Layer* layer = getActiveLayer(ctx);
+	const State* state = getState(layer);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
 
@@ -1842,7 +1861,8 @@ float measureText(Context* ctx, const TextConfig& cfg, float x, float y, const c
 
 void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, float* bounds, uint32_t flags)
 {
-	const State* state = getState(ctx);
+	const Layer* layer = getActiveLayer(ctx);
+	const State* state = getState(layer);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
 
@@ -1913,7 +1933,8 @@ void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float
 
 float getTextLineHeight(Context* ctx, const TextConfig& cfg)
 {
-	const State* state = getState(ctx);
+	const Layer* layer = getActiveLayer(ctx);
+	const State* state = getState(layer);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
 
@@ -1936,7 +1957,8 @@ int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const c
 #define CP_NEW_LINE  1
 #define CP_CHAR 2
 
-	const State* state = getState(ctx);
+	const Layer* layer = getActiveLayer(ctx);
+	const State* state = getState(layer);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
 
@@ -2162,7 +2184,8 @@ int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const c
 
 int textGlyphPositions(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end, GlyphPosition* positions, int maxPositions)
 {
-	const State* state = getState(ctx);
+	const Layer* layer = getActiveLayer(ctx);
+	const State* state = getState(layer);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
 
@@ -2920,15 +2943,6 @@ void clSetViewBox(Context* ctx, CommandListHandle handle, float x, float y, floa
 	CMD_WRITE(ptr, float, h);
 }
 
-void clSetLayer(Context* ctx, CommandListHandle handle, uint32_t layerID)
-{
-	VG_CHECK(isValid(handle), "Invalid command list handle");
-	CommandList* cl = &ctx->m_CmdLists[handle.idx];
-
-	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::SetLayer, sizeof(uint32_t));
-	CMD_WRITE(ptr, uint32_t, layerID);
-}
-
 void clText(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, const char* str, const char* end)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
@@ -2996,7 +3010,8 @@ void clSubmitCommandList(Context* ctx, CommandListHandle parentHandle, CommandLi
 // Context
 static void ctxBeginPath(Context* ctx)
 {
-	const State* state = getState(ctx);
+	const Layer* layer = getActiveLayer(ctx);
+	const State* state = getState(layer);
 	const float avgScale = state->m_AvgScale;
 	const float testTol = ctx->m_TesselationTolerance;
 	const float fringeWidth = ctx->m_FringeWidth;
@@ -3097,14 +3112,14 @@ static void ctxFillPathColor(Context* ctx, Color color, uint32_t flags)
 	const bool hasCache = false;
 #endif
 
-	const State* state = getState(ctx);
+	const State* state = getState(layer);
 	const float globalAlpha = hasCache ? 1.0f : state->m_GlobalAlpha;
 	const Color col = recordClipCommands ? Colors::Black : colorSetAlpha(color, (uint8_t)(globalAlpha * colorGetAlpha(color)));
 	if (!hasCache && colorGetAlpha(col) == 0) {
 		return;
 	}
 
-	const float* pathVertices = transformPath(ctx);
+	const float* pathVertices = transformPath(ctx, layer);
 
 #if VG_CONFIG_FORCE_AA_OFF
 	const bool aa = false;
@@ -3219,7 +3234,7 @@ static void ctxFillPathGradient(Context* ctx, GradientHandle gradientHandle, uin
 	const bool hasCache = false;
 #endif
 
-	const float* pathVertices = transformPath(ctx);
+	const float* pathVertices = transformPath(ctx, layer);
 
 	const PathType::Enum pathType = VG_FILL_FLAGS_PATH_TYPE(flags);
 #if VG_CONFIG_FORCE_AA_OFF
@@ -3329,7 +3344,7 @@ static void ctxFillPathImagePattern(Context* ctx, ImagePatternHandle imgPatternH
 	const bool hasCache = false;
 #endif
 
-	const State* state = getState(ctx);
+	const State* state = getState(layer);
 	const float globalAlpha = hasCache ? 1.0f : state->m_GlobalAlpha;
 	const Color col = colorSetAlpha(color, (uint8_t)(globalAlpha * colorGetAlpha(color)));
 	if (!hasCache && colorGetAlpha(col) == 0) {
@@ -3343,7 +3358,7 @@ static void ctxFillPathImagePattern(Context* ctx, ImagePatternHandle imgPatternH
 	const bool aa = VG_FILL_FLAGS_AA(flags);
 #endif
 
-	const float* pathVertices = transformPath(ctx);
+	const float* pathVertices = transformPath(ctx, layer);
 
 	Stroker* stroker = ctx->m_Stroker;
 	const Path* path = ctx->m_Path;
@@ -3441,7 +3456,7 @@ static void ctxStrokePathColor(Context* ctx, Color color, float width, uint32_t 
 	const bool hasCache = false;
 #endif
 
-	const State* state = getState(ctx);
+	const State* state = getState(layer);
 	const float avgScale = state->m_AvgScale;
 	const float globalAlpha = hasCache ? 1.0f : state->m_GlobalAlpha;
 	const float fringeWidth = ctx->m_FringeWidth;
@@ -3465,7 +3480,7 @@ static void ctxStrokePathColor(Context* ctx, Color color, float width, uint32_t 
 
 	const float strokeWidth = isThin ? fringeWidth : scaledStrokeWidth;
 
-	const float* pathVertices = transformPath(ctx);
+	const float* pathVertices = transformPath(ctx, layer);
 
 	const Path* path = ctx->m_Path;
 	const uint32_t numSubPaths = pathGetNumSubPaths(path);
@@ -3546,9 +3561,9 @@ static void ctxStrokePathGradient(Context* ctx, GradientHandle gradientHandle, f
 	const bool aa = VG_STROKE_FLAGS_AA(flags);
 #endif
 
-	const float* pathVertices = transformPath(ctx);
+	const float* pathVertices = transformPath(ctx, layer);
 
-	const State* state = getState(ctx);
+	const State* state = getState(layer);
 	const float avgScale = state->m_AvgScale;
 	float strokeWidth = bx::clamp<float>(width * avgScale, 0.0f, 200.0f);
 	bool isThin = false;
@@ -3626,7 +3641,7 @@ static void ctxStrokePathImagePattern(Context* ctx, ImagePatternHandle imgPatter
 	const bool hasCache = false;
 #endif
 
-	const State* state = getState(ctx);
+	const State* state = getState(layer);
 	const float avgScale = state->m_AvgScale;
 	const float globalAlpha = hasCache ? 1.0f : state->m_GlobalAlpha;
 	const float fringeWidth = ctx->m_FringeWidth;
@@ -3650,7 +3665,7 @@ static void ctxStrokePathImagePattern(Context* ctx, ImagePatternHandle imgPatter
 
 	const float strokeWidth = isThin ? fringeWidth : scaledStrokeWidth;
 
-	const float* pathVertices = transformPath(ctx);
+	const float* pathVertices = transformPath(ctx, layer);
 
 	Stroker* stroker = ctx->m_Stroker;
 	const Path* path = ctx->m_Path;
@@ -3782,7 +3797,8 @@ static GradientHandle ctxCreateLinearGradient(Context* ctx, float sx, float sy, 
 	gradientMatrix[4] = sx - dx * large;
 	gradientMatrix[5] = sy - dy * large;
 
-	const State* state = getState(ctx);
+	const Layer* layer = getActiveLayer(ctx);
+	const State* state = getState(layer);
 	const float* stateTransform = state->m_TransformMtx;
 
 	float patternMatrix[6];
@@ -3833,7 +3849,8 @@ static GradientHandle ctxCreateBoxGradient(Context* ctx, float x, float y, float
 	gradientMatrix[4] = x + w * 0.5f;
 	gradientMatrix[5] = y + h * 0.5f;
 
-	const State* state = getState(ctx);
+	const Layer* layer = getActiveLayer(ctx);
+	const State* state = getState(layer);
 	const float* stateTransform = state->m_TransformMtx;
 
 	float patternMatrix[6];
@@ -3884,7 +3901,8 @@ static GradientHandle ctxCreateRadialGradient(Context* ctx, float cx, float cy, 
 	gradientMatrix[4] = cx;
 	gradientMatrix[5] = cy;
 
-	const State* state = getState(ctx);
+	const Layer* layer = getActiveLayer(ctx);
+	const State* state = getState(layer);
 	const float* stateTransform = state->m_TransformMtx;
 
 	float patternMatrix[6];
@@ -3945,7 +3963,8 @@ static ImagePatternHandle ctxCreateImagePattern(Context* ctx, float cx, float cy
 	mtx[4] = cx;
 	mtx[5] = cy;
 
-	const State* state = getState(ctx);
+	const Layer* layer = getActiveLayer(ctx);
+	const State* state = getState(layer);
 	const float* stateTransform = state->m_TransformMtx;
 
 	float patternMatrix[6];
@@ -3978,26 +3997,28 @@ static ImagePatternHandle ctxCreateImagePattern(Context* ctx, float cx, float cy
 
 static void ctxPushState(Context* ctx)
 {
-	VG_CHECK(ctx->m_StateStackTop < (uint32_t)(ctx->m_Config.m_MaxStateStackSize - 1), "State stack overflow");
+	Layer* layer = getActiveLayer(ctx);
+	VG_CHECK(layer->m_StateStackTop < (uint32_t)(ctx->m_Config.m_MaxStateStackSize - 1), "State stack overflow");
 
-	const uint32_t top = ctx->m_StateStackTop;
-	const State* curState = &ctx->m_StateStack[top];
-	State* newState = &ctx->m_StateStack[top + 1];
+	const uint32_t top = layer->m_StateStackTop;
+	const State* curState = &layer->m_StateStack[top];
+	State* newState = &layer->m_StateStack[top + 1];
 	bx::memCopy(newState, curState, sizeof(State));
-	++ctx->m_StateStackTop;
+	++layer->m_StateStackTop;
 }
 
 static void ctxPopState(Context* ctx)
 {
-	VG_CHECK(ctx->m_StateStackTop > 0, "State stack underflow");
-	--ctx->m_StateStackTop;
+	Layer* layer = getActiveLayer(ctx);
+
+	VG_CHECK(layer->m_StateStackTop > 0, "State stack underflow");
+	--layer->m_StateStackTop;
 
 	// If the new state has a different scissor rect than the last draw command 
 	// force creating a new command.
-	const State* state = getState(ctx);
-	Layer* layer = &ctx->m_Layers[state->m_ActiveLayerID];
 	const uint32_t numDrawCommands = layer->m_NumDrawCommands;
 	if (numDrawCommands != 0) {
+		const State* state = getState(layer);
 		const DrawCommand* lastDrawCommand = &layer->m_DrawCommands[numDrawCommands - 1];
 		const uint16_t* lastScissor = &lastDrawCommand->m_ScissorRect[0];
 		const float* stateScissor = &state->m_ScissorRect[0];
@@ -4014,19 +4035,20 @@ static void ctxPopState(Context* ctx)
 
 static void ctxResetScissor(Context* ctx)
 {
-	State* state = getState(ctx);
+	Layer* layer = getActiveLayer(ctx);
+	State* state = getState(layer);
 	state->m_ScissorRect[0] = state->m_ScissorRect[1] = 0.0f;
 	state->m_ScissorRect[2] = (float)ctx->m_CanvasWidth;
 	state->m_ScissorRect[3] = (float)ctx->m_CanvasHeight;
 
-	Layer* layer = &ctx->m_Layers[state->m_ActiveLayerID];
 	layer->m_ForceNewDrawCommand = true;
 	layer->m_ForceNewClipCommand = true;
 }
 
 static void ctxSetScissor(Context* ctx, float x, float y, float w, float h)
 {
-	State* state = getState(ctx);
+	Layer* layer = getActiveLayer(ctx);
+	State* state = getState(layer);
 	const float* stateTransform = state->m_TransformMtx;
 	const float canvasWidth = (float)ctx->m_CanvasWidth;
 	const float canvasHeight = (float)ctx->m_CanvasHeight;
@@ -4045,14 +4067,14 @@ static void ctxSetScissor(Context* ctx, float x, float y, float w, float h)
 	state->m_ScissorRect[2] = maxx - minx;
 	state->m_ScissorRect[3] = maxy - miny;
 
-	Layer* layer = &ctx->m_Layers[state->m_ActiveLayerID];
 	layer->m_ForceNewDrawCommand = true;
 	layer->m_ForceNewClipCommand = true;
 }
 
 static bool ctxIntersectScissor(Context* ctx, float x, float y, float w, float h)
 {
-	State* state = getState(ctx);
+	Layer* layer = getActiveLayer(ctx);
+	State* state = getState(layer);
 	const float* stateTransform = state->m_TransformMtx;
 	const float* scissorRect = state->m_ScissorRect;
 
@@ -4073,7 +4095,6 @@ static bool ctxIntersectScissor(Context* ctx, float x, float y, float w, float h
 	state->m_ScissorRect[2] = newRectWidth;
 	state->m_ScissorRect[3] = newRectHeight;
 
-	Layer* layer = &ctx->m_Layers[state->m_ActiveLayerID];
 	layer->m_ForceNewDrawCommand = true;
 	layer->m_ForceNewClipCommand = true;
 
@@ -4082,7 +4103,8 @@ static bool ctxIntersectScissor(Context* ctx, float x, float y, float w, float h
 
 static void ctxTransformIdentity(Context* ctx)
 {
-	State* state = getState(ctx);
+	Layer* layer = getActiveLayer(ctx);
+	State* state = getState(layer);
 	state->m_TransformMtx[0] = 1.0f;
 	state->m_TransformMtx[1] = 0.0f;
 	state->m_TransformMtx[2] = 0.0f;
@@ -4095,7 +4117,8 @@ static void ctxTransformIdentity(Context* ctx)
 
 static void ctxTransformScale(Context* ctx, float x, float y)
 {
-	State* state = getState(ctx);
+	Layer* layer = getActiveLayer(ctx);
+	State* state = getState(layer);
 	state->m_TransformMtx[0] = x * state->m_TransformMtx[0];
 	state->m_TransformMtx[1] = x * state->m_TransformMtx[1];
 	state->m_TransformMtx[2] = y * state->m_TransformMtx[2];
@@ -4106,7 +4129,8 @@ static void ctxTransformScale(Context* ctx, float x, float y)
 
 static void ctxTransformTranslate(Context* ctx, float x, float y)
 {
-	State* state = getState(ctx);
+	Layer* layer = getActiveLayer(ctx);
+	State* state = getState(layer);
 	state->m_TransformMtx[4] += state->m_TransformMtx[0] * x + state->m_TransformMtx[2] * y;
 	state->m_TransformMtx[5] += state->m_TransformMtx[1] * x + state->m_TransformMtx[3] * y;
 
@@ -4118,7 +4142,8 @@ static void ctxTransformRotate(Context* ctx, float ang_rad)
 	const float c = bx::cos(ang_rad);
 	const float s = bx::sin(ang_rad);
 
-	State* state = getState(ctx);
+	Layer* layer = getActiveLayer(ctx);
+	State* state = getState(layer);
 	const float* stateTransform = state->m_TransformMtx;
 
 	float mtx[6];
@@ -4135,7 +4160,8 @@ static void ctxTransformRotate(Context* ctx, float ang_rad)
 
 static void ctxTransformMult(Context* ctx, const float* mtx, bool pre)
 {
-	State* state = getState(ctx);
+	Layer* layer = getActiveLayer(ctx);
+	State* state = getState(layer);
 	const float* stateTransform = state->m_TransformMtx;
 
 	float res[6];
@@ -4155,7 +4181,8 @@ static void ctxSetViewBox(Context* ctx, float x, float y, float w, float h)
 	const float scaleX = (float)ctx->m_CanvasWidth / w;
 	const float scaleY = (float)ctx->m_CanvasHeight / h;
 
-	State* state = getState(ctx);
+	Layer* layer = getActiveLayer(ctx);
+	State* state = getState(layer);
 	float* stateTransform = &state->m_TransformMtx[0];
 
 	// ctxTransformScale(ctx, scaleX, scaleY);
@@ -4171,13 +4198,6 @@ static void ctxSetViewBox(Context* ctx, float x, float y, float w, float h)
 	updateState(state);
 }
 
-static void ctxSetLayer(Context* ctx, uint32_t layerID)
-{
-	VG_CHECK(layerID < ctx->m_NumLayers, "Invalid layer ID");
-	State* state = getState(ctx);
-	state->m_ActiveLayerID = layerID;
-}
-
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
 {
 	Layer* layer = getActiveLayer(ctx);
@@ -4186,7 +4206,7 @@ static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, ui
 		img = ctx->m_FontImages[0];
 	}
 
-	const State* state = getState(ctx);
+	const State* state = getState(layer);
 	const float* stateTransform = state->m_TransformMtx;
 
 	DrawCommand* cmd = allocDrawCommand_Textured(ctx, layer, numVertices, numIndices, img);
@@ -4237,7 +4257,7 @@ static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const
 	
 	Layer* layer = getActiveLayer(ctx);
 
-	const State* state = getState(ctx);
+	const State* state = getState(layer);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float scaledFontSize = cfg.m_FontSize * scale;
 	if (scaledFontSize < VG_CONFIG_MIN_FONT_SIZE) {
@@ -4294,7 +4314,8 @@ static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, fl
 {
 	VG_CHECK(isValid(cfg.m_FontHandle), "Invalid font handle");
 
-	const State* state = getState(ctx);
+	const Layer* layer = getActiveLayer(ctx);
+	const State* state = getState(layer);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float scaledFontSize = cfg.m_FontSize * scale;
 	if (scaledFontSize < VG_CONFIG_MIN_FONT_SIZE) {
@@ -4349,7 +4370,7 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
 	CommandListCache* clCache = clGetCache(ctx, cl);
 	if(clCache) {
-		const State* state = getState(ctx);
+		const State* state = getState(layer);
 
 		const float cachedScale = clCache->m_AvgScale;
 		const float stateScale = state->m_AvgScale;
@@ -4608,7 +4629,7 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 			ctxSetScissor(ctx, rect[0], rect[1], rect[2], rect[3]);
 
 			if (cullCmds) {
-				const State* state = getState(ctx);
+				const State* state = getState(layer);
 				const float* scissorRect = &state->m_ScissorRect[0];
 				skipCmds = (scissorRect[2] < 1.0f) || (scissorRect[3] < 1.0f);
 			}
@@ -4628,7 +4649,7 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 		case CommandType::PopState: {
 			ctxPopState(ctx);
 			if (cullCmds) {
-				const State* state = getState(ctx);
+				const State* state = getState(layer);
 				const float* scissorRect = &state->m_ScissorRect[0];
 				skipCmds = (scissorRect[2] < 1.0f) || (scissorRect[3] < 1.0f);
 			}
@@ -4660,10 +4681,6 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 			const float* viewBox = (float*)cmd;
 			cmd += sizeof(float) * 4;
 			ctxSetViewBox(ctx, viewBox[0], viewBox[1], viewBox[2], viewBox[3]);
-		} break;
-		case CommandType::SetLayer: {
-			const uint32_t layerID = CMD_READ(cmd, uint32_t);
-			ctxSetLayer(ctx, layerID);
 		} break;
 		case CommandType::BeginClip: {
 			const ClipRule::Enum rule = CMD_READ(cmd, ClipRule::Enum);
@@ -4936,12 +4953,6 @@ static void aclSetViewBox(Context* ctx, float x, float y, float w, float h)
 	clSetViewBox(ctx, ctx->m_ActiveCommandList, x, y, w, h);
 }
 
-static void aclSetLayer(Context* ctx, uint32_t layerID)
-{
-	VG_CHECK(isValid(ctx->m_ActiveCommandList), "Invalid Context state");
-	clSetLayer(ctx, ctx->m_ActiveCommandList, layerID);
-}
-
 static void aclIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
 {
 	VG_CHECK(isValid(ctx->m_ActiveCommandList), "Invalid Context state");
@@ -4968,7 +4979,7 @@ static void aclSubmitCommandList(Context* ctx, CommandListHandle handle)
 #endif // VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 
 // Internal
-static void getWhitePixelUV(Context* ctx, uv_t* uv)
+static inline void getWhitePixelUV(Context* ctx, uv_t* uv)
 {
 	uint16_t w, h;
 	getImageSize(ctx, ctx->m_FontImages[0], &w, &h);
@@ -4982,16 +4993,19 @@ static void getWhitePixelUV(Context* ctx, uv_t* uv)
 #endif
 }
 
-static State* getState(Context* ctx)
+static inline State* getState(Layer* layer)
 {
-	const uint32_t top = ctx->m_StateStackTop;
-	return &ctx->m_StateStack[top];
+	return &layer->m_StateStack[layer->m_StateStackTop];
 }
 
-static Layer* getActiveLayer(Context* ctx)
+static inline const State* getState(const Layer* layer)
 {
-	const State* state = getState(ctx);
-	return &ctx->m_Layers[state->m_ActiveLayerID];
+	return &layer->m_StateStack[layer->m_StateStackTop];
+}
+
+static inline Layer* getActiveLayer(Context* ctx)
+{
+	return &ctx->m_Layers[ctx->m_ActiveLayerID];
 }
 
 static void updateState(State* state)
@@ -5020,7 +5034,7 @@ static float* allocTransformedVertices(Context* ctx, uint32_t numVertices)
 	return ctx->m_TransformedVertices;
 }
 
-static const float* transformPath(Context* ctx)
+static const float* transformPath(Context* ctx, Layer* layer)
 {
 	if (ctx->m_PathTransformed) {
 		return ctx->m_TransformedVertices;
@@ -5031,7 +5045,7 @@ static const float* transformPath(Context* ctx)
 	const uint32_t numPathVertices = pathGetNumVertices(path);
 	float* transformedVertices = allocTransformedVertices(ctx, numPathVertices);
 
-	const State* state = getState(ctx);
+	const State* state = getState(layer);
 	const float* stateTransform = state->m_TransformMtx;
 	const float* pathVertices = pathGetVertices(path);
 	vgutil::batchTransformPositions(pathVertices, numPathVertices, transformedVertices, stateTransform);
@@ -5483,7 +5497,7 @@ static DrawCommand* allocDrawCommand_Textured(Context* ctx, Layer* layer, uint32
 	const uint32_t firstVertexID = layerAllocVertices(ctx, layer, numVertices, &vbHandle);
 	const uint32_t firstIndexID = layerAllocIndices(ctx, layer, numIndices);
 
-	const State* state = getState(ctx);
+	const State* state = getState(layer);
 	const float* scissor = state->m_ScissorRect;
 
 	if (!layer->m_ForceNewDrawCommand && layer->m_NumDrawCommands != 0) {
@@ -5530,7 +5544,7 @@ static DrawCommand* allocDrawCommand_ImagePattern(Context* ctx, Layer* layer, ui
 	const uint32_t firstVertexID = layerAllocVertices(ctx, layer, numVertices, &vbHandle);
 	const uint32_t firstIndexID = layerAllocIndices(ctx, layer, numIndices);
 
-	const State* state = getState(ctx);
+	const State* state = getState(layer);
 	const float* scissor = state->m_ScissorRect;
 
 	if (!layer->m_ForceNewDrawCommand && layer->m_NumDrawCommands != 0) {
@@ -5576,7 +5590,7 @@ static DrawCommand* allocDrawCommand_ColorGradient(Context* ctx, Layer* layer, u
 	const uint32_t firstVertexID = layerAllocVertices(ctx, layer, numVertices, &vbHandle);
 	const uint32_t firstIndexID = layerAllocIndices(ctx, layer, numIndices);
 
-	const State* state = getState(ctx);
+	const State* state = getState(layer);
 	const float* scissor = state->m_ScissorRect;
 
 	if (!layer->m_ForceNewDrawCommand && layer->m_NumDrawCommands != 0) {
@@ -5621,7 +5635,7 @@ static DrawCommand* allocDrawCommand_Clip(Context* ctx, Layer* layer, uint32_t n
 	const uint32_t firstVertexID = layerAllocVertices(ctx, layer, numVertices, &vbHandle);
 	const uint32_t firstIndexID = layerAllocIndices(ctx, layer, numIndices);
 	
-	const State* state = getState(ctx);
+	const State* state = getState(layer);
 	const float* scissor = state->m_ScissorRect;
 
 	if (!layer->m_ForceNewClipCommand && layer->m_NumClipCommands != 0) {
@@ -5739,7 +5753,7 @@ static bool allocTextAtlas(Context* ctx)
 
 static void renderTextQuads(Context* ctx, Layer* layer, uint32_t numQuads, Color color)
 {
-	const State* state = getState(ctx);
+	const State* state = getState(layer);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
 
@@ -5988,7 +6002,8 @@ static void beginCachedCommand(Context* ctx)
 	lastCmd->m_FirstMeshID = (uint16_t)cache->m_NumMeshes;
 	lastCmd->m_NumMeshes = 0;
 
-	const State* state = getState(ctx);
+	const Layer* layer = getActiveLayer(ctx);
+	const State* state = getState(layer);
 	vgutil::invertMatrix3(state->m_TransformMtx, lastCmd->m_InvTransformMtx);
 }
 
@@ -6259,7 +6274,7 @@ static void clCacheRender(Context* ctx, Layer* layer, CommandList* cl)
 		case CommandType::PopState: {
 			ctxPopState(ctx);
 			if (cullCmds) {
-				const State* state = getState(ctx);
+				const State* state = getState(layer);
 				const float* scissorRect = &state->m_ScissorRect[0];
 				skipCmds = (scissorRect[2] < 1.0f) || (scissorRect[3] < 1.0f);
 			}
@@ -6291,10 +6306,6 @@ static void clCacheRender(Context* ctx, Layer* layer, CommandList* cl)
 			const float* viewBox = (float*)cmd;
 			cmd += sizeof(float) * 4;
 			ctxSetViewBox(ctx, viewBox[0], viewBox[1], viewBox[2], viewBox[3]);
-		} break;
-		case CommandType::SetLayer: {
-			const uint32_t layerID = CMD_READ(cmd, uint32_t);
-			ctxSetLayer(ctx, layerID);
 		} break;
 		case CommandType::BeginClip: {
 			const ClipRule::Enum rule = CMD_READ(cmd, ClipRule::Enum);
@@ -6349,7 +6360,7 @@ static void submitCachedMesh(Context* ctx, Layer* layer, Color col, const float*
 {
 	const bool recordClipCommands = layer->m_RecordClipCommands;
 
-	const State* state = getState(ctx);
+	const State* state = getState(layer);
 	const float* stateTransform = state->m_TransformMtx;
 
 	float mtx[6];
@@ -6385,7 +6396,7 @@ static void submitCachedMesh(Context* ctx, Layer* layer, GradientHandle gradient
 	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
 	VG_CHECK(!isLocal(gradientHandle), "Invalid gradient handle");
 
-	const State* state = getState(ctx);
+	const State* state = getState(layer);
 	const float* stateTransform = state->m_TransformMtx;
 
 	float mtx[6];
@@ -6411,7 +6422,7 @@ static void submitCachedMesh(Context* ctx, Layer* layer, ImagePatternHandle imgP
 	VG_CHECK(isValid(imgPattern), "Invalid image pattern handle");
 	VG_CHECK(!isLocal(imgPattern), "Invalid image pattern handle");
 
-	const State* state = getState(ctx);
+	const State* state = getState(layer);
 	const float* stateTransform = state->m_TransformMtx;
 
 	float mtx[6];

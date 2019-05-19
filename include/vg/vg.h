@@ -510,7 +510,6 @@ void clTransformTranslate(Context* ctx, CommandListHandle handle, float x, float
 void clTransformRotate(Context* ctx, CommandListHandle handle, float ang_rad);
 void clTransformMult(Context* ctx, CommandListHandle handle, const float* mtx, bool pre);
 void clSetViewBox(Context* ctx, CommandListHandle handle, float x, float y, float w, float h);
-void clSetLayer(Context* ctx, CommandListHandle handle, uint32_t layerID);
 
 void clText(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
@@ -577,7 +576,6 @@ void clTransformTranslate(CommandListRef& ref, float x, float y);
 void clTransformRotate(CommandListRef& ref, float ang_rad);
 void clTransformMult(CommandListRef& ref, const float* mtx, bool pre);
 void clSetViewBox(CommandListRef& ref, float x, float y, float w, float h);
-void clSetLayer(CommandListRef& ref, uint32_t layerID);
 void clText(CommandListRef& ref, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 void clTextBox(CommandListRef& ref, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
 void clSubmitCommandList(CommandListRef& ref, CommandListHandle child);
