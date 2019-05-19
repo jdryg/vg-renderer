@@ -103,6 +103,31 @@ inline void textBox(Context* ctx, FontHandle fontHandle, float fontSize, uint32_
 	textBox(ctx, makeTextConfig(ctx, fontHandle, fontSize, alignment, color), x, y, breakWidth, str, end, textboxFlags);
 }
 
+inline float measureText(Context* ctx, uint32_t layerID, FontHandle fontHandle, float fontSize, uint32_t alignment, float x, float y, const char* str, const char* end, float* bounds)
+{
+	return measureText(ctx, layerID, makeTextConfig(ctx, fontHandle, fontSize, alignment, Colors::Transparent), x, y, str, end, bounds);
+}
+
+inline void measureTextBox(Context* ctx, uint32_t layerID, FontHandle fontHandle, float fontSize, uint32_t alignment, float x, float y, float breakWidth, const char* str, const char* end, float* bounds, uint32_t flags)
+{
+	measureTextBox(ctx, layerID, makeTextConfig(ctx, fontHandle, fontSize, alignment, Colors::Transparent), x, y, breakWidth, str, end, bounds, flags);
+}
+
+inline float getTextLineHeight(Context* ctx, uint32_t layerID, FontHandle fontHandle, float fontSize, uint32_t alignment)
+{
+	return getTextLineHeight(ctx, layerID, makeTextConfig(ctx, fontHandle, fontSize, alignment, Colors::Transparent));
+}
+
+inline int textBreakLines(Context* ctx, uint32_t layerID, FontHandle fontHandle, float fontSize, uint32_t alignment, const char* str, const char* end, float breakRowWidth, TextRow* rows, int maxRows, uint32_t flags)
+{
+	return textBreakLines(ctx, layerID, makeTextConfig(ctx, fontHandle, fontSize, alignment, Colors::Transparent), str, end, breakRowWidth, rows, maxRows, flags);
+}
+
+inline int textGlyphPositions(Context* ctx, uint32_t layerID, FontHandle fontHandle, float fontSize, uint32_t alignment, float x, float y, const char* str, const char* end, GlyphPosition* positions, int maxPositions)
+{
+	return textGlyphPositions(ctx, layerID, makeTextConfig(ctx, fontHandle, fontSize, alignment, Colors::Transparent), x, y, str, end, positions, maxPositions);
+}
+
 inline float measureText(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, float x, float y, const char* str, const char* end, float* bounds)
 {
 	return measureText(ctx, makeTextConfig(ctx, fontHandle, fontSize, alignment, Colors::Transparent), x, y, str, end, bounds);

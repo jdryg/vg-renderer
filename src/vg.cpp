@@ -1834,10 +1834,10 @@ bool setFallbackFont(Context* ctx, FontHandle base, FontHandle fallback)
 	return fonsAddFallbackFont(fons, base.idx, fallback.idx) == 1;
 }
 
-float measureText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end, float* bounds)
+float measureText(Context* ctx, uint32_t layerID, const TextConfig& cfg, float x, float y, const char* str, const char* end, float* bounds)
 {
 	// nvgTextBounds()
-	const Layer* layer = getActiveLayer(ctx);
+	const Layer* layer = &ctx->m_Layers[layerID];
 	const State* state = getState(layer);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
@@ -1860,9 +1860,9 @@ float measureText(Context* ctx, const TextConfig& cfg, float x, float y, const c
 	return width * invscale;
 }
 
-void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, float* bounds, uint32_t flags)
+void measureTextBox(Context* ctx, uint32_t layerID, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, float* bounds, uint32_t flags)
 {
-	const Layer* layer = getActiveLayer(ctx);
+	const Layer* layer = &ctx->m_Layers[layerID];
 	const State* state = getState(layer);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
@@ -1932,9 +1932,9 @@ void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float
 	}
 }
 
-float getTextLineHeight(Context* ctx, const TextConfig& cfg)
+float getTextLineHeight(Context* ctx, uint32_t layerID, const TextConfig& cfg)
 {
-	const Layer* layer = getActiveLayer(ctx);
+	const Layer* layer = &ctx->m_Layers[layerID];
 	const State* state = getState(layer);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
@@ -1951,14 +1951,14 @@ float getTextLineHeight(Context* ctx, const TextConfig& cfg)
 	return lineh;
 }
 
-int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const char* end, float breakRowWidth, TextRow* rows, int maxRows, uint32_t flags)
+int textBreakLines(Context* ctx, uint32_t layerID, const TextConfig& cfg, const char* str, const char* end, float breakRowWidth, TextRow* rows, int maxRows, uint32_t flags)
 {
 	// nvgTextBreakLines()
 #define CP_SPACE  0
 #define CP_NEW_LINE  1
 #define CP_CHAR 2
 
-	const Layer* layer = getActiveLayer(ctx);
+	const Layer* layer = &ctx->m_Layers[layerID];
 	const State* state = getState(layer);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
@@ -2183,9 +2183,9 @@ int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const c
 #undef CP_CHAR
 }
 
-int textGlyphPositions(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end, GlyphPosition* positions, int maxPositions)
+int textGlyphPositions(Context* ctx, uint32_t layerID, const TextConfig& cfg, float x, float y, const char* str, const char* end, GlyphPosition* positions, int maxPositions)
 {
-	const Layer* layer = getActiveLayer(ctx);
+	const Layer* layer = &ctx->m_Layers[layerID];
 	const State* state = getState(layer);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
@@ -2228,6 +2228,31 @@ int textGlyphPositions(Context* ctx, const TextConfig& cfg, float x, float y, co
 	}
 
 	return npos;
+}
+
+float measureText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end, float* bounds)
+{
+	return measureText(ctx, ctx->m_ActiveLayerID, cfg, x, y, str, end, bounds);
+}
+
+void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, float* bounds, uint32_t flags)
+{
+	measureTextBox(ctx, ctx->m_ActiveLayerID, cfg, x, y, breakWidth, text, end, bounds, flags);
+}
+
+float getTextLineHeight(Context* ctx, const TextConfig& cfg)
+{
+	return getTextLineHeight(ctx, ctx->m_ActiveLayerID, cfg);
+}
+
+int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const char* end, float breakRowWidth, TextRow* rows, int maxRows, uint32_t flags)
+{
+	return textBreakLines(ctx, ctx->m_ActiveLayerID, cfg, str, end, breakRowWidth, rows, maxRows, flags);
+}
+
+int textGlyphPositions(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end, GlyphPosition* positions, int maxPositions)
+{
+	return textGlyphPositions(ctx, ctx->m_ActiveLayerID, cfg, x, y, str, end, positions, maxPositions);
 }
 
 bool getImageSize(Context* ctx, ImageHandle handle, uint16_t* w, uint16_t* h)
