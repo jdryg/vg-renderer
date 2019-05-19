@@ -412,6 +412,8 @@ struct Context
 	uint32_t m_ImageCapacity;
 	bx::HandleAlloc* m_ImageHandleAlloc;
 
+	uv_t m_FontImageWhitePixelUV[2];
+
 	CommandList* m_CmdLists;
 	bx::HandleAlloc* m_CmdListHandleAlloc;
 	uint32_t m_SubmitCmdListRecursionDepth;
@@ -456,7 +458,8 @@ static Layer* getActiveLayer(Context* ctx);
 static State* getState(Layer* layer);
 static const State* getState(const Layer* layer);
 static void updateState(State* state);
-static void getWhitePixelUV(Context* ctx, uv_t* uv);
+static const uv_t* getWhitePixelUV(Context* ctx);
+static void updateWhitePixelUV(Context* ctx);
 
 static float* allocTransformedVertices(Context* ctx, uint32_t numVertices);
 static const float* transformPath(Context* ctx, Layer* layer);
@@ -500,10 +503,10 @@ static bool isCommandListHandleValid(Context* ctx, CommandListHandle handle);
 static uint8_t* clAllocCommandData(Context* ctx, CommandList* cl, uint32_t size);
 static uint8_t* clAllocCommand(Context* ctx, CommandList* cl, CommandType::Enum cmdType, uint32_t dataSize);
 static uint32_t clStoreString(Context* ctx, CommandList* cl, const char* str, uint32_t len);
-static void clCacheRender(Context* ctx, Layer* layer, CommandList* cl);
-static void clCacheReset(Context* ctx, CommandListCache* cache);
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
+static void clCacheRender(Context* ctx, Layer* layer, CommandList* cl);
+static void clCacheReset(Context* ctx, CommandListCache* cache);
 static CommandListCache* clGetCache(Context* ctx, CommandList* cl);
 static CommandListCache* allocCommandListCache(Context* ctx);
 static void freeCommandListCache(Context* ctx, CommandListCache* cache);
@@ -867,8 +870,8 @@ Context* createContext(const uint16_t* viewIDs, uint32_t numLayers, bx::Allocato
 
 	ctx->m_FontImages[0] = createImage(ctx, (uint16_t)fontParams.width, (uint16_t)fontParams.height, cfg->m_FontAtlasImageFlags, nullptr);
 	VG_CHECK(isValid(ctx->m_FontImages[0]), "Failed to initialize font texture");
-	
 	ctx->m_FontImageID = 0;
+	updateWhitePixelUV(ctx);
 
 	fonsInitString(&ctx->m_TextString);
 
@@ -1240,7 +1243,6 @@ void endFrame(Context* ctx)
 						VG_CHECK(clipCmd->m_Type == DrawCommand::Type::Clip, "Invalid clip command");
 						VG_CHECK(clipCmd->m_HandleID == UINT16_MAX, "Invalid clip command image handle");
 
-						int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
 						bgfx::setState(0);
 						bgfx::setStencil(0
 							| BGFX_STENCIL_TEST_ALWAYS                // pass always
@@ -1252,7 +1254,7 @@ void endFrame(Context* ctx)
 
 						// TODO: Check if it's better to use Type_TexturedVertexColor program here to avoid too many 
 						// state switches.
-						bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::Clip], cmdDepth, false);
+						bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::Clip], 0, false);
 					}
 
 					stencilState = 0
@@ -1293,14 +1295,13 @@ void endFrame(Context* ctx)
 				bgfx::setVertexBuffer(2, gpuvb->m_UVBufferHandle, cmd->m_FirstVertexID, cmd->m_NumVertices);
 				bgfx::setTexture(0, ctx->m_TexUniform, tex->m_bgfxHandle, tex->m_Flags);
 
-				int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
 				bgfx::setState(0
 					| BGFX_STATE_WRITE_A
 					| BGFX_STATE_WRITE_RGB
 					| BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
 				bgfx::setStencil(stencilState);
 
-				bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::Textured], cmdDepth, false);
+				bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::Textured], 0, false);
 			} else if (cmd->m_Type == DrawCommand::Type::ColorGradient) {
 				VG_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid gradient handle");
 				Gradient* grad = &ctx->m_Gradients[cmd->m_HandleID];
@@ -1310,14 +1311,13 @@ void endFrame(Context* ctx)
 				bgfx::setUniform(ctx->m_InnerColorUniform, grad->m_InnerColor, 1);
 				bgfx::setUniform(ctx->m_OuterColorUniform, grad->m_OuterColor, 1);
 
-				int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
 				bgfx::setState(0
 					| BGFX_STATE_WRITE_A
 					| BGFX_STATE_WRITE_RGB
 					| BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
 				bgfx::setStencil(stencilState);
 
-				bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::ColorGradient], cmdDepth, false);
+				bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::ColorGradient], 0, false);
 			} else if (cmd->m_Type == DrawCommand::Type::ImagePattern) {
 				VG_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid image pattern handle");
 				ImagePattern* imgPattern = &ctx->m_ImagePatterns[cmd->m_HandleID];
@@ -1328,14 +1328,13 @@ void endFrame(Context* ctx)
 				bgfx::setTexture(0, ctx->m_TexUniform, tex->m_bgfxHandle, tex->m_Flags);
 				bgfx::setUniform(ctx->m_PaintMatUniform, imgPattern->m_Matrix, 1);
 
-				int cmdDepth = 0; // TODO: Use depth to sort draw calls into layers.
 				bgfx::setState(0
 					| BGFX_STATE_WRITE_A
 					| BGFX_STATE_WRITE_RGB
 					| BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
 				bgfx::setStencil(stencilState);
 
-				bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::ImagePattern], cmdDepth, false);
+				bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::ImagePattern], 0, false);
 			} else {
 				VG_CHECK(false, "Unknown draw command type");
 			}
@@ -1375,6 +1374,8 @@ void endFrame(Context* ctx)
 			for (int i = j; i < VG_CONFIG_MAX_FONT_IMAGES; i++) {
 				ctx->m_FontImages[i] = VG_INVALID_HANDLE;
 			}
+
+			updateWhitePixelUV(ctx);
 		}
 	}
 }
@@ -3228,8 +3229,6 @@ static void ctxFillPathGradient(Context* ctx, GradientHandle gradientHandle, uin
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
 	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
-#else
-	const bool hasCache = false;
 #endif
 
 	const float* pathVertices = transformPath(ctx, layer);
@@ -3547,8 +3546,6 @@ static void ctxStrokePathGradient(Context* ctx, GradientHandle gradientHandle, f
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
 	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
-#else
-	const bool hasCache = false;
 #endif
 
 	const LineJoin::Enum lineJoin = VG_STROKE_FLAGS_LINE_JOIN(flags);
@@ -4221,8 +4218,7 @@ static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, ui
 	if (uv) {
 		bx::memCopy(dstUV, uv, sizeof(uv_t) * 2 * numVertices);
 	} else {
-		uv_t whiteRectUV[2];
-		getWhitePixelUV(ctx, &whiteRectUV[0]);
+		const uv_t* whiteRectUV = getWhitePixelUV(ctx);
 
 #if VG_CONFIG_UV_INT16
 		vgutil::memset32(dstUV, numVertices, &whiteRectUV[0]);
@@ -4977,17 +4973,22 @@ static void aclSubmitCommandList(Context* ctx, CommandListHandle handle)
 #endif // VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 
 // Internal
-static inline void getWhitePixelUV(Context* ctx, uv_t* uv)
+static inline const uv_t* getWhitePixelUV(Context* ctx)
+{
+	return ctx->m_FontImageWhitePixelUV;
+}
+
+static void updateWhitePixelUV(Context* ctx)
 {
 	uint16_t w, h;
 	getImageSize(ctx, ctx->m_FontImages[0], &w, &h);
 
 #if VG_CONFIG_UV_INT16
-	uv[0] = INT16_MAX / (int16_t)w;
-	uv[1] = INT16_MAX / (int16_t)h;
+	ctx->m_FontImageWhitePixelUV[0] = INT16_MAX / (int16_t)w;
+	ctx->m_FontImageWhitePixelUV[1] = INT16_MAX / (int16_t)h;
 #else
-	uv[0] = 0.5f / (float)w;
-	uv[1] = 0.5f / (float)h;
+	ctx->m_FontImageWhitePixelUV[0] = 0.5f / (float)w;
+	ctx->m_FontImageWhitePixelUV[1] = 0.5f / (float)h;
 #endif
 }
 
@@ -5315,8 +5316,7 @@ static void createDrawCommand_VertexColor(Context* ctx, Layer* layer, const floa
 	float* dstPos = &vb->m_Pos[vbOffset << 1];
 	bx::memCopy(dstPos, vtx, sizeof(float) * 2 * numVertices);
 
-	uv_t uv[2];
-	getWhitePixelUV(ctx, &uv[0]);
+	const uv_t* uv = getWhitePixelUV(ctx);
 
 	uv_t* dstUV = &vb->m_UV[vbOffset << 1];
 #if VG_CONFIG_UV_INT16
@@ -5638,6 +5638,7 @@ static bool allocTextAtlas(Context* ctx)
 	}
 
 	++ctx->m_FontImageID;
+	updateWhitePixelUV(ctx);
 
 	fonsResetAtlas(ctx->m_FontStashContext, iw, ih);
 
