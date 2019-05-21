@@ -4378,15 +4378,11 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 	VG_CHECK(isCommandListHandleValid(ctx, handle), "Invalid command list handle");
 	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
-	VG_CHECK(ctx->m_SubmitCmdListRecursionDepth < ctx->m_Config.m_MaxCommandListDepth, "Recursion limit reached");
 	if (ctx->m_SubmitCmdListRecursionDepth >= ctx->m_Config.m_MaxCommandListDepth) {
+		VG_CHECK(false, "SubmitCommandList recursion depth limit reached.");
 		return;
 	}
 	++ctx->m_SubmitCmdListRecursionDepth;
-
-	const uint16_t numGradients = cl->m_NumGradients;
-	const uint16_t numImagePatterns = cl->m_NumImagePatterns;
-	const uint32_t clFlags = cl->m_Flags;
 
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
 	CommandListCache* clCache = clGetCache(ctx, cl);
@@ -4410,13 +4406,13 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 #endif
 
 	// Don't cull commands during caching.
+	const uint32_t clFlags = cl->m_Flags;
 	const bool cullCmds = !clCache && ((clFlags & CommandListFlags::AllowCommandCulling) != 0);
 
 	const uint16_t firstGradientID = (uint16_t)ctx->m_NextGradientID;
 	const uint16_t firstImagePatternID = (uint16_t)ctx->m_NextImagePatternID;
-	VG_CHECK(firstGradientID + numGradients <= ctx->m_Config.m_MaxGradients, "Not enough free gradients for command list. Increase ContextConfig::m_MaxGradients");
-	VG_CHECK(firstImagePatternID + numImagePatterns <= ctx->m_Config.m_MaxImagePatterns, "Not enough free image patterns for command list. Increase ContextConfig::m_MaxImagePatterns");
-	BX_UNUSED(numGradients, numImagePatterns); // For Release builds
+	VG_CHECK(firstGradientID + cl->m_NumGradients <= ctx->m_Config.m_MaxGradients, "Not enough free gradients for command list. Increase ContextConfig::m_MaxGradients");
+	VG_CHECK(firstImagePatternID + cl->m_NumImagePatterns <= ctx->m_Config.m_MaxImagePatterns, "Not enough free image patterns for command list. Increase ContextConfig::m_MaxImagePatterns");
 
 	const uint8_t* cmd = cl->m_CommandBuffer;
 	const uint8_t* cmdListEnd = cl->m_CommandBuffer + cl->m_CommandBufferPos;
