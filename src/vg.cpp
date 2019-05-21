@@ -516,9 +516,9 @@ static CommandListCache* getCommandListCacheStackTop(Context* ctx);
 static void beginCachedCommand(Context* ctx);
 static void endCachedCommand(Context* ctx);
 static void addCachedCommand(Context* ctx, const float* pos, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
-static void submitCachedMesh(Context* ctx, Layer* layer, Color col, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes);
-static void submitCachedMesh(Context* ctx, Layer* layer, GradientHandle gradientHandle, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes);
-static void submitCachedMesh(Context* ctx, Layer* layer, ImagePatternHandle imgPatter, Color color, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes);
+static void submitCachedMesh(Context* ctx, Layer* layer, Color col, const CachedMesh* meshList, uint32_t numMeshes);
+static void submitCachedMesh(Context* ctx, Layer* layer, GradientHandle gradientHandle, const CachedMesh* meshList, uint32_t numMeshes);
+static void submitCachedMesh(Context* ctx, Layer* layer, ImagePatternHandle imgPatter, Color color, const CachedMesh* meshList, uint32_t numMeshes);
 #endif
 
 static void ctxBeginPath(Context* ctx);
@@ -5960,8 +5960,9 @@ static void addCachedCommand(Context* ctx, const float* pos, uint32_t numVertice
 	uint8_t* mem = (uint8_t*)BX_ALIGNED_ALLOC(allocator, totalMem, 16);
 	mesh->m_Pos = (float*)mem;
 	mem += alignSize(sizeof(float) * 2 * numVertices, 16);
-	
-	bx::memCopy(mesh->m_Pos, pos, sizeof(float) * 2 * numVertices);
+
+	const float* invMtx = cache->m_Commands[cache->m_NumCommands - 1].m_InvTransformMtx;
+	vgutil::batchTransformPositions(pos, numVertices, mesh->m_Pos, invMtx);
 	mesh->m_NumVertices = numVertices;
 
 	if (numColors == 1) {
@@ -6038,7 +6039,7 @@ static void clCacheRender(Context* ctx, Layer* layer, CommandList* cl)
 			const uint32_t flags = CMD_READ(cmd, uint32_t);
 			const Color color = CMD_READ(cmd, Color);
 			BX_UNUSED(flags);
-			submitCachedMesh(ctx, layer, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
+			submitCachedMesh(ctx, layer, color, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
 		case CommandType::FillPathGradient: {
@@ -6048,7 +6049,7 @@ static void clCacheRender(Context* ctx, Layer* layer, CommandList* cl)
 			BX_UNUSED(flags);
 
 			const GradientHandle gradient = { isLocal(gradientFlags) ? (uint16_t)(gradientHandle + firstGradientID) : gradientHandle, 0 };
-			submitCachedMesh(ctx, layer, gradient, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
+			submitCachedMesh(ctx, layer, gradient, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
 		case CommandType::FillPathImagePattern: {
@@ -6059,7 +6060,7 @@ static void clCacheRender(Context* ctx, Layer* layer, CommandList* cl)
 			BX_UNUSED(flags);
 
 			const ImagePatternHandle imgPattern = { isLocal(imgPatternFlags) ? (uint16_t)(imgPatternHandle + firstImagePatternID) : imgPatternHandle, 0 };
-			submitCachedMesh(ctx, layer, imgPattern, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
+			submitCachedMesh(ctx, layer, imgPattern, color, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
 		case CommandType::StrokePathColor: {
@@ -6068,7 +6069,7 @@ static void clCacheRender(Context* ctx, Layer* layer, CommandList* cl)
 			const Color color = CMD_READ(cmd, Color);
 			BX_UNUSED(flags, width);
 
-			submitCachedMesh(ctx, layer, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
+			submitCachedMesh(ctx, layer, color, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
 		case CommandType::StrokePathGradient: {
@@ -6079,7 +6080,7 @@ static void clCacheRender(Context* ctx, Layer* layer, CommandList* cl)
 			BX_UNUSED(flags, width);
 
 			const GradientHandle gradient = { isLocal(gradientFlags) ? (uint16_t)(gradientHandle + firstGradientID) : gradientHandle, 0 };
-			submitCachedMesh(ctx, layer, gradient, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
+			submitCachedMesh(ctx, layer, gradient, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
 		case CommandType::StrokePathImagePattern: {
@@ -6091,7 +6092,7 @@ static void clCacheRender(Context* ctx, Layer* layer, CommandList* cl)
 			BX_UNUSED(flags, width);
 
 			const ImagePatternHandle imgPattern = { isLocal(imgPatternFlags) ? (uint16_t)(imgPatternHandle + firstImagePatternID) : imgPatternHandle, 0 };
-			submitCachedMesh(ctx, layer, imgPattern, color, nextCachedCommand->m_InvTransformMtx, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
+			submitCachedMesh(ctx, layer, imgPattern, color, &clCache->m_Meshes[nextCachedCommand->m_FirstMeshID], nextCachedCommand->m_NumMeshes);
 			++nextCachedCommand;
 		} break;
 		case CommandType::IndexedTriList: {
@@ -6277,15 +6278,12 @@ static void clCacheReset(Context* ctx, CommandListCache* cache)
 	bx::memSet(cache, 0, sizeof(CommandListCache));
 }
 
-static void submitCachedMesh(Context* ctx, Layer* layer, Color col, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes)
+static void submitCachedMesh(Context* ctx, Layer* layer, Color col, const CachedMesh* meshList, uint32_t numMeshes)
 {
 	const bool recordClipCommands = layer->m_RecordClipCommands;
 
 	const State* state = getState(layer);
-	const float* stateTransform = state->m_TransformMtx;
-
-	float mtx[6];
-	vgutil::multiplyMatrix3(stateTransform, invTransform, mtx);
+	const float* mtx = state->m_TransformMtx;
 
 	if (recordClipCommands) {
 		for (uint32_t i = 0; i < numMeshes; ++i) {
@@ -6311,17 +6309,14 @@ static void submitCachedMesh(Context* ctx, Layer* layer, Color col, const float*
 	}
 }
 
-static void submitCachedMesh(Context* ctx, Layer* layer, GradientHandle gradientHandle, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes)
+static void submitCachedMesh(Context* ctx, Layer* layer, GradientHandle gradientHandle, const CachedMesh* meshList, uint32_t numMeshes)
 {
 	VG_CHECK(!layer->m_RecordClipCommands, "Only submitCachedMesh(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(gradientHandle), "Invalid gradient handle");
 	VG_CHECK(!isLocal(gradientHandle), "Invalid gradient handle");
 
 	const State* state = getState(layer);
-	const float* stateTransform = state->m_TransformMtx;
-
-	float mtx[6];
-	vgutil::multiplyMatrix3(stateTransform, invTransform, mtx);
+	const float* mtx = state->m_TransformMtx;
 
 	const uint32_t black = Colors::Black;
 	for (uint32_t i = 0; i < numMeshes; ++i) {
@@ -6337,17 +6332,14 @@ static void submitCachedMesh(Context* ctx, Layer* layer, GradientHandle gradient
 	}
 }
 
-static void submitCachedMesh(Context* ctx, Layer* layer, ImagePatternHandle imgPattern, Color col, const float* invTransform, const CachedMesh* meshList, uint32_t numMeshes)
+static void submitCachedMesh(Context* ctx, Layer* layer, ImagePatternHandle imgPattern, Color col, const CachedMesh* meshList, uint32_t numMeshes)
 {
 	VG_CHECK(!layer->m_RecordClipCommands, "Only submitCachedMesh(Color) is supported inside BeginClip()/EndClip()");
 	VG_CHECK(isValid(imgPattern), "Invalid image pattern handle");
 	VG_CHECK(!isLocal(imgPattern), "Invalid image pattern handle");
 
 	const State* state = getState(layer);
-	const float* stateTransform = state->m_TransformMtx;
-
-	float mtx[6];
-	vgutil::multiplyMatrix3(stateTransform, invTransform, mtx);
+	const float* mtx = state->m_TransformMtx;
 
 	for (uint32_t i = 0; i < numMeshes; ++i) {
 		const CachedMesh* mesh = &meshList[i];
