@@ -27,7 +27,7 @@ A few notes regarding caching:
 
 The best case scenario for using cached lists is for rendering multiple instances of static (w.r.t. their geometry) models with concave fills. Otherwise, caching might introduce extra overhead. Remember to use VG_CONFIG_ENABLE_SHAPE_CACHING to measure how much caching helps in your case and decide whether or not it's worth it.
 
-Command lists can be nested, i.e. you can submit a command list (child) inside another command list (parent). If the child list is marked as transient (vg::CommandListFlags::Transient), its commands are copied into the parent list when calling clSubmitCommandList() and you are free to reuse (reset) the child list again in the same frame. Otherwise, a SubmitCommandList command is inserted into the parent list and the child list is expected to stay valid until the parent is submitted to a layer.
+Command lists can be nested, i.e. you can submit a command list (child) inside another command list (parent). If the child list is marked as transient (vg::CommandListFlags::Transient), its commands are copied into the parent list when calling clSubmitCommandList() and you are free to reuse (reset) the child list immediately. Otherwise, a SubmitCommandList command is inserted into the parent list and the child list is expected to stay valid until the parent is submitted to a layer.
 
 ## Layers
 
