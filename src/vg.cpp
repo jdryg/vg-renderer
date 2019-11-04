@@ -2286,7 +2286,7 @@ bool updateImage(Context* ctx, ImageHandle image, uint16_t x, uint16_t y, uint16
 	const uint32_t pitch = tex->m_Width * bytesPerPixel;
 
 	const bgfx::Memory* mem = bgfx::alloc(w * h * bytesPerPixel);
-	bx::gather(mem->data, data + y * pitch + x * bytesPerPixel, w * bytesPerPixel, h, pitch);
+	bx::gather(mem->data, data + y * pitch + x * bytesPerPixel, pitch, w * bytesPerPixel, h);
 
 	bgfx::updateTexture2D(tex->m_bgfxHandle, 0, 0, x, y, w, h, mem, UINT16_MAX);
 
