@@ -424,9 +424,9 @@ struct Context
 	FontData* m_FontData;
 	uint32_t m_NextFontID;
 
-	bgfx::VertexDecl m_PosVertexDecl;
-	bgfx::VertexDecl m_UVVertexDecl;
-	bgfx::VertexDecl m_ColorVertexDecl;
+	bgfx::VertexLayout m_PosVertexDecl;
+	bgfx::VertexLayout m_UVVertexDecl;
+	bgfx::VertexLayout m_ColorVertexDecl;
 	bgfx::ProgramHandle m_ProgramHandle[DrawCommand::Type::NumTypes];
 	bgfx::UniformHandle m_TexUniform;
 	bgfx::UniformHandle m_PaintMatUniform;
