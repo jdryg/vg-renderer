@@ -2891,6 +2891,7 @@ static void ctxFillPathColor(Context* ctx, Color color, uint32_t flags)
 			}
 		}
 	} else if (pathType == PathType::Concave) {
+		strokerConcaveFillBegin(stroker);
 		for (uint32_t i = 0; i < numSubPaths; ++i) {
 			const SubPath* subPath = &subPaths[i];
 			if (subPath->m_NumVertices < 3) {
@@ -2899,33 +2900,34 @@ static void ctxFillPathColor(Context* ctx, Color color, uint32_t flags)
 
 			const float* vtx = &pathVertices[subPath->m_FirstVertexID << 1];
 			const uint32_t numPathVertices = subPath->m_NumVertices;
+			strokerConcaveFillAddContour(stroker, vtx, numPathVertices);
+		}
 
-			Mesh mesh;
-			const uint32_t* colors = &col;
-			uint32_t numColors = 1;
+		Mesh mesh;
+		const uint32_t* colors = &col;
+		uint32_t numColors = 1;
 
-			bool decomposed = false;
-			if (aa) {
-				decomposed = strokerConcaveFillAA(stroker, &mesh, vtx, numPathVertices, col);
-				colors = mesh.m_ColorBuffer;
-				numColors = mesh.m_NumVertices;
-			} else {
-				decomposed = strokerConcaveFill(stroker, &mesh, vtx, numPathVertices);
-			}
+		bool decomposed = false;
+		if (aa) {
+			decomposed = strokerConcaveFillEndAA(stroker, &mesh, col);
+			colors = mesh.m_ColorBuffer;
+			numColors = mesh.m_NumVertices;
+		} else {
+			decomposed = strokerConcaveFillEnd(stroker, &mesh);
+		}
 
-			VG_WARN(decomposed, "Failed to triangulate concave polygon");
-			if (decomposed) {
+		VG_WARN(decomposed, "Failed to triangulate concave polygon");
+		if (decomposed) {
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
-				if (hasCache) {
-					addCachedCommand(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
-				}
+			if (hasCache) {
+				addCachedCommand(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+			}
 #endif
 
-				if (recordClipCommands) {
-					createDrawCommand_Clip(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
-				} else {
-					createDrawCommand_VertexColor(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
-				}
+			if (recordClipCommands) {
+				createDrawCommand_Clip(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
+			} else {
+				createDrawCommand_VertexColor(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
 			}
 		}
 	}
@@ -3001,40 +3003,41 @@ static void ctxFillPathGradient(Context* ctx, GradientHandle gradientHandle, uin
 			createDrawCommand_ColorGradient(ctx, gradientHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
 		}
 	} else if (pathType == PathType::Concave) {
+		strokerConcaveFillBegin(stroker);
 		for (uint32_t i = 0; i < numSubPaths; ++i) {
 			const SubPath* subPath = &subPaths[i];
 			if (subPath->m_NumVertices < 3) {
-				continue;
+				return;
 			}
 
 			const float* vtx = &pathVertices[subPath->m_FirstVertexID << 1];
 			const uint32_t numPathVertices = subPath->m_NumVertices;
+			strokerConcaveFillAddContour(stroker, vtx, numPathVertices);
+		}
 
-			const Color black = Colors::Black;
+		const Color black = Colors::Black;
+		Mesh mesh;
+		const uint32_t* colors = &black;
+		uint32_t numColors = 1;
 
-			Mesh mesh;
-			const uint32_t* colors = &black;
-			uint32_t numColors = 1;
+		bool decomposed = false;
+		if (aa) {
+			decomposed = strokerConcaveFillEndAA(stroker, &mesh, black);
+			colors = mesh.m_ColorBuffer;
+			numColors = mesh.m_NumVertices;
+		} else {
+			decomposed = strokerConcaveFillEnd(stroker, &mesh);
+		}
 
-			bool decomposed = false;
-			if (aa) {
-				decomposed = strokerConcaveFillAA(stroker, &mesh, vtx, numPathVertices, vg::Colors::Black);
-				colors = mesh.m_ColorBuffer;
-				numColors = mesh.m_NumVertices;
-			} else {
-				decomposed = strokerConcaveFill(stroker, &mesh, vtx, numPathVertices);
-			}
-
-			VG_WARN(decomposed, "Failed to triangulate concave polygon");
-			if (decomposed) {
+		VG_WARN(decomposed, "Failed to triangulate concave polygon");
+		if (decomposed) {
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
-				if (hasCache) {
-					addCachedCommand(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
-				}
+			if (hasCache) {
+				addCachedCommand(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+			}
 #endif
 
-				createDrawCommand_ColorGradient(ctx, gradientHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
-			}
+			createDrawCommand_ColorGradient(ctx, gradientHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
 		}
 	}
 
@@ -3115,38 +3118,40 @@ static void ctxFillPathImagePattern(Context* ctx, ImagePatternHandle imgPatternH
 			createDrawCommand_ImagePattern(ctx, imgPatternHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
 		}
 	} else if (pathType == PathType::Concave) {
+		strokerConcaveFillBegin(stroker);
 		for (uint32_t i = 0; i < numSubPaths; ++i) {
 			const SubPath* subPath = &subPaths[i];
 			if (subPath->m_NumVertices < 3) {
-				continue;
+				return;
 			}
 
 			const float* vtx = &pathVertices[subPath->m_FirstVertexID << 1];
 			const uint32_t numPathVertices = subPath->m_NumVertices;
+			strokerConcaveFillAddContour(stroker, vtx, numPathVertices);
+		}
 
-			Mesh mesh;
-			const uint32_t* colors = &col;
-			uint32_t numColors = 1;
+		Mesh mesh;
+		const uint32_t* colors = &col;
+		uint32_t numColors = 1;
 
-			bool decomposed = false;
-			if (aa) {
-				decomposed = strokerConcaveFillAA(stroker, &mesh, vtx, numPathVertices, col);
-				colors = mesh.m_ColorBuffer;
-				numColors = mesh.m_NumVertices;
-			} else {
-				decomposed = strokerConcaveFill(stroker, &mesh, vtx, numPathVertices);
-			}
+		bool decomposed = false;
+		if (aa) {
+			decomposed = strokerConcaveFillEndAA(stroker, &mesh, col);
+			colors = mesh.m_ColorBuffer;
+			numColors = mesh.m_NumVertices;
+		} else {
+			decomposed = strokerConcaveFillEnd(stroker, &mesh);
+		}
 
-			VG_WARN(decomposed, "Failed to triangulate concave polygon");
-			if (decomposed) {
+		VG_WARN(decomposed, "Failed to triangulate concave polygon");
+		if (decomposed) {
 #if VG_CONFIG_ENABLE_SHAPE_CACHING
-				if (hasCache) {
-					addCachedCommand(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
-				}
+			if (hasCache) {
+				addCachedCommand(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+			}
 #endif
 
-				createDrawCommand_ImagePattern(ctx, imgPatternHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
-			}
+			createDrawCommand_ImagePattern(ctx, imgPatternHandle, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
 		}
 	}
 

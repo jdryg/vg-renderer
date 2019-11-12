@@ -20,11 +20,6 @@
 #	define VG_CONFIG_FORCE_AA_OFF 0
 #endif
 
-// TODO: Doesn't work without libtess2!
-#ifndef VG_CONFIG_USE_LIBTESS2
-#	define VG_CONFIG_USE_LIBTESS2 1
-#endif
-
 #ifndef VG_CONFIG_LIBTESS2_SCRATCH_BUFFER
 #	define VG_CONFIG_LIBTESS2_SCRATCH_BUFFER (4 * 1024 * 1024) // Set to 0 to let libtess2 use malloc/free
 #endif

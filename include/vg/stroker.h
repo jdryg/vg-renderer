@@ -70,16 +70,19 @@ void strokerConvexFill(Stroker* stroker, Mesh* mesh, const float* vertexList, ui
 */
 void strokerConvexFillAA(Stroker* stroker, Mesh* mesh, const float* vertexList, uint32_t numVertices, uint32_t color);
 
+bool strokerConcaveFillBegin(Stroker* stroker);
+void strokerConcaveFillAddContour(Stroker* stroker, const float* vertexList, uint32_t numVertices);
+
 /*
 * Generates positions and indices.
 * All vertices have the same color.
 */
-bool strokerConcaveFill(Stroker* stroker, Mesh* mesh, const float* vertexList, uint32_t numVertices);
+bool strokerConcaveFillEnd(Stroker* stroker, Mesh* mesh);
 
 /*
 * Generates positions, colors and indices
 */
-bool strokerConcaveFillAA(Stroker* stroker, Mesh* mesh, const float* vertexList, uint32_t numVertices, uint32_t color);
+bool strokerConcaveFillEndAA(Stroker* stroker, Mesh* mesh, uint32_t color);
 }
 
 #endif

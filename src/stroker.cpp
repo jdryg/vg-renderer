@@ -1,8 +1,6 @@
 #include <vg/stroker.h>
 #include "vg_util.h"
-#if VG_CONFIG_USE_LIBTESS2
 #include "libtess2/tesselator.h"
-#endif
 #include <bx/allocator.h>
 #include <bx/math.h>
 #include <string.h> // memcpy
@@ -129,7 +127,6 @@ static inline __m128 xmm_rcp(__m128 a)
 }
 #endif
 
-#if VG_CONFIG_USE_LIBTESS2
 struct libtess2Allocator
 {
 	uint8_t* m_Buffer;
@@ -157,7 +154,6 @@ static void libtess2Free(void* userData, void* ptr)
 	// Don't do anything!
 	BX_UNUSED(userData, ptr);
 }
-#endif
 
 struct Stroker
 {
@@ -169,13 +165,8 @@ struct Stroker
 	uint32_t m_NumIndices;
 	uint32_t m_VertexCapacity;
 	uint32_t m_IndexCapacity;
-#if VG_CONFIG_USE_LIBTESS2
 	TESStesselator* m_Tesselator;
 	libtess2Allocator m_libTessAllocator;
-#else
-	uint32_t m_ConcaveScratchCapacity;
-	uint8_t* m_ConcaveScratchBuffer;
-#endif
 	float m_FringeWidth;
 	float m_Scale;
 	float m_TesselationTolerance;
@@ -218,15 +209,11 @@ void destroyStroker(Stroker* stroker)
 	BX_ALIGNED_FREE(allocator, stroker->m_ColorBuffer, 16);
 	BX_ALIGNED_FREE(allocator, stroker->m_IndexBuffer, 16);
 
-#if VG_CONFIG_USE_LIBTESS2
 	if (stroker->m_Tesselator) {
 		tessDeleteTess(stroker->m_Tesselator);
 	}
 
 	BX_ALIGNED_FREE(allocator, stroker->m_libTessAllocator.m_Buffer, 16);
-#else
-	BX_ALIGNED_FREE(allocator, stroker->m_ConcaveScratchBuffer, 16);
-#endif
 
 	BX_FREE(allocator, stroker);
 }
@@ -808,9 +795,8 @@ void strokerConvexFillAA(Stroker* stroker, Mesh* mesh, const float* vertexList, 
 }
 #endif
 
-bool strokerConcaveFill(Stroker* stroker, Mesh* mesh, const float* vertexList, uint32_t numVertices)
+bool strokerConcaveFillBegin(Stroker* stroker)
 {
-#if VG_CONFIG_USE_LIBTESS2
 	// Delete old tesselator
 	if (stroker->m_Tesselator) {
 		tessDeleteTess(stroker->m_Tesselator);
@@ -843,9 +829,17 @@ bool strokerConcaveFill(Stroker* stroker, Mesh* mesh, const float* vertexList, u
 	stroker->m_Tesselator = tessNewTess(nullptr);
 #endif
 
-	tessAddContour(stroker->m_Tesselator, 2, vertexList, sizeof(float) * 2, numVertices);
+	return true;
+}
 
-	if (!tessTesselate(stroker->m_Tesselator, TESS_WINDING_POSITIVE, TESS_POLYGONS, 3, 2, nullptr)) {
+void strokerConcaveFillAddContour(Stroker* stroker, const float* vertexList, uint32_t numVertices)
+{
+	tessAddContour(stroker->m_Tesselator, 2, vertexList, sizeof(float) * 2, numVertices);
+}
+
+bool strokerConcaveFillEnd(Stroker* stroker, Mesh* mesh)
+{
+	if (!tessTesselate(stroker->m_Tesselator, TESS_WINDING_NONZERO, TESS_POLYGONS, 3, 2, nullptr)) {
 		return false;
 	}
 
@@ -856,221 +850,130 @@ bool strokerConcaveFill(Stroker* stroker, Mesh* mesh, const float* vertexList, u
 	mesh->m_NumIndices = (uint32_t)tessGetElementCount(stroker->m_Tesselator) * 3;
 
 	return true;
-#else
-	// http://www.flipcode.com/archives/Efficient_Polygon_Triangulation.shtml
-	if (m_ConcaveScratchCapacity < sizeof(int) * numVertices) {
-		m_ConcaveScratchCapacity = sizeof(int) * numVertices;
-		m_ConcaveScratchBuffer = (uint8_t*)BX_ALIGNED_REALLOC(m_Allocator, m_ConcaveScratchBuffer, m_ConcaveScratchCapacity, 16);
-	}
-
-	int* V = (int*)m_ConcaveScratchBuffer;
-
-	resetGeometry();
-
-	// we want a counter-clockwise polygon in V
-	if (calcPolygonArea(vtx, numVertices) > 0.0f) {
-		for (uint32_t v = 0; v < numVertices; ++v) {
-			V[v] = v;
-		}
-	} else {
-		const uint32_t last = numVertices - 1;
-		for (uint32_t v = 0; v < numVertices; ++v) {
-			V[v] = last - v;
-		}
-	}
-
-	int n = (int)numVertices;
-	int nv = n;
-
-	// remove nv - 2 Vertices, creating 1 triangle every time
-	int count = 2 * nv;   // error detection
-	for (int v = nv - 1; nv > 2;) {
-		// if we loop, it is probably a non-simple polygon
-		if ((count--) <= 0) {
-			return false;
-		}
-
-		// three consecutive vertices in current polygon, <u,v,w>
-		int u = v;
-		if (nv <= u) {
-			u = 0; // previous
-		}
-
-		v = u + 1;
-		if (nv <= v) {
-			v = 0; // new v
-		}
-
-		int w = v + 1;
-		if (nv <= w) {
-			w = 0; // next
-		}
-
-		if (snipTriangle(vtx, numVertices, u, v, w, nv, V)) {
-			// true names of the vertices
-			uint16_t id[3] = {
-				(uint16_t)V[u],
-				(uint16_t)V[v],
-				(uint16_t)V[w]
-			};
-
-			// output Triangle
-			expandIB(3);
-			addIndices(&id[0], 3);
-
-			// remove v from remaining polygon
-			--nv;
-			for (int s = v; s < nv; ++s) {
-				V[s] = V[s + 1];
-			}
-
-			// reset error detection counter
-			count = 2 * nv;
-		}
-	}
-
-	mesh->m_PosBuffer = &vtx[0].x;
-	mesh->m_ColorBuffer = nullptr;
-	mesh->m_IndexBuffer = m_IndexBuffer;
-	mesh->m_NumVertices = numVertices;
-	mesh->m_NumIndices = m_NumIndices;
-
-	return true;
-#endif
 }
 
-// TODO: Currently AA fringes are placed only on the outside of the original path (expanded by 0.5f * fringeWidth).
-// Ideally, the original path should be shrinked by 0.5f * fringeWidth before triangulating it and then expand it
-// by fringeWidth.
-bool strokerConcaveFillAA(Stroker* stroker, Mesh* mesh, const float* vertexList, uint32_t numVertices, uint32_t color)
+bool strokerConcaveFillEndAA(Stroker* stroker, Mesh* mesh, uint32_t color)
 {
-#if VG_CONFIG_USE_LIBTESS2
-	// Delete old tesselator
-	if (stroker->m_Tesselator) {
-		tessDeleteTess(stroker->m_Tesselator);
-	}
+	const Color c0 = colorSetAlpha(color, 0);
 
-#if VG_CONFIG_LIBTESS2_SCRATCH_BUFFER
-	// Initialize the allocator once
-	if (!stroker->m_libTessAllocator.m_Buffer) {
-		stroker->m_libTessAllocator.m_Capacity = VG_CONFIG_LIBTESS2_SCRATCH_BUFFER;
-		stroker->m_libTessAllocator.m_Buffer = (uint8_t*)BX_ALIGNED_ALLOC(stroker->m_Allocator, stroker->m_libTessAllocator.m_Capacity, 16);
-	}
-
-	// Reset the allocator.
-	stroker->m_libTessAllocator.m_Size = 0;
-
-	// Initialize the tesselator
-	TESSalloc allocator;
-	allocator.meshEdgeBucketSize = 16;
-	allocator.meshVertexBucketSize = 16;
-	allocator.meshFaceBucketSize = 16;
-	allocator.dictNodeBucketSize = 16;
-	allocator.regionBucketSize = 16;
-	allocator.extraVertices = 256;
-	allocator.userData = &stroker->m_libTessAllocator;
-	allocator.memalloc = libtess2Alloc;
-	allocator.memfree = libtess2Free;
-	allocator.memrealloc = nullptr;
-	stroker->m_Tesselator = tessNewTess(&allocator);
-#else
-	stroker->m_Tesselator = tessNewTess(nullptr);
-#endif
-
-	tessAddContour(stroker->m_Tesselator, 2, vertexList, sizeof(float) * 2, numVertices);
-
-	if (!tessTesselate(stroker->m_Tesselator, TESS_WINDING_POSITIVE, TESS_POLYGONS, 3, 2, nullptr)) {
-		return false;
-	}
+	uint32_t nextVertexID = 0;
+	uint32_t nextIndexID = 0;
 
 	resetGeometry(stroker);
 
+	// Generate fringes
+	if (!tessTesselate(stroker->m_Tesselator, TESS_WINDING_NONZERO, TESS_BOUNDARY_CONTOURS, 1, 2, nullptr)) {
+		return false;
+	}
+	
+	const float* contourVerts = tessGetVertices(stroker->m_Tesselator);
+	const int numContourVerts = tessGetVertexCount(stroker->m_Tesselator);
+	const TESSindex* contourData = tessGetElements(stroker->m_Tesselator);
+	const int numContours = tessGetElementCount(stroker->m_Tesselator);
+
+	for (int i = 0; i < numContours; ++i) {
+		const TESSindex firstContourVertexID = contourData[i * 2];
+		const TESSindex numContourVertices = contourData[i * 2 + 1];
+
+		// Vertices
+		expandVB(stroker, numContourVertices * 2);
+		{
+			Vec2* vtx = (Vec2*)&contourVerts[firstContourVertexID * 2];
+			const float aa = stroker->m_FringeWidth * 0.5f;
+			Vec2 d01 = vec2Dir(vtx[numContourVertices - 1], vtx[0]);
+
+			Vec2* dstPos = &stroker->m_PosBuffer[nextVertexID];
+			Color* dstColor = &stroker->m_ColorBuffer[nextVertexID];
+			for (uint32_t iSegment = 0; iSegment < numContourVertices; ++iSegment) {
+				const Vec2& p1 = vtx[iSegment];
+				const Vec2& p2 = vtx[iSegment == (uint32_t)(numContourVertices - 1) ? 0 : iSegment + 1];
+
+				const Vec2 d12 = vec2Dir(p1, p2);
+				const Vec2 v = calcExtrusionVector(d01, d12);
+				const Vec2 v_aa = vec2Scale(v, aa);
+
+				const Vec2 pleft = vec2Sub(p1, v_aa);
+				const Vec2 pright = vec2Add(p1, v_aa);
+
+				// Fringe vertices
+				*dstPos++ = pleft;
+				*dstPos++ = pright;
+				*dstColor++ = color;
+				*dstColor++ = c0;
+
+				// Update contour vertex
+				vtx[iSegment] = pleft;
+
+				d01 = d12;
+			}
+
+			stroker->m_NumVertices += numContourVertices * 2;
+		}
+
+		// Indices
+		expandIB(stroker, numContourVertices * 6);
+		{
+			uint16_t* dstIndex = &stroker->m_IndexBuffer[nextIndexID];
+
+			const uint32_t numSegments = numContourVertices - 1;
+			for (uint32_t iSegment = 0; iSegment < numSegments; ++iSegment) {
+				const uint16_t id0 = (uint16_t)(nextVertexID + iSegment * 2 + 0);
+				const uint16_t id1 = (uint16_t)(nextVertexID + iSegment * 2 + 1);
+				const uint16_t id2 = (uint16_t)(nextVertexID + iSegment * 2 + 2);
+				const uint16_t id3 = (uint16_t)(nextVertexID + iSegment * 2 + 3);
+
+				dstIndex[0] = id0;
+				dstIndex[1] = id2;
+				dstIndex[2] = id1;
+				dstIndex[3] = id2;
+				dstIndex[4] = id3;
+				dstIndex[5] = id1;
+				dstIndex += 6;
+			}
+
+			// Last (closing) segment
+			{
+				const uint16_t id0 = (uint16_t)(nextVertexID + numSegments * 2 + 0);
+				const uint16_t id1 = (uint16_t)(nextVertexID + numSegments * 2 + 1);
+				const uint16_t id2 = (uint16_t)(nextVertexID + 0);
+				const uint16_t id3 = (uint16_t)(nextVertexID + 1);
+
+				dstIndex[0] = id0;
+				dstIndex[1] = id2;
+				dstIndex[2] = id1;
+				dstIndex[3] = id2;
+				dstIndex[4] = id3;
+				dstIndex[5] = id1;
+			}
+
+			stroker->m_NumIndices += numContourVertices * 6;
+		}
+
+		tessAddContour(stroker->m_Tesselator, 2, &contourVerts[firstContourVertexID * 2], sizeof(float) * 2, numContourVertices);
+
+		nextIndexID += numContourVertices * 6;
+		nextVertexID += numContourVertices * 2;
+	}
+
+	// Generate interior
+	if (!tessTesselate(stroker->m_Tesselator, TESS_WINDING_NONZERO, TESS_POLYGONS, 3, 2, nullptr)) {
+		return false;
+	}
+
 	const uint32_t numTessVertices = (uint32_t)tessGetVertexCount(stroker->m_Tesselator);
-	expandVB(stroker, numTessVertices + numVertices);
-
-	VG_CHECK(numTessVertices >= numVertices, "libtess2 error: Original vertices are missing from the result");
-
-	// 1. Copy libTess2 vertices to internal buffer and make room for AA fringes (1 extra vertex for each original vertex).
-	// 2. Set the color of all the internal vertices to 'color'
+	expandVB(stroker, numTessVertices);
 	{
-		// Inlined addPosColor() to memset32 all colors.
 		const float* tessVertices = tessGetVertices(stroker->m_Tesselator);
-		bx::memCopy(&stroker->m_PosBuffer[0], tessVertices, sizeof(Vec2) * numTessVertices);
-		vgutil::memset32(&stroker->m_ColorBuffer[0], numTessVertices, &color);
+		bx::memCopy(&stroker->m_PosBuffer[nextVertexID], tessVertices, sizeof(Vec2) * numTessVertices);
+		vgutil::memset32(&stroker->m_ColorBuffer[nextVertexID], numTessVertices, &color);
 		stroker->m_NumVertices += numTessVertices;
 	}
 
-	// Generate fringe vertices from the original vertex list.
+	const uint32_t numTessIndices = tessGetElementCount(stroker->m_Tesselator) * 3;
+	expandIB(stroker, numTessIndices);
 	{
-		const Vec2* vtx = (const Vec2*)vertexList;
-		const float aa = stroker->m_FringeWidth * 0.5f;
-		Vec2 d01 = vec2Dir(vtx[numVertices - 1], vtx[0]);
-
-		Vec2* dstPos = &stroker->m_PosBuffer[numTessVertices];
-		for (uint32_t iSegment = 0; iSegment < numVertices; ++iSegment) {
-			const Vec2& p1 = vtx[iSegment];
-			const Vec2& p2 = vtx[iSegment == numVertices - 1 ? 0 : iSegment + 1];
-
-			const Vec2 d12 = vec2Dir(p1, p2);
-			const Vec2 v = calcExtrusionVector(d01, d12);
-			const Vec2 v_aa = vec2Scale(v, aa);
-
-			*dstPos++ = vec2Add(p1, v_aa);
-
-			d01 = d12;
-		}
-
-		// Copy color with alpha = 0 to all fringe vertices.
-		const Color c0 = colorSetAlpha(color, 0);
-		vgutil::memset32(&stroker->m_ColorBuffer[numTessVertices], numVertices, &c0);
-
-		stroker->m_NumVertices += numVertices;
-	}
-
-	// Generate indices for the fringe quads
-	const uint32_t numTessIndices = (uint32_t)tessGetElementCount(stroker->m_Tesselator) * 3;
-	expandIB(stroker, numTessIndices + numVertices * 6);
-	{
-		const uint16_t* tessIndices = tessGetElements(stroker->m_Tesselator);
-		bx::memCopy(&stroker->m_IndexBuffer[0], tessIndices, sizeof(uint16_t) * numTessIndices);
-
-		uint16_t* dstIndex = &stroker->m_IndexBuffer[numTessIndices];
-
-		const uint16_t* origToFinalMap = tessGetReverseVertexIndices(stroker->m_Tesselator);
-		const uint32_t numSegments = numVertices - 1;
-		for (uint32_t iSegment = 0; iSegment < numSegments; ++iSegment) {
-			VG_CHECK(origToFinalMap[iSegment] != TESS_UNDEF && origToFinalMap[iSegment + 1] != TESS_UNDEF, "libtess2 error: Original vertex not present in final vertex list!");
-
-			const uint16_t id0 = origToFinalMap[iSegment];
-			const uint16_t id1 = origToFinalMap[iSegment + 1];
-			const uint16_t id2 = (uint16_t)(numTessVertices + iSegment);
-			const uint16_t id3 = (uint16_t)(numTessVertices + iSegment + 1);
-
-			dstIndex[0] = id0;
-			dstIndex[1] = id2;
-			dstIndex[2] = id1;
-			dstIndex[3] = id2;
-			dstIndex[4] = id3;
-			dstIndex[5] = id1;
-			dstIndex += 6;
-		}
-
-		// Last (closing) segment
-		{
-			const uint16_t id0 = origToFinalMap[numSegments];
-			const uint16_t id1 = origToFinalMap[0];
-			const uint16_t id2 = (uint16_t)(numTessVertices + numSegments);
-			const uint16_t id3 = (uint16_t)(numTessVertices);
-
-			dstIndex[0] = id0;
-			dstIndex[1] = id2;
-			dstIndex[2] = id1;
-			dstIndex[3] = id2;
-			dstIndex[4] = id3;
-			dstIndex[5] = id1;
-		}
-
-		stroker->m_NumIndices += numTessIndices + numVertices * 6;
+		vgutil::batchTransformDrawIndices(tessGetElements(stroker->m_Tesselator), numTessIndices, &stroker->m_IndexBuffer[nextIndexID], (uint16_t)nextVertexID);
+		stroker->m_NumIndices += numTessIndices;
 	}
 
 	mesh->m_PosBuffer = &stroker->m_PosBuffer[0].x;
@@ -1080,88 +983,6 @@ bool strokerConcaveFillAA(Stroker* stroker, Mesh* mesh, const float* vertexList,
 	mesh->m_NumIndices = stroker->m_NumIndices;
 
 	return true;
-#else
-#error "Not implemented yet"
-	// http://www.flipcode.com/archives/Efficient_Polygon_Triangulation.shtml
-	if (m_ConcaveScratchCapacity < sizeof(int) * numVertices) {
-		m_ConcaveScratchCapacity = sizeof(int) * numVertices;
-		m_ConcaveScratchBuffer = (uint8_t*)BX_ALIGNED_REALLOC(m_Allocator, m_ConcaveScratchBuffer, m_ConcaveScratchCapacity, 16);
-	}
-
-	int* V = (int*)m_ConcaveScratchBuffer;
-
-	resetGeometry();
-
-	// we want a counter-clockwise polygon in V
-	if (calcPolygonArea(vtx, numVertices) > 0.0f) {
-		for (uint32_t v = 0; v < numVertices; ++v) {
-			V[v] = v;
-		}
-	} else {
-		const uint32_t last = numVertices - 1;
-		for (uint32_t v = 0; v < numVertices; ++v) {
-			V[v] = last - v;
-		}
-	}
-
-	int n = (int)numVertices;
-	int nv = n;
-
-	// remove nv - 2 Vertices, creating 1 triangle every time
-	int count = 2 * nv;   // error detection
-	for (int v = nv - 1; nv > 2;) {
-		// if we loop, it is probably a non-simple polygon
-		if ((count--) <= 0) {
-			return false;
-		}
-
-		// three consecutive vertices in current polygon, <u,v,w>
-		int u = v;
-		if (nv <= u) {
-			u = 0; // previous
-		}
-
-		v = u + 1;
-		if (nv <= v) {
-			v = 0; // new v
-		}
-
-		int w = v + 1;
-		if (nv <= w) {
-			w = 0; // next
-		}
-
-		if (snipTriangle(vtx, numVertices, u, v, w, nv, V)) {
-			// true names of the vertices
-			uint16_t id[3] = {
-				(uint16_t)V[u],
-				(uint16_t)V[v],
-				(uint16_t)V[w]
-			};
-
-			// output Triangle
-			expandIB(3);
-			addIndices(&id[0], 3);
-
-			// remove v from remaining polygon
-			--nv;
-			for (int s = v; s < nv; ++s) {
-				V[s] = V[s + 1];
-			}
-
-			// reset error detection counter
-			count = 2 * nv;
-		}
-	}
-
-	mesh->m_PosBuffer = &vtx[0].x;
-	mesh->m_ColorBuffer = nullptr;
-	mesh->m_IndexBuffer = m_IndexBuffer;
-	mesh->m_NumVertices = numVertices;
-	mesh->m_NumIndices = m_NumIndices;
-
-	return true;
-#endif
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -2543,60 +2364,4 @@ static void addIndices(Stroker* stroker, const uint16_t* src)
 
 	stroker->m_NumIndices += N;
 }
-
-#if !VG_CONFIG_USE_LIBTESS2
-float calcPolygonArea(const Vec2* points, uint32_t numPoints)
-{
-	float A = 0.0f;
-	for (uint32_t p = numPoints - 1, q = 0; q < numPoints; p = q++) {
-		A += points[p].x * points[q].y - points[q].x * points[p].y;
-	}
-
-	return A * 0.5f;
-}
-bool snipTriangle(const Vec2* points, uint32_t numPoints, int u, int v, int w, int n, const int* V)
-{
-	BX_UNUSED(numPoints);
-
-	const Vec2& A = points[V[u]];
-	const Vec2& B = points[V[v]];
-	const Vec2& C = points[V[w]];
-
-	const Vec2 AB = vec2Sub(B, A);
-	const Vec2 CA = vec2Sub(A, C);
-	const float AB_cross_AC = CA.x * AB.y - AB.x * CA.y;
-	if (AB_cross_AC < VG_EPSILON) {
-		return false;
-	}
-
-	const Vec2 BC = vec2Sub(C, B);
-	for (int p = 0; p < n; p++) {
-		if ((p == u) || (p == v) || (p == w)) {
-			continue;
-		}
-
-		const Vec2& P = points[V[p]];
-
-		// Inlined InsideTriangle from original code.
-		{
-			const Vec2 bp = vec2Sub(P, B);
-			const float aCROSSbp = BC.x * bp.y - BC.y * bp.x;
-			if (aCROSSbp >= 0.0f) {
-				const Vec2 ap = vec2Sub(P, A);
-				const float cCROSSap = AB.x * ap.y - AB.y * ap.x;
-				if (cCROSSap >= 0.0f) {
-					const Vec2 cp = vec2Sub(P, C);
-					const float bCROSScp = CA.x * cp.y - CA.y * cp.x;
-					if (bCROSScp >= 0.0f) {
-						// Point inside triangle
-						return false;
-					}
-				}
-			}
-		}
-	}
-
-	return true;
-}
-#endif
 }
