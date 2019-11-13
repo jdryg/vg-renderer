@@ -208,9 +208,6 @@ const TESSreal* tessGetVertices( TESStesselator *tess );
 // New vertices generated at the intersections of segments are assigned value TESS_UNDEF.
 const TESSindex* tessGetVertexIndices( TESStesselator *tess );
 
-// JD: 
-const TESSindex* tessGetReverseVertexIndices(TESStesselator *tess);
-
 // tessGetElementCount() - Returns number of elements in the the tesselated output.
 int tessGetElementCount( TESStesselator *tess );
 

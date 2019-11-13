@@ -670,18 +670,6 @@ void OutputPolymesh( TESStesselator *tess, TESSmesh *mesh, int elementType, int 
 		return;
 	}
 
-	// JD: 
-	tess->reverseVertexIndices = (TESSindex*)tess->alloc.memalloc(tess->alloc.userData, sizeof(TESSindex) * tess->vertexCount);
-	if (!tess->reverseVertexIndices)
-	{
-		tess->outOfMemory = 1;
-		return;
-	}
-
-	for (i = 0; i < tess->vertexCount; ++i) {
-		tess->reverseVertexIndices[i] = TESS_UNDEF;
-	}
-	
 	// Output vertices.
 	for ( v = mesh->vHead.next; v != &mesh->vHead; v = v->next )
 	{
@@ -695,7 +683,6 @@ void OutputPolymesh( TESStesselator *tess, TESSmesh *mesh, int elementType, int 
 				vert[2] = v->coords[2];
 			// Store vertex index.
 			tess->vertexIndices[v->n] = v->idx;
-			tess->reverseVertexIndices[v->idx] = v->n;
 		}
 	}
 
@@ -994,12 +981,6 @@ const TESSreal* tessGetVertices( TESStesselator *tess )
 const TESSindex* tessGetVertexIndices( TESStesselator *tess )
 {
 	return tess->vertexIndices;
-}
-
-// JD: 
-const TESSindex* tessGetReverseVertexIndices(TESStesselator *tess)
-{
-	return tess->reverseVertexIndices;
 }
 
 int tessGetElementCount( TESStesselator *tess )

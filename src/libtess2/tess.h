@@ -74,11 +74,6 @@ struct TESStesselator {
 	
 	TESSreal *vertices;
 	TESSindex *vertexIndices;
-	// JD: vertexIndices[i] = j maps the i-th output vertex to the j-th original vertex, which is useful 
-	// for (e.g.) copying extra vertex attributes to the final mesh.
-	// This is the reverse mapping (i-th original vertex -> j-th output vertex), which is useful for generating
-	// extra triangles (i.e. AA fringes aroung concave polygons).
-	TESSindex *reverseVertexIndices;
 	int vertexCount;
 	TESSindex *elements;
 	int elementCount;
