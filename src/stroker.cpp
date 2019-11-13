@@ -862,7 +862,8 @@ bool strokerConcaveFillEndAA(Stroker* stroker, Mesh* mesh, uint32_t color)
 	resetGeometry(stroker);
 
 	// Generate fringes
-	if (!tessTesselate(stroker->m_Tesselator, TESS_WINDING_NONZERO, TESS_BOUNDARY_CONTOURS, 1, 2, nullptr)) {
+	const float normal[3] = { 0.0f, 0.0f, 1.0f };
+	if (!tessTesselate(stroker->m_Tesselator, TESS_WINDING_NONZERO, TESS_BOUNDARY_CONTOURS, 1, 2, &normal[0])) {
 		return false;
 	}
 	
@@ -879,8 +880,10 @@ bool strokerConcaveFillEndAA(Stroker* stroker, Mesh* mesh, uint32_t color)
 		expandVB(stroker, numContourVertices * 2);
 		{
 			Vec2* vtx = (Vec2*)&contourVerts[firstContourVertexID * 2];
-			const float aa = stroker->m_FringeWidth * 0.5f;
 			Vec2 d01 = vec2Dir(vtx[numContourVertices - 1], vtx[0]);
+			const float crossSign = bx::sign(vec2Cross(d01, vec2Dir(vtx[0], vtx[1])));
+			const float aa = stroker->m_FringeWidth * 0.5f * crossSign;
+			const uint32_t inner = crossSign < 0 ? 0 : 1;
 
 			Vec2* dstPos = &stroker->m_PosBuffer[nextVertexID];
 			Color* dstColor = &stroker->m_ColorBuffer[nextVertexID];
@@ -892,17 +895,19 @@ bool strokerConcaveFillEndAA(Stroker* stroker, Mesh* mesh, uint32_t color)
 				const Vec2 v = calcExtrusionVector(d01, d12);
 				const Vec2 v_aa = vec2Scale(v, aa);
 
-				const Vec2 pleft = vec2Sub(p1, v_aa);
-				const Vec2 pright = vec2Add(p1, v_aa);
+				const Vec2 p[2] = {
+					vec2Sub(p1, v_aa),
+					vec2Add(p1, v_aa)
+				};
 
 				// Fringe vertices
-				*dstPos++ = pleft;
-				*dstPos++ = pright;
+				*dstPos++ = p[inner];
+				*dstPos++ = p[1 - inner];
 				*dstColor++ = color;
 				*dstColor++ = c0;
 
 				// Update contour vertex
-				vtx[iSegment] = pleft;
+				vtx[iSegment] = p[inner];
 
 				d01 = d12;
 			}
@@ -956,7 +961,7 @@ bool strokerConcaveFillEndAA(Stroker* stroker, Mesh* mesh, uint32_t color)
 	}
 
 	// Generate interior
-	if (!tessTesselate(stroker->m_Tesselator, TESS_WINDING_NONZERO, TESS_POLYGONS, 3, 2, nullptr)) {
+	if (!tessTesselate(stroker->m_Tesselator, TESS_WINDING_NONZERO, TESS_POLYGONS, 3, 2, &normal[0])) {
 		return false;
 	}
 
