@@ -63,7 +63,7 @@ static int CreateBucket( struct BucketAlloc* ba )
 
 	// Allocate memory for the bucket
 	size = sizeof(Bucket) + ba->itemSize * ba->bucketSize;
-	bucket = (Bucket*)ba->alloc->memalloc( ba->alloc->userData, size );
+	bucket = (Bucket*)ba->alloc->memalloc( ba->alloc->userData, (unsigned int)size );
 	if ( !bucket )
 		return 0;
 	bucket->next = 0;
