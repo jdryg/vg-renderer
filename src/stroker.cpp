@@ -42,9 +42,10 @@ inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
 	// v is the vector from the path point to the outline point, assuming a stroke width of 1.0.
 	// Equation obtained by solving the intersection of the 2 line segments. d01 and d12 are 
 	// assumed to be normalized.
+	static const float kMaxExtrusionScale = 1.0f / 100.0f;
 	Vec2 v = vec2PerpCCW(d01);
 	const float cross = vec2Cross(d12, d01);
-	if (bx::abs(cross) > VG_EPSILON) {
+	if (bx::abs(cross) > kMaxExtrusionScale) {
 		v = vec2Scale(vec2Sub(d01, d12), (1.0f / cross));
 	}
 
