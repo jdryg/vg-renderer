@@ -838,9 +838,10 @@ void strokerConcaveFillAddContour(Stroker* stroker, const float* vertexList, uin
 	tessAddContour(stroker->m_Tesselator, 2, vertexList, sizeof(float) * 2, numVertices);
 }
 
-bool strokerConcaveFillEnd(Stroker* stroker, Mesh* mesh)
+bool strokerConcaveFillEnd(Stroker* stroker, Mesh* mesh, FillRule::Enum fillRule)
 {
-	if (!tessTesselate(stroker->m_Tesselator, TESS_WINDING_NONZERO, TESS_POLYGONS, 3, 2, nullptr)) {
+	const int windingRule = fillRule == vg::FillRule::NonZero ? TESS_WINDING_NONZERO : TESS_WINDING_ODD;
+	if (!tessTesselate(stroker->m_Tesselator, windingRule, TESS_POLYGONS, 3, 2, nullptr)) {
 		return false;
 	}
 
@@ -853,8 +854,9 @@ bool strokerConcaveFillEnd(Stroker* stroker, Mesh* mesh)
 	return true;
 }
 
-bool strokerConcaveFillEndAA(Stroker* stroker, Mesh* mesh, uint32_t color)
+bool strokerConcaveFillEndAA(Stroker* stroker, Mesh* mesh, uint32_t color, FillRule::Enum fillRule)
 {
+	const int windingRule = fillRule == vg::FillRule::NonZero ? TESS_WINDING_NONZERO : TESS_WINDING_ODD;
 	const Color c0 = colorSetAlpha(color, 0);
 
 	uint32_t nextVertexID = 0;
@@ -864,7 +866,7 @@ bool strokerConcaveFillEndAA(Stroker* stroker, Mesh* mesh, uint32_t color)
 
 	// Generate fringes
 	const float normal[3] = { 0.0f, 0.0f, 1.0f };
-	if (!tessTesselate(stroker->m_Tesselator, TESS_WINDING_NONZERO, TESS_BOUNDARY_CONTOURS, 1, 2, &normal[0])) {
+	if (!tessTesselate(stroker->m_Tesselator, windingRule, TESS_BOUNDARY_CONTOURS, 1, 2, &normal[0])) {
 		return false;
 	}
 	
@@ -962,7 +964,7 @@ bool strokerConcaveFillEndAA(Stroker* stroker, Mesh* mesh, uint32_t color)
 	}
 
 	// Generate interior
-	if (!tessTesselate(stroker->m_Tesselator, TESS_WINDING_NONZERO, TESS_POLYGONS, 3, 2, &normal[0])) {
+	if (!tessTesselate(stroker->m_Tesselator, windingRule, TESS_POLYGONS, 3, 2, &normal[0])) {
 		return false;
 	}
 

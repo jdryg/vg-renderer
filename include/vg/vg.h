@@ -214,21 +214,35 @@ struct PathType
 	};
 };
 
-#define VG_FILL_FLAGS(type, aa) (((aa) << 4) | (type))
+struct FillRule
+{
+	enum Enum : uint32_t
+	{
+		NonZero = 0,
+		EvenOdd = 1,
+	};
+};
+
+#define VG_FILL_FLAGS(type, rule, aa) ((((rule) << 4) | (aa) << 2) | (type))
 #define VG_FILL_FLAGS_PATH_TYPE(flags) (PathType::Enum)((flags) & 0x01)
-#define VG_FILL_FLAGS_AA(flags) (((flags) & 0x10) != 0)
+#define VG_FILL_FLAGS_AA(flags) (((flags) & 0x04) != 0)
+#define VG_FILL_FLAGS_RULE(flags) (FillRule::Enum)(((flags) & 0x10) >> 4)
 
 struct FillFlags
 {
 	enum Enum : uint32_t
 	{
-		// w/o AA
-		Convex  = VG_FILL_FLAGS(PathType::Convex, 0),
-		Concave = VG_FILL_FLAGS(PathType::Concave, 0),
+		Convex  = VG_FILL_FLAGS(PathType::Convex, FillRule::NonZero, 0),
+		ConvexAA = VG_FILL_FLAGS(PathType::Convex, FillRule::NonZero, 1),
 
-		// w/ AA
-		ConvexAA  = VG_FILL_FLAGS(PathType::Convex, 1),
-		ConcaveAA = VG_FILL_FLAGS(PathType::Concave, 1),
+		ConcaveNonZero = VG_FILL_FLAGS(PathType::Concave, FillRule::NonZero, 0),
+		ConcaveEvenOdd = VG_FILL_FLAGS(PathType::Concave, FillRule::EvenOdd, 0),
+		ConcaveNonZeroAA = VG_FILL_FLAGS(PathType::Concave, FillRule::NonZero, 1),
+		ConcaveEvenOddAA = VG_FILL_FLAGS(PathType::Concave, FillRule::EvenOdd, 1),
+
+		// These are kept for backwards compatibility
+		Concave = ConcaveNonZero,
+		ConcaveAA = ConcaveNonZeroAA,
 	};
 };
 

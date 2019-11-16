@@ -77,12 +77,12 @@ void strokerConcaveFillAddContour(Stroker* stroker, const float* vertexList, uin
 * Generates positions and indices.
 * All vertices have the same color.
 */
-bool strokerConcaveFillEnd(Stroker* stroker, Mesh* mesh);
+bool strokerConcaveFillEnd(Stroker* stroker, Mesh* mesh, FillRule::Enum fillRule);
 
 /*
 * Generates positions, colors and indices
 */
-bool strokerConcaveFillEndAA(Stroker* stroker, Mesh* mesh, uint32_t color);
+bool strokerConcaveFillEndAA(Stroker* stroker, Mesh* mesh, uint32_t color, FillRule::Enum fillRule);
 }
 
 #endif

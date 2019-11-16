@@ -2844,6 +2844,7 @@ static void ctxFillPathColor(Context* ctx, Color color, uint32_t flags)
 	const bool aa = recordClipCommands ? false : VG_FILL_FLAGS_AA(flags);
 #endif
 	const PathType::Enum pathType = VG_FILL_FLAGS_PATH_TYPE(flags);
+	const FillRule::Enum fillRule = VG_FILL_FLAGS_RULE(flags);
 
 	const Path* path = ctx->m_Path;
 	const uint32_t numSubPaths = pathGetNumSubPaths(path);
@@ -2909,11 +2910,11 @@ static void ctxFillPathColor(Context* ctx, Color color, uint32_t flags)
 
 		bool decomposed = false;
 		if (aa) {
-			decomposed = strokerConcaveFillEndAA(stroker, &mesh, col);
+			decomposed = strokerConcaveFillEndAA(stroker, &mesh, col, fillRule);
 			colors = mesh.m_ColorBuffer;
 			numColors = mesh.m_NumVertices;
 		} else {
-			decomposed = strokerConcaveFillEnd(stroker, &mesh);
+			decomposed = strokerConcaveFillEnd(stroker, &mesh, fillRule);
 		}
 
 		VG_WARN(decomposed, "Failed to triangulate concave polygon");
@@ -2954,6 +2955,7 @@ static void ctxFillPathGradient(Context* ctx, GradientHandle gradientHandle, uin
 	const float* pathVertices = transformPath(ctx);
 
 	const PathType::Enum pathType = VG_FILL_FLAGS_PATH_TYPE(flags);
+	const FillRule::Enum fillRule = VG_FILL_FLAGS_RULE(flags);
 #if VG_CONFIG_FORCE_AA_OFF
 	const bool aa = false;
 #else
@@ -3022,11 +3024,11 @@ static void ctxFillPathGradient(Context* ctx, GradientHandle gradientHandle, uin
 
 		bool decomposed = false;
 		if (aa) {
-			decomposed = strokerConcaveFillEndAA(stroker, &mesh, black);
+			decomposed = strokerConcaveFillEndAA(stroker, &mesh, black, fillRule);
 			colors = mesh.m_ColorBuffer;
 			numColors = mesh.m_NumVertices;
 		} else {
-			decomposed = strokerConcaveFillEnd(stroker, &mesh);
+			decomposed = strokerConcaveFillEnd(stroker, &mesh, fillRule);
 		}
 
 		VG_WARN(decomposed, "Failed to triangulate concave polygon");
@@ -3068,6 +3070,7 @@ static void ctxFillPathImagePattern(Context* ctx, ImagePatternHandle imgPatternH
 	}
 
 	const PathType::Enum pathType = VG_FILL_FLAGS_PATH_TYPE(flags);
+	const FillRule::Enum fillRule = VG_FILL_FLAGS_RULE(flags);
 #if VG_CONFIG_FORCE_AA_OFF
 	const bool aa = false;
 #else
@@ -3136,11 +3139,11 @@ static void ctxFillPathImagePattern(Context* ctx, ImagePatternHandle imgPatternH
 
 		bool decomposed = false;
 		if (aa) {
-			decomposed = strokerConcaveFillEndAA(stroker, &mesh, col);
+			decomposed = strokerConcaveFillEndAA(stroker, &mesh, col, fillRule);
 			colors = mesh.m_ColorBuffer;
 			numColors = mesh.m_NumVertices;
 		} else {
-			decomposed = strokerConcaveFillEnd(stroker, &mesh);
+			decomposed = strokerConcaveFillEnd(stroker, &mesh, fillRule);
 		}
 
 		VG_WARN(decomposed, "Failed to triangulate concave polygon");
