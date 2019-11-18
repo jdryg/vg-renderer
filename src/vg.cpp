@@ -322,7 +322,7 @@ struct ContextVTable
 	void(*transformScale)(Context* ctx, float x, float y);
 	void(*transformTranslate)(Context* ctx, float x, float y);
 	void(*transformRotate)(Context* ctx, float ang_rad);
-	void(*transformMult)(Context* ctx, const float* mtx, bool pre);
+	void(*transformMult)(Context* ctx, const float* mtx, TransformOrder::Enum order);
 	void(*setViewBox)(Context* ctx, float x, float y, float w, float h);
 	void(*text)(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 	void(*textBox)(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, uint32_t textboxFlags);
@@ -521,7 +521,7 @@ static void clTransformIdentity(Context* ctx, CommandList* cl);
 static void clTransformScale(Context* ctx, CommandList* cl, float x, float y);
 static void clTransformTranslate(Context* ctx, CommandList* cl, float x, float y);
 static void clTransformRotate(Context* ctx, CommandList* cl, float ang_rad);
-static void clTransformMult(Context* ctx, CommandList* cl, const float* mtx, bool pre);
+static void clTransformMult(Context* ctx, CommandList* cl, const float* mtx, TransformOrder::Enum order);
 static void clSetViewBox(Context* ctx, CommandList* cl, float x, float y, float w, float h);
 static void clText(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void clTextBox(Context* ctx, CommandList* cl, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
@@ -578,7 +578,7 @@ static void ctxTransformIdentity(Context* ctx);
 static void ctxTransformScale(Context* ctx, float x, float y);
 static void ctxTransformTranslate(Context* ctx, float x, float y);
 static void ctxTransformRotate(Context* ctx, float ang_rad);
-static void ctxTransformMult(Context* ctx, const float* mtx, bool pre);
+static void ctxTransformMult(Context* ctx, const float* mtx, TransformOrder::Enum order);
 static void ctxSetViewBox(Context* ctx, float x, float y, float w, float h);
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
@@ -623,7 +623,7 @@ static void aclTransformIdentity(Context* ctx);
 static void aclTransformScale(Context* ctx, float x, float y);
 static void aclTransformTranslate(Context* ctx, float x, float y);
 static void aclTransformRotate(Context* ctx, float ang_rad);
-static void aclTransformMult(Context* ctx, const float* mtx, bool pre);
+static void aclTransformMult(Context* ctx, const float* mtx, TransformOrder::Enum order);
 static void aclSetViewBox(Context* ctx, float x, float y, float w, float h);
 static void aclIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 static void aclText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
@@ -1674,12 +1674,12 @@ void transformRotate(Context* ctx, float ang_rad)
 #endif
 }
 
-void transformMult(Context* ctx, const float* mtx, bool pre)
+void transformMult(Context* ctx, const float* mtx, TransformOrder::Enum order)
 {
 #if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
-	ctx->m_VTable->transformMult(ctx, mtx, pre);
+	ctx->m_VTable->transformMult(ctx, mtx, order);
 #else
-	ctxTransformMult(ctx, mtx, pre);
+	ctxTransformMult(ctx, mtx, order);
 #endif
 }
 
@@ -2687,12 +2687,12 @@ void clTransformRotate(Context* ctx, CommandListHandle handle, float ang_rad)
 	clTransformRotate(ctx, cl, ang_rad);
 }
 
-void clTransformMult(Context* ctx, CommandListHandle handle, const float* mtx, bool pre)
+void clTransformMult(Context* ctx, CommandListHandle handle, const float* mtx, TransformOrder::Enum order)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
 	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
-	clTransformMult(ctx, cl, mtx, pre);
+	clTransformMult(ctx, cl, mtx, order);
 }
 
 void clSetViewBox(Context* ctx, CommandListHandle handle, float x, float y, float w, float h)
@@ -3850,15 +3850,16 @@ static void ctxTransformRotate(Context* ctx, float ang_rad)
 	updateState(state);
 }
 
-static void ctxTransformMult(Context* ctx, const float* mtx, bool pre)
+static void ctxTransformMult(Context* ctx, const float* mtx, TransformOrder::Enum order)
 {
 	State* state = getState(ctx);
 	const float* stateTransform = state->m_TransformMtx;
 
 	float res[6];
-	if (pre) {
+	if (order == TransformOrder::Post) {
 		vgutil::multiplyMatrix3(stateTransform, mtx, res);
 	} else {
+		VG_CHECK(order == TransformOrder::Pre, "Unknown TransformOrder::Enum");
 		vgutil::multiplyMatrix3(mtx, stateTransform, res);
 	}
 
@@ -4355,8 +4356,8 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 		case CommandType::TransformMult: {
 			const float* mtx = (float*)cmd;
 			cmd += sizeof(float) * 6;
-			const bool pre = CMD_READ(cmd, bool);
-			ctxTransformMult(ctx, mtx, pre);
+			const TransformOrder::Enum order = CMD_READ(cmd, TransformOrder::Enum);
+			ctxTransformMult(ctx, mtx, order);
 		} break;
 		case CommandType::SetViewBox: {
 			const float* viewBox = (float*)cmd;
@@ -4622,10 +4623,10 @@ static void aclTransformRotate(Context* ctx, float ang_rad)
 	clTransformRotate(ctx, ctx->m_ActiveCommandList, ang_rad);
 }
 
-static void aclTransformMult(Context* ctx, const float* mtx, bool pre)
+static void aclTransformMult(Context* ctx, const float* mtx, TransformOrder::Enum order)
 {
 	VG_CHECK(ctx->m_ActiveCommandList, "Invalid Context state");
-	clTransformMult(ctx, ctx->m_ActiveCommandList, mtx, pre);
+	clTransformMult(ctx, ctx->m_ActiveCommandList, mtx, order);
 }
 
 static void aclSetViewBox(Context* ctx, float x, float y, float w, float h)
@@ -5933,8 +5934,8 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 		case CommandType::TransformMult: {
 			const float* mtx = (float*)cmd;
 			cmd += sizeof(float) * 6;
-			const bool pre = CMD_READ(cmd, bool);
-			ctxTransformMult(ctx, mtx, pre);
+			const TransformOrder::Enum order = CMD_READ(cmd, TransformOrder::Enum);
+			ctxTransformMult(ctx, mtx, order);
 		} break;
 		case CommandType::SetViewBox: {
 			const float* viewBox = (float*)cmd;
@@ -6454,12 +6455,12 @@ static void clTransformRotate(Context* ctx, CommandList* cl, float ang_rad)
 	CMD_WRITE(ptr, float, ang_rad);
 }
 
-static void clTransformMult(Context* ctx, CommandList* cl, const float* mtx, bool pre)
+static void clTransformMult(Context* ctx, CommandList* cl, const float* mtx, TransformOrder::Enum order)
 {
-	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::TransformMult, sizeof(float) * 6 + sizeof(bool));
+	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::TransformMult, sizeof(float) * 6 + sizeof(TransformOrder::Enum));
 	bx::memCopy(ptr, mtx, sizeof(float) * 6);
 	ptr += sizeof(float) * 6;
-	CMD_WRITE(ptr, bool, pre);
+	CMD_WRITE(ptr, TransformOrder::Enum, order);
 }
 
 static void clSetViewBox(Context* ctx, CommandList* cl, float x, float y, float w, float h)

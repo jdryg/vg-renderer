@@ -319,9 +319,9 @@ inline void clTransformRotate(CommandListRef& ref, float ang_rad)
 	clTransformRotate(ref.m_Context, ref.m_Handle, ang_rad);
 }
 
-inline void clTransformMult(CommandListRef& ref, const float* mtx, bool pre)
+inline void clTransformMult(CommandListRef& ref, const float* mtx, TransformOrder::Enum order)
 {
-	clTransformMult(ref.m_Context, ref.m_Handle, mtx, pre);
+	clTransformMult(ref.m_Context, ref.m_Handle, mtx, order);
 }
 
 inline void clSetViewBox(CommandListRef& ref, float x, float y, float w, float h)

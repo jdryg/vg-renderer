@@ -288,6 +288,15 @@ struct ClipRule
 	};
 };
 
+struct TransformOrder
+{
+	enum Enum : uint32_t
+	{
+		Pre = 0,
+		Post = 1,
+	};
+};
+
 #if VG_CONFIG_UV_INT16
 typedef int16_t uv_t;
 #else
@@ -418,7 +427,7 @@ void transformIdentity(Context* ctx);
 void transformScale(Context* ctx, float x, float y);
 void transformTranslate(Context* ctx, float x, float y);
 void transformRotate(Context* ctx, float ang_rad);
-void transformMult(Context* ctx, const float* mtx, bool pre);
+void transformMult(Context* ctx, const float* mtx, TransformOrder::Enum order);
 void setViewBox(Context* ctx, float x, float y, float w, float h);
 
 void getTransform(Context* ctx, float* mtx);
@@ -503,7 +512,7 @@ void clTransformIdentity(Context* ctx, CommandListHandle handle);
 void clTransformScale(Context* ctx, CommandListHandle handle, float x, float y);
 void clTransformTranslate(Context* ctx, CommandListHandle handle, float x, float y);
 void clTransformRotate(Context* ctx, CommandListHandle handle, float ang_rad);
-void clTransformMult(Context* ctx, CommandListHandle handle, const float* mtx, bool pre);
+void clTransformMult(Context* ctx, CommandListHandle handle, const float* mtx, TransformOrder::Enum order);
 void clSetViewBox(Context* ctx, CommandListHandle handle, float x, float y, float w, float h);
 
 void clText(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, const char* str, const char* end);
@@ -569,7 +578,7 @@ void clTransformIdentity(CommandListRef& ref);
 void clTransformScale(CommandListRef& ref, float x, float y);
 void clTransformTranslate(CommandListRef& ref, float x, float y);
 void clTransformRotate(CommandListRef& ref, float ang_rad);
-void clTransformMult(CommandListRef& ref, const float* mtx, bool pre);
+void clTransformMult(CommandListRef& ref, const float* mtx, TransformOrder::Enum order);
 void clText(CommandListRef& ref, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 void clTextBox(CommandListRef& ref, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
 void clSubmitCommandList(CommandListRef& ref, CommandListHandle child);
