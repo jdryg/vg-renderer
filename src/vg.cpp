@@ -356,6 +356,7 @@ struct Context
 	GPUVertexBuffer* m_GPUVertexBuffers;
 	uint32_t m_NumVertexBuffers;
 	uint32_t m_VertexBufferCapacity;
+	uint32_t m_FirstVertexBufferID;
 
 	IndexBuffer* m_IndexBuffers;
 	GPUIndexBuffer* m_GPUIndexBuffers;
@@ -746,7 +747,7 @@ inline bool isLocal(ImagePatternHandle handle) { return isLocal(handle.flags); }
 //////////////////////////////////////////////////////////////////////////
 // Public interface
 //
-Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const ContextConfig* userCfg)
+Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 {
 	static const ContextConfig defaultConfig = {
 		64,                          // m_MaxGradients
@@ -795,7 +796,7 @@ Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const Context
 
 	bx::memCopy(&ctx->m_Config, cfg, sizeof(ContextConfig));
 	ctx->m_Allocator = allocator;
-	ctx->m_ViewID = viewID;
+	ctx->m_ViewID = 0;
 	ctx->m_DevicePixelRatio = 1.0f;
 	ctx->m_TesselationTolerance = 0.25f;
 	ctx->m_FringeWidth = 1.0f;
@@ -1058,8 +1059,9 @@ void destroyContext(Context* ctx)
 	BX_FREE(allocator, ctx);
 }
 
-void beginFrame(Context* ctx, uint16_t canvasWidth, uint16_t canvasHeight, float devicePixelRatio)
+void begin(Context* ctx, uint16_t viewID, uint16_t canvasWidth, uint16_t canvasHeight, float devicePixelRatio)
 {
+	ctx->m_ViewID = viewID;
 	ctx->m_CanvasWidth = canvasWidth;
 	ctx->m_CanvasHeight = canvasHeight;
 	ctx->m_DevicePixelRatio = devicePixelRatio;
@@ -1080,7 +1082,7 @@ void beginFrame(Context* ctx, uint16_t canvasWidth, uint16_t canvasHeight, float
 	resetScissor(ctx);
 	transformIdentity(ctx);
 
-	ctx->m_NumVertexBuffers = 0;
+	ctx->m_FirstVertexBufferID = ctx->m_NumVertexBuffers;
 	allocVertexBuffer(ctx);
 
 	ctx->m_ActiveIndexBufferID = allocIndexBuffer(ctx);
@@ -1099,7 +1101,7 @@ void beginFrame(Context* ctx, uint16_t canvasWidth, uint16_t canvasHeight, float
 	ctx->m_NextImagePatternID = 0;
 }
 
-void endFrame(Context* ctx)
+void end(Context* ctx)
 {
 	VG_CHECK(ctx->m_StateStackTop == 0, "pushState()/popState() mismatch");
 	VG_CHECK(ctx->m_ActiveCommandList == nullptr, "endCommandList() hasn't been called");
@@ -1107,7 +1109,7 @@ void endFrame(Context* ctx)
 	const uint32_t numDrawCommands = ctx->m_NumDrawCommands;
 	if (numDrawCommands == 0) {
 		// Release the vertex buffer allocated in beginFrame()
-		VertexBuffer* vb = &ctx->m_VertexBuffers[0];
+		VertexBuffer* vb = &ctx->m_VertexBuffers[ctx->m_FirstVertexBufferID];
 		releaseVertexBufferData_Vec2(ctx, vb->m_Pos);
 		releaseVertexBufferData_Uint32(ctx, vb->m_Color);
 
@@ -1124,7 +1126,7 @@ void endFrame(Context* ctx)
 
 	// Update bgfx vertex buffers...
 	const uint32_t numVertexBuffers = ctx->m_NumVertexBuffers;
-	for (uint32_t iVB = 0; iVB < numVertexBuffers; ++iVB) {
+	for (uint32_t iVB = ctx->m_FirstVertexBufferID; iVB < numVertexBuffers; ++iVB) {
 		VertexBuffer* vb = &ctx->m_VertexBuffers[iVB];
 		GPUVertexBuffer* gpuvb = &ctx->m_GPUVertexBuffers[iVB];
 		
@@ -1269,7 +1271,7 @@ void endFrame(Context* ctx)
 			bgfx::setState(0
 				| BGFX_STATE_WRITE_A
 				| BGFX_STATE_WRITE_RGB
-				| BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
+				| BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA, BGFX_STATE_BLEND_ONE, BGFX_STATE_BLEND_INV_SRC_ALPHA));
 			bgfx::setStencil(stencilState);
 
 			bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::Textured], cmdDepth, false);
@@ -1286,7 +1288,7 @@ void endFrame(Context* ctx)
 			bgfx::setState(0
 				| BGFX_STATE_WRITE_A
 				| BGFX_STATE_WRITE_RGB
-				| BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
+				| BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA, BGFX_STATE_BLEND_ONE, BGFX_STATE_BLEND_INV_SRC_ALPHA));
 			bgfx::setStencil(stencilState);
 
 			bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::ColorGradient], cmdDepth, false);
@@ -1304,7 +1306,7 @@ void endFrame(Context* ctx)
 			bgfx::setState(0
 				| BGFX_STATE_WRITE_A
 				| BGFX_STATE_WRITE_RGB
-				| BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
+				| BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA, BGFX_STATE_BLEND_ONE, BGFX_STATE_BLEND_INV_SRC_ALPHA));
 			bgfx::setStencil(stencilState);
 
 			bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::ImagePattern], cmdDepth, false);
@@ -1312,9 +1314,12 @@ void endFrame(Context* ctx)
 			VG_CHECK(false, "Unknown draw command type");
 		}
 	}
+}
 
-	// nvgEndFrame
-	// TODO: Move to a separate function?
+void frame(Context* ctx)
+{
+	ctx->m_NumVertexBuffers = 0;
+
 	if (ctx->m_FontImageID != 0) {
 		ImageHandle fontImage = ctx->m_FontImages[ctx->m_FontImageID];
 

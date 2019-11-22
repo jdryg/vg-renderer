@@ -383,11 +383,13 @@ struct FontFlags
 struct Context;
 
 // Context
-Context* createContext(uint16_t viewID, bx::AllocatorI* allocator, const ContextConfig* cfg = nullptr);
+Context* createContext(bx::AllocatorI* allocator, const ContextConfig* cfg = nullptr);
 void destroyContext(Context* ctx);
 
-void beginFrame(Context* ctx, uint16_t canvasWidth, uint16_t canvasHeight, float devicePixelRatio);
-void endFrame(Context* ctx);
+void begin(Context* ctx, uint16_t viewID, uint16_t canvasWidth, uint16_t canvasHeight, float devicePixelRatio);
+void end(Context* ctx);
+void frame(Context* ctx);
+
 void beginPath(Context* ctx);
 void moveTo(Context* ctx, float x, float y);
 void lineTo(Context* ctx, float x, float y);
