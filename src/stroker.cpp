@@ -871,7 +871,6 @@ bool strokerConcaveFillEndAA(Stroker* stroker, Mesh* mesh, uint32_t color, FillR
 	}
 	
 	const float* contourVerts = tessGetVertices(stroker->m_Tesselator);
-	const int numContourVerts = tessGetVertexCount(stroker->m_Tesselator);
 	const TESSindex* contourData = tessGetElements(stroker->m_Tesselator);
 	const int numContours = tessGetElementCount(stroker->m_Tesselator);
 
