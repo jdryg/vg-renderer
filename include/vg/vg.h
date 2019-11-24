@@ -328,6 +328,12 @@ struct ContextConfig
 	uint32_t m_MaxCommandListDepth; // default: 16
 };
 
+struct Stats
+{
+	uint32_t m_CmdListMemoryTotal;
+	uint32_t m_CmdListMemoryUsed;
+};
+
 struct TextConfig
 {
 	FontHandle m_FontHandle;
@@ -389,6 +395,7 @@ void destroyContext(Context* ctx);
 void begin(Context* ctx, uint16_t viewID, uint16_t canvasWidth, uint16_t canvasHeight, float devicePixelRatio);
 void end(Context* ctx);
 void frame(Context* ctx);
+const Stats* getStats(Context* ctx);
 
 void beginPath(Context* ctx);
 void moveTo(Context* ctx, float x, float y);

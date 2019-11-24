@@ -338,6 +338,7 @@ struct Context
 #endif
 
 	ContextConfig m_Config;
+	Stats m_Stats;
 	bx::AllocatorI* m_Allocator;
 	uint16_t m_ViewID;
 	uint16_t m_CanvasWidth;
@@ -1355,6 +1356,11 @@ void frame(Context* ctx)
 	}
 }
 
+const Stats* getStats(Context* ctx)
+{
+	return &ctx->m_Stats;
+}
+
 void beginPath(Context* ctx)
 {
 #if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
@@ -2353,6 +2359,9 @@ void destroyCommandList(Context* ctx, CommandListHandle handle)
 		freeCommandListCache(ctx, cl->m_Cache);
 	}
 #endif
+
+	ctx->m_Stats.m_CmdListMemoryTotal -= cl->m_CommandBufferCapacity;
+	ctx->m_Stats.m_CmdListMemoryUsed -= cl->m_CommandBufferPos;
 
 	BX_ALIGNED_FREE(allocator, cl->m_CommandBuffer, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
 	BX_FREE(allocator, cl->m_StringBuffer);
@@ -4106,14 +4115,12 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 		const CommandHeader* cmdHeader = (CommandHeader*)cmd;
 		cmd += kAlignedCommandHeaderSize;
 
-		const uint8_t* nextCmd = cmd + alignSize(cmdHeader->m_Size, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
+		const uint8_t* nextCmd = cmd + cmdHeader->m_Size;
 		
 		if (skipCmds && cmdHeader->m_Type >= CommandType::FirstStrokerCommand && cmdHeader->m_Type <= CommandType::LastStrokerCommand) {
 			cmd = nextCmd;
 			continue;
 		}
-
-		const uint8_t* cmdEnd = cmd + cmdHeader->m_Size;
 
 		switch (cmdHeader->m_Type) {
 		case CommandType::BeginPath: {
@@ -4392,8 +4399,6 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 		} break;
 		}
 
-		VG_CHECK(cmd == cmdEnd, "Incomplete command parsing");
-		BX_UNUSED(cmdEnd); // For release builds
 		cmd = nextCmd;
 	}
 
@@ -5557,26 +5562,31 @@ static void freeCommandListCache(Context* ctx, CommandListCache* cache)
 
 static uint8_t* clAllocCommand(Context* ctx, CommandList* cl, CommandType::Enum cmdType, uint32_t dataSize)
 {
+	const uint32_t alignedDataSize = alignSize(dataSize, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
 	const uint32_t totalSize = 0
 		+ kAlignedCommandHeaderSize
-		+ alignSize(dataSize, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
+		+ alignedDataSize;
 
 	const uint32_t pos = cl->m_CommandBufferPos;
 	VG_CHECK(isAligned(pos, VG_CONFIG_COMMAND_LIST_ALIGNMENT), "Unaligned command buffer position");
 
 	if (pos + totalSize > cl->m_CommandBufferCapacity) {
-		cl->m_CommandBufferCapacity += bx::max<uint32_t>(totalSize, 256);
+		const uint32_t capacityDelta = bx::max<uint32_t>(totalSize, 256);
+		cl->m_CommandBufferCapacity += capacityDelta;
 		cl->m_CommandBuffer = (uint8_t*)BX_ALIGNED_REALLOC(ctx->m_Allocator, cl->m_CommandBuffer, cl->m_CommandBufferCapacity, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
+
+		ctx->m_Stats.m_CmdListMemoryTotal += capacityDelta;
 	}
 
 	uint8_t* ptr = &cl->m_CommandBuffer[pos];
 	cl->m_CommandBufferPos += totalSize;
+	ctx->m_Stats.m_CmdListMemoryUsed += totalSize;
 
 	CommandHeader* hdr = (CommandHeader*)ptr;
 	ptr += kAlignedCommandHeaderSize;
 
 	hdr->m_Type = cmdType;
-	hdr->m_Size = dataSize;
+	hdr->m_Size = alignedDataSize;
 
 	return ptr;
 }
@@ -5736,7 +5746,7 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 		const CommandHeader* cmdHeader = (CommandHeader*)cmd;
 		cmd += kAlignedCommandHeaderSize;
 
-		const uint8_t* nextCmd = cmd + alignSize(cmdHeader->m_Size, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
+		const uint8_t* nextCmd = cmd + cmdHeader->m_Size;
 
 		// Skip path commands.
 		if (cmdHeader->m_Type >= CommandType::FirstPathCommand && cmdHeader->m_Type <= CommandType::LastPathCommand) {
@@ -5749,8 +5759,6 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 			++nextCachedCommand;
 			continue;
 		}
-
-		const uint8_t* cmdEnd = cmd + cmdHeader->m_Size;
 
 		switch (cmdHeader->m_Type) {
 		case CommandType::FillPathColor: {
@@ -5970,8 +5978,6 @@ static void clCacheRender(Context* ctx, CommandList* cl)
 		} break;
 		}
 
-		VG_CHECK(cmd == cmdEnd, "Incomplete command parsing");
-		BX_UNUSED(cmdEnd); // For release builds
 		cmd = nextCmd;
 	}
 
