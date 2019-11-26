@@ -339,6 +339,7 @@ struct Context
 
 	ContextConfig m_Config;
 	Stats m_Stats;
+	Stats m_LastFrameStats;
 	bx::AllocatorI* m_Allocator;
 	uint16_t m_ViewID;
 	uint16_t m_CanvasWidth;
@@ -1108,6 +1109,8 @@ void end(Context* ctx)
 		vb->m_Pos = nullptr;
 		vb->m_UV = nullptr;
 		vb->m_Color = nullptr;
+
+		ctx->m_Stats.m_VBMemoryUploaded += (sizeof(float) * 2 + sizeof(uint32_t) * sizeof(uv_t) * 2) * vb->m_Count;
 	}
 
 	// Update bgfx index buffer...
@@ -1119,6 +1122,7 @@ void end(Context* ctx)
 	} else {
 		bgfx::update(gpuib->m_bgfxHandle, 0, indexMem);
 	}
+	ctx->m_Stats.m_IBMemoryUploaded += sizeof(uint16_t) * ib->m_Count;
 
 	const uint16_t viewID = ctx->m_ViewID;
 	const uint16_t canvasWidth = ctx->m_CanvasWidth;
@@ -1179,7 +1183,9 @@ void end(Context* ctx)
 					// TODO: Check if it's better to use Type_TexturedVertexColor program here to avoid too many 
 					// state switches.
 					bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::Clip], 0, false);
+					ctx->m_Stats.m_NumTriangles += clipCmd->m_NumIndices / 3;
 				}
+				ctx->m_Stats.m_NumDrawCalls += numClipCommands;
 
 				stencilState = 0
 					| (cmdClipState->m_Rule == ClipRule::In ? BGFX_STENCIL_TEST_EQUAL : BGFX_STENCIL_TEST_NOTEQUAL)
@@ -1261,7 +1267,10 @@ void end(Context* ctx)
 		} else {
 			VG_CHECK(false, "Unknown draw command type");
 		}
+
+		ctx->m_Stats.m_NumTriangles += cmd->m_NumIndices / 3;
 	}
+	ctx->m_Stats.m_NumDrawCalls += numDrawCommands;
 }
 
 void frame(Context* ctx)
@@ -1302,11 +1311,17 @@ void frame(Context* ctx)
 			}
 		}
 	}
+
+	bx::memCopy(&ctx->m_LastFrameStats, &ctx->m_Stats, sizeof(Stats));
+	ctx->m_Stats.m_VBMemoryUploaded = 0;
+	ctx->m_Stats.m_IBMemoryUploaded = 0;
+	ctx->m_Stats.m_NumDrawCalls = 0;
+	ctx->m_Stats.m_NumTriangles = 0;
 }
 
 const Stats* getStats(Context* ctx)
 {
-	return &ctx->m_Stats;
+	return &ctx->m_LastFrameStats;
 }
 
 void beginPath(Context* ctx)
@@ -4985,6 +5000,7 @@ static float* allocVertexBufferData_Vec2(Context* ctx)
 		} else if (data == nullptr) {
 			data = (float*)BX_ALIGNED_ALLOC(allocator, sizeof(float) * 2 * ctx->m_Config.m_MaxVBVertices, 16);
 			ctx->m_Vec2DataPool[i] = data;
+			ctx->m_Stats.m_VBMemoryTotal += sizeof(float) * 2 * ctx->m_Config.m_MaxVBVertices;
 			return data;
 		}
 	}
@@ -5017,6 +5033,7 @@ static uint32_t* allocVertexBufferData_Uint32(Context* ctx)
 		} else if (data == nullptr) {
 			data = (uint32_t*)BX_ALIGNED_ALLOC(allocator, sizeof(uint32_t) * ctx->m_Config.m_MaxVBVertices, 16);
 			ctx->m_Uint32DataPool[i] = data;
+			ctx->m_Stats.m_VBMemoryTotal += sizeof(uint32_t) * ctx->m_Config.m_MaxVBVertices;
 			return data;
 		}
 	}
@@ -5051,6 +5068,7 @@ static int16_t* allocVertexBufferData_UV(Context* ctx)
 		} else if (data == nullptr) {
 			data = (int16_t*)BX_ALIGNED_ALLOC(allocator, sizeof(int16_t) * 2 * ctx->m_Config.m_MaxVBVertices, 16);
 			ctx->m_UVDataPool[i] = data;
+			ctx->m_Stats.m_VBMemoryTotal += sizeof(int16_t) * 2 * ctx->m_Config.m_MaxVBVertices;
 			return data;
 		}
 	}
@@ -5129,9 +5147,10 @@ static void releaseIndexBuffer(Context* ctx, uint16_t* data)
 		if (ctx->m_IndexBuffers[i].m_Indices == data) {
 			// Reset the ib for reuse.
 			ctx->m_IndexBuffers[i].m_Count = 0;
-			break;
+			return;
 		}
 	}
+	VG_CHECK(false, "Index buffer not found");
 }
 
 static void createDrawCommand_VertexColor(Context* ctx, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
@@ -5275,10 +5294,13 @@ static uint32_t allocIndices(Context* ctx, uint32_t numIndices)
 {
 	IndexBuffer* ib = &ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID];
 	if (ib->m_Count + numIndices > ib->m_Capacity) {
-		const uint32_t nextCapacity = ib->m_Capacity != 0 ? (ib->m_Capacity * 3) / 2 : 32;
+		const uint32_t prevCapacity = ib->m_Capacity;
+		const uint32_t nextCapacity = prevCapacity != 0 ? (ib->m_Capacity * 3) / 2 : 32;
 
 		ib->m_Capacity = bx::uint32_max(nextCapacity, ib->m_Count + numIndices);
 		ib->m_Indices = (uint16_t*)BX_ALIGNED_REALLOC(ctx->m_Allocator, ib->m_Indices, sizeof(uint16_t) * ib->m_Capacity, 16);
+
+		ctx->m_Stats.m_IBMemoryTotal += (ib->m_Capacity - prevCapacity) * sizeof(uint16_t);
 	}
 
 	const uint32_t firstIndexID = ib->m_Count;

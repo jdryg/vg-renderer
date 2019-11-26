@@ -332,6 +332,12 @@ struct Stats
 {
 	uint32_t m_CmdListMemoryTotal;
 	uint32_t m_CmdListMemoryUsed;
+	uint32_t m_VBMemoryTotal;
+	uint32_t m_VBMemoryUploaded;
+	uint32_t m_IBMemoryTotal;
+	uint32_t m_IBMemoryUploaded;
+	uint32_t m_NumDrawCalls;
+	uint32_t m_NumTriangles;
 };
 
 struct TextConfig
