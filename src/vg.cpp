@@ -358,7 +358,6 @@ struct Context
 	GPUVertexBuffer* m_GPUVertexBuffers;
 	uint32_t m_NumVertexBuffers;
 	uint32_t m_VertexBufferCapacity;
-	uint32_t m_FirstVertexBufferID;
 
 	IndexBuffer* m_IndexBuffers;
 	GPUIndexBuffer* m_GPUIndexBuffers;
@@ -463,6 +462,11 @@ static void releaseIndexBufferCallback(void* ptr, void* userData);
 static int16_t* allocVertexBufferData_UV(Context* ctx);
 static void releaseVertexBufferData_UV(Context* ctx, int16_t* data);
 static void releaseVertexBufferDataCallback_UV(void* ptr, void* userData);
+#define releaseVertexBufferData_uv releaseVertexBufferData_UV
+#define releaseVertexBufferDataCallback_uv releaseVertexBufferDataCallback_UV
+#else
+#define releaseVertexBufferData_uv releaseVertexBufferData_Vec2
+#define releaseVertexBufferDataCallback_uv releaseVertexBufferDataCallback_Vec2
 #endif
 
 static DrawCommand* allocDrawCommand(Context* ctx, uint32_t numVertices, uint32_t numIndices, DrawCommand::Type::Enum type, uint16_t handle);
@@ -1035,12 +1039,6 @@ void begin(Context* ctx, uint16_t viewID, uint16_t canvasWidth, uint16_t canvasH
 	resetScissor(ctx);
 	transformIdentity(ctx);
 
-	ctx->m_FirstVertexBufferID = ctx->m_NumVertexBuffers;
-	allocVertexBuffer(ctx);
-
-	ctx->m_ActiveIndexBufferID = allocIndexBuffer(ctx);
-	VG_CHECK(ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID].m_Count == 0, "Not empty index buffer");
-
 	ctx->m_NumDrawCommands = 0;
 	ctx->m_ForceNewDrawCommand = true;
 
@@ -1060,69 +1058,6 @@ void end(Context* ctx)
 	VG_CHECK(!isValid(ctx->m_ActiveCommandList), "endCommandList() hasn't been called");
 
 	const uint32_t numDrawCommands = ctx->m_NumDrawCommands;
-	if (numDrawCommands == 0) {
-		// Release the vertex buffer allocated in beginFrame()
-		VertexBuffer* vb = &ctx->m_VertexBuffers[ctx->m_FirstVertexBufferID];
-		releaseVertexBufferData_Vec2(ctx, vb->m_Pos);
-		releaseVertexBufferData_Uint32(ctx, vb->m_Color);
-
-#if VG_CONFIG_UV_INT16
-		releaseVertexBufferData_UV(ctx, vb->m_UV);
-#else
-		releaseVertexBufferData_Vec2(ctx, vb->m_UV);
-#endif
-
-		return;
-	}
-
-	flushTextAtlas(ctx);
-
-	// Update bgfx vertex buffers...
-	const uint32_t numVertexBuffers = ctx->m_NumVertexBuffers;
-	for (uint32_t iVB = ctx->m_FirstVertexBufferID; iVB < numVertexBuffers; ++iVB) {
-		VertexBuffer* vb = &ctx->m_VertexBuffers[iVB];
-		GPUVertexBuffer* gpuvb = &ctx->m_GPUVertexBuffers[iVB];
-		
-		const uint32_t maxVBVertices = ctx->m_Config.m_MaxVBVertices;
-		if (!bgfx::isValid(gpuvb->m_PosBufferHandle)) {
-			gpuvb->m_PosBufferHandle = bgfx::createDynamicVertexBuffer(maxVBVertices, ctx->m_PosVertexDecl, 0);
-		}
-		if (!bgfx::isValid(gpuvb->m_UVBufferHandle)) {
-			gpuvb->m_UVBufferHandle = bgfx::createDynamicVertexBuffer(maxVBVertices, ctx->m_UVVertexDecl, 0);
-		}
-		if (!bgfx::isValid(gpuvb->m_ColorBufferHandle)) {
-			gpuvb->m_ColorBufferHandle = bgfx::createDynamicVertexBuffer(maxVBVertices, ctx->m_ColorVertexDecl, 0);
-		}
-
-		const bgfx::Memory* posMem = bgfx::makeRef(vb->m_Pos, sizeof(float) * 2 * vb->m_Count, releaseVertexBufferDataCallback_Vec2, ctx);
-		const bgfx::Memory* colorMem = bgfx::makeRef(vb->m_Color, sizeof(uint32_t) * vb->m_Count, releaseVertexBufferDataCallback_Uint32, ctx);
-#if VG_CONFIG_UV_INT16
-		const bgfx::Memory* uvMem = bgfx::makeRef(vb->m_UV, sizeof(int16_t) * 2 * vb->m_Count, releaseVertexBufferDataCallback_UV, ctx);
-#else
-		const bgfx::Memory* uvMem = bgfx::makeRef(vb->m_UV, sizeof(float) * 2 * vb->m_Count, releaseVertexBufferDataCallback_Vec2, ctx);
-#endif
-
-		bgfx::update(gpuvb->m_PosBufferHandle, 0, posMem);
-		bgfx::update(gpuvb->m_UVBufferHandle, 0, uvMem);
-		bgfx::update(gpuvb->m_ColorBufferHandle, 0, colorMem);
-
-		vb->m_Pos = nullptr;
-		vb->m_UV = nullptr;
-		vb->m_Color = nullptr;
-
-		ctx->m_Stats.m_VBMemoryUploaded += (sizeof(float) * 2 + sizeof(uint32_t) * sizeof(uv_t) * 2) * vb->m_Count;
-	}
-
-	// Update bgfx index buffer...
-	IndexBuffer* ib = &ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID];
-	GPUIndexBuffer* gpuib = &ctx->m_GPUIndexBuffers[ctx->m_ActiveIndexBufferID];
-	const bgfx::Memory* indexMem = bgfx::makeRef(&ib->m_Indices[0], sizeof(uint16_t) * ib->m_Count, releaseIndexBufferCallback, ctx);
-	if (!bgfx::isValid(gpuib->m_bgfxHandle)) {
-		gpuib->m_bgfxHandle = bgfx::createDynamicIndexBuffer(indexMem, BGFX_BUFFER_ALLOW_RESIZE);
-	} else {
-		bgfx::update(gpuib->m_bgfxHandle, 0, indexMem);
-	}
-	ctx->m_Stats.m_IBMemoryUploaded += sizeof(uint16_t) * ib->m_Count;
 
 	const uint16_t viewID = ctx->m_ViewID;
 	const uint16_t canvasWidth = ctx->m_CanvasWidth;
@@ -1139,6 +1074,8 @@ void end(Context* ctx)
 	uint32_t prevClipCmdID = UINT32_MAX;
 	uint32_t stencilState = BGFX_STENCIL_NONE;
 	uint8_t nextStencilValue = 1;
+
+	const GPUIndexBuffer* gpuib = &ctx->m_GPUIndexBuffers[ctx->m_ActiveIndexBufferID];
 
 	for (uint32_t iCmd = 0; iCmd < numDrawCommands; ++iCmd) {
 		DrawCommand* cmd = &ctx->m_DrawCommands[iCmd];
@@ -1275,8 +1212,67 @@ void end(Context* ctx)
 
 void frame(Context* ctx)
 {
-	ctx->m_NumVertexBuffers = 0;
+	const uint32_t numDrawCommands = ctx->m_Stats.m_NumDrawCalls;
+	if (numDrawCommands == 0) {
+		// Release all vertex buffers (it should be only 1)
+		const uint32_t numVertexBuffers = ctx->m_NumVertexBuffers;
+		for(uint32_t i = 0;i < numVertexBuffers;++i) {
+			// Release the vertex buffer allocated in beginFrame()
+			VertexBuffer* vb = &ctx->m_VertexBuffers[i];
+			if (vb->m_Pos) {
+				releaseVertexBufferData_Vec2(ctx, vb->m_Pos);
+				vb->m_Pos = nullptr;
+			}
+			if (vb->m_Color) {
+				releaseVertexBufferData_Uint32(ctx, vb->m_Color);
+				vb->m_Color = nullptr;
+			}
+			if (vb->m_UV) {
+				releaseVertexBufferData_uv(ctx, vb->m_UV);
+				vb->m_UV = nullptr;
+			}
+		}
+	} else {
+		flushTextAtlas(ctx);
 
+		// Update bgfx vertex buffers...
+		const uint32_t numVertexBuffers = ctx->m_NumVertexBuffers;
+		for (uint32_t iVB = 0; iVB < numVertexBuffers; ++iVB) {
+			VertexBuffer* vb = &ctx->m_VertexBuffers[iVB];
+			GPUVertexBuffer* gpuvb = &ctx->m_GPUVertexBuffers[iVB];
+
+			const bgfx::Memory* posMem = bgfx::makeRef(vb->m_Pos, sizeof(float) * 2 * vb->m_Count, releaseVertexBufferDataCallback_Vec2, ctx);
+			const bgfx::Memory* colorMem = bgfx::makeRef(vb->m_Color, sizeof(uint32_t) * vb->m_Count, releaseVertexBufferDataCallback_Uint32, ctx);
+			const bgfx::Memory* uvMem = bgfx::makeRef(vb->m_UV, sizeof(uv_t) * 2 * vb->m_Count, releaseVertexBufferDataCallback_uv, ctx);
+
+			bgfx::update(gpuvb->m_PosBufferHandle, 0, posMem);
+			bgfx::update(gpuvb->m_UVBufferHandle, 0, uvMem);
+			bgfx::update(gpuvb->m_ColorBufferHandle, 0, colorMem);
+
+			vb->m_Pos = nullptr;
+			vb->m_UV = nullptr;
+			vb->m_Color = nullptr;
+
+			ctx->m_Stats.m_VBMemoryUploaded += (sizeof(float) * 2 + sizeof(uint32_t) + sizeof(uv_t) * 2) * vb->m_Count;
+		}
+
+		// Update bgfx index buffer...
+		IndexBuffer* ib = &ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID];
+		GPUIndexBuffer* gpuib = &ctx->m_GPUIndexBuffers[ctx->m_ActiveIndexBufferID];
+		const bgfx::Memory* indexMem = bgfx::makeRef(&ib->m_Indices[0], sizeof(uint16_t) * ib->m_Count, releaseIndexBufferCallback, ctx);
+		bgfx::update(gpuib->m_bgfxHandle, 0, indexMem);
+		ctx->m_Stats.m_IBMemoryUploaded += sizeof(uint16_t) * ib->m_Count;
+	}
+
+	// Reset vertex buffers
+	ctx->m_NumVertexBuffers = 0;
+	allocVertexBuffer(ctx);
+
+	// Reset index buffer
+	ctx->m_ActiveIndexBufferID = allocIndexBuffer(ctx);
+	VG_CHECK(ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID].m_Count == 0, "Not empty index buffer");
+
+	// Reset font image
 	if (ctx->m_FontImageID != 0) {
 		ImageHandle fontImage = ctx->m_FontImages[ctx->m_FontImageID];
 
@@ -1312,6 +1308,7 @@ void frame(Context* ctx)
 		}
 	}
 
+	// Update stats
 	bx::memCopy(&ctx->m_LastFrameStats, &ctx->m_Stats, sizeof(Stats));
 	ctx->m_Stats.m_VBMemoryUploaded = 0;
 	ctx->m_Stats.m_IBMemoryUploaded = 0;
@@ -4921,19 +4918,25 @@ static const float* transformPath(Context* ctx)
 
 static VertexBuffer* allocVertexBuffer(Context* ctx)
 {
-	if (ctx->m_NumVertexBuffers + 1 > ctx->m_VertexBufferCapacity) {
-		ctx->m_VertexBufferCapacity++;
+	if (ctx->m_NumVertexBuffers == ctx->m_VertexBufferCapacity) {
+		const uint32_t oldCapacity = ctx->m_VertexBufferCapacity;
+		ctx->m_VertexBufferCapacity += 4;
+
 		ctx->m_VertexBuffers = (VertexBuffer*)BX_REALLOC(ctx->m_Allocator, ctx->m_VertexBuffers, sizeof(VertexBuffer) * ctx->m_VertexBufferCapacity);
 		ctx->m_GPUVertexBuffers = (GPUVertexBuffer*)BX_REALLOC(ctx->m_Allocator, ctx->m_GPUVertexBuffers, sizeof(GPUVertexBuffer) * ctx->m_VertexBufferCapacity);
 
-		GPUVertexBuffer* gpuvb = &ctx->m_GPUVertexBuffers[ctx->m_VertexBufferCapacity - 1];
-
-		gpuvb->m_PosBufferHandle = BGFX_INVALID_HANDLE;
-		gpuvb->m_UVBufferHandle = BGFX_INVALID_HANDLE;
-		gpuvb->m_ColorBufferHandle = BGFX_INVALID_HANDLE;
+		for (uint32_t i = oldCapacity; i < ctx->m_VertexBufferCapacity; ++i) {
+			GPUVertexBuffer* gpuvb = &ctx->m_GPUVertexBuffers[i];
+			gpuvb->m_PosBufferHandle = BGFX_INVALID_HANDLE;
+			gpuvb->m_UVBufferHandle = BGFX_INVALID_HANDLE;
+			gpuvb->m_ColorBufferHandle = BGFX_INVALID_HANDLE;
+		}
 	}
 
-	VertexBuffer* vb = &ctx->m_VertexBuffers[ctx->m_NumVertexBuffers++];
+	const uint32_t id = ctx->m_NumVertexBuffers;
+	++ctx->m_NumVertexBuffers;
+
+	VertexBuffer* vb = &ctx->m_VertexBuffers[id];
 	vb->m_Pos = allocVertexBufferData_Vec2(ctx);
 #if VG_CONFIG_UV_INT16
 	vb->m_UV = allocVertexBufferData_UV(ctx);
@@ -4942,6 +4945,18 @@ static VertexBuffer* allocVertexBuffer(Context* ctx)
 #endif
 	vb->m_Color = allocVertexBufferData_Uint32(ctx);
 	vb->m_Count = 0;
+
+	GPUVertexBuffer* gpuvb = &ctx->m_GPUVertexBuffers[id];
+	const uint32_t maxVBVertices = ctx->m_Config.m_MaxVBVertices;
+	if (!bgfx::isValid(gpuvb->m_PosBufferHandle)) {
+		gpuvb->m_PosBufferHandle = bgfx::createDynamicVertexBuffer(maxVBVertices, ctx->m_PosVertexDecl, 0);
+	}
+	if (!bgfx::isValid(gpuvb->m_UVBufferHandle)) {
+		gpuvb->m_UVBufferHandle = bgfx::createDynamicVertexBuffer(maxVBVertices, ctx->m_UVVertexDecl, 0);
+	}
+	if (!bgfx::isValid(gpuvb->m_ColorBufferHandle)) {
+		gpuvb->m_ColorBufferHandle = bgfx::createDynamicVertexBuffer(maxVBVertices, ctx->m_ColorVertexDecl, 0);
+	}
 
 	return vb;
 }
@@ -4974,7 +4989,7 @@ static uint16_t allocIndexBuffer(Context* ctx)
 		ib->m_Indices = nullptr;
 
 		GPUIndexBuffer* gpuib = &ctx->m_GPUIndexBuffers[ibID];
-		gpuib->m_bgfxHandle = BGFX_INVALID_HANDLE;
+		gpuib->m_bgfxHandle = bgfx::createDynamicIndexBuffer(1024, BGFX_BUFFER_ALLOW_RESIZE);
 	}
 
 	return ibID;
@@ -5010,6 +5025,8 @@ static float* allocVertexBufferData_Vec2(Context* ctx)
 	bx::memSet(&ctx->m_Vec2DataPool[capacity], 0, sizeof(float*) * (ctx->m_Vec2DataPoolCapacity - capacity));
 
 	ctx->m_Vec2DataPool[capacity] = (float*)BX_ALIGNED_ALLOC(allocator, sizeof(float) * 2 * ctx->m_Config.m_MaxVBVertices, 16);
+	ctx->m_Stats.m_VBMemoryTotal += sizeof(float) * 2 * ctx->m_Config.m_MaxVBVertices;
+
 	return ctx->m_Vec2DataPool[capacity];
 }
 
@@ -5043,6 +5060,8 @@ static uint32_t* allocVertexBufferData_Uint32(Context* ctx)
 	bx::memSet(&ctx->m_Uint32DataPool[capacity], 0, sizeof(uint32_t*) * (ctx->m_Uint32DataPoolCapacity - capacity));
 
 	ctx->m_Uint32DataPool[capacity] = (uint32_t*)BX_ALIGNED_ALLOC(allocator, sizeof(uint32_t) * ctx->m_Config.m_MaxVBVertices, 16);
+	ctx->m_Stats.m_VBMemoryTotal += sizeof(uint32_t) * ctx->m_Config.m_MaxVBVertices;
+
 	return ctx->m_Uint32DataPool[capacity];
 }
 
@@ -5078,6 +5097,8 @@ static int16_t* allocVertexBufferData_UV(Context* ctx)
 	bx::memSet(&ctx->m_UVDataPool[capacity], 0, sizeof(int16_t*) * (ctx->m_UVDataPoolCapacity - capacity));
 
 	ctx->m_UVDataPool[capacity] = (int16_t*)BX_ALIGNED_ALLOC(allocator, sizeof(int16_t) * 2 * ctx->m_Config.m_MaxVBVertices, 16);
+	ctx->m_Stats.m_VBMemoryTotal += sizeof(int16_t) * 2 * ctx->m_Config.m_MaxVBVertices;
+
 	return ctx->m_UVDataPool[capacity];
 }
 #endif
