@@ -1217,7 +1217,6 @@ void frame(Context* ctx)
 		// Release all vertex buffers (it should be only 1)
 		const uint32_t numVertexBuffers = ctx->m_NumVertexBuffers;
 		for(uint32_t i = 0;i < numVertexBuffers;++i) {
-			// Release the vertex buffer allocated in beginFrame()
 			VertexBuffer* vb = &ctx->m_VertexBuffers[i];
 			if (vb->m_Pos) {
 				releaseVertexBufferData_Vec2(ctx, vb->m_Pos);
