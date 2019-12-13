@@ -39,6 +39,8 @@ BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment within conditional express
 #define VG_CONFIG_COMMAND_LIST_CACHE_STACK_SIZE  32
 #define VG_CONFIG_COMMAND_LIST_ALIGNMENT         16
 
+#define VG_CONFIG_MULTIDRAW_INDIRECT 1
+
 // Minimum font size (after scaling with the current transformation matrix),
 // below which no text will be rendered.
 #define VG_CONFIG_MIN_FONT_SIZE              4.0f
@@ -74,6 +76,24 @@ struct ClipState
 	uint32_t m_FirstCmdID;
 	uint32_t m_NumCmds;
 };
+
+#if VG_CONFIG_MULTIDRAW_INDIRECT
+struct IndirectData
+{
+	uint32_t m_NumIndices;
+	uint32_t m_NumInstances;
+	uint32_t m_StartIndex;
+	uint32_t m_StartVertex;
+	uint32_t m_StartInstance;
+	uint32_t m_Reserved[3];
+};
+
+struct InstanceData
+{
+	float m_Matrix[6];
+	float m_Reserved[2];
+};
+#endif
 
 struct HandleFlags
 {
@@ -125,8 +145,14 @@ struct DrawCommand
 	uint32_t m_VertexBufferID;
 	uint32_t m_FirstVertexID;
 	uint32_t m_FirstIndexID;
+#if VG_CONFIG_MULTIDRAW_INDIRECT
+	uint32_t m_FirstIndirectID;
+#endif
 	uint32_t m_NumVertices;
 	uint32_t m_NumIndices;
+#if VG_CONFIG_MULTIDRAW_INDIRECT
+	uint32_t m_NumIndirect;
+#endif
 	uint16_t m_ScissorRect[4];
 	uint16_t m_HandleID; // Type::Textured => ImageHandle, Type::ColorGradient => GradientHandle, Type::ImagePattern => ImagePatternHandle
 };
@@ -409,6 +435,12 @@ struct Context
 	bool m_ForceNewClipCommand;
 	bool m_ForceNewDrawCommand;
 
+#if VG_CONFIG_MULTIDRAW_INDIRECT
+	IndirectData* m_IndirectData;
+	uint32_t m_IndirectCapacity;
+	uint32_t m_NumIndirect;
+#endif
+
 	Gradient* m_Gradients;
 	uint32_t m_NextGradientID;
 
@@ -430,6 +462,9 @@ struct Context
 	bgfx::VertexLayout m_PosVertexDecl;
 	bgfx::VertexLayout m_UVVertexDecl;
 	bgfx::VertexLayout m_ColorVertexDecl;
+#if VG_CONFIG_MULTIDRAW_INDIRECT
+	bgfx::VertexLayout m_IndirectDataLayout;
+#endif
 	bgfx::ProgramHandle m_ProgramHandle[DrawCommand::Type::NumTypes];
 	bgfx::UniformHandle m_TexUniform;
 	bgfx::UniformHandle m_PaintMatUniform;
@@ -471,7 +506,7 @@ static void releaseVertexBufferDataCallback_UV(void* ptr, void* userData);
 
 static DrawCommand* allocDrawCommand(Context* ctx, uint32_t numVertices, uint32_t numIndices, DrawCommand::Type::Enum type, uint16_t handle);
 static DrawCommand* allocClipCommand(Context* ctx, uint32_t numVertices, uint32_t numIndices);
-static void createDrawCommand_VertexColor(Context* ctx, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
+static void createDrawCommand_VertexColor(Context* ctx, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, const float* transformMtx);
 static void createDrawCommand_ImagePattern(Context* ctx, ImagePatternHandle handle, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
 static void createDrawCommand_ColorGradient(Context* ctx, GradientHandle handle, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices);
 static void createDrawCommand_Clip(Context* ctx, const float* vtx, uint32_t numVertices, const uint16_t* indices, uint32_t numIndices);
@@ -706,6 +741,11 @@ inline bool isLocal(uint16_t handleFlags)      { return (handleFlags & HandleFla
 inline bool isLocal(GradientHandle handle)     { return isLocal(handle.flags); }
 inline bool isLocal(ImagePatternHandle handle) { return isLocal(handle.flags); }
 
+static const float kIdentityTransform[6] = {
+	1.0f, 0.0f, 0.0f,
+	0.0f, 1.0f, 0.0f
+};
+
 //////////////////////////////////////////////////////////////////////////
 // Public interface
 //
@@ -781,6 +821,10 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 	ctx->m_UVVertexDecl.begin().add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Int16, true).end();
 #else
 	ctx->m_UVVertexDecl.begin().add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float).end();
+#endif
+
+#if VG_CONFIG_MULTIDRAW_INDIRECT
+	ctx->m_IndirectDataLayout.begin().add(bgfx::Attrib::Position, 4, bgfx::AttribType::Float).add(bgfx::Attrib::TexCoord0, 4, bgfx::AttribType::Float).end();
 #endif
 
 	// NOTE: A couple of shaders can be shared between programs. Since bgfx
@@ -1058,6 +1102,12 @@ void end(Context* ctx)
 	VG_CHECK(!isValid(ctx->m_ActiveCommandList), "endCommandList() hasn't been called");
 
 	const uint32_t numDrawCommands = ctx->m_NumDrawCommands;
+	if (numDrawCommands == 0) {
+#if VG_CONFIG_MULTIDRAW_INDIRECT
+		VG_CHECK(ctx->m_NumIndirect == 0, "Invalid state");
+#endif
+		return;
+	}
 
 	const uint16_t viewID = ctx->m_ViewID;
 	const uint16_t canvasWidth = ctx->m_CanvasWidth;
@@ -1076,6 +1126,13 @@ void end(Context* ctx)
 	uint8_t nextStencilValue = 1;
 
 	const GPUIndexBuffer* gpuib = &ctx->m_GPUIndexBuffers[ctx->m_ActiveIndexBufferID];
+
+#if VG_CONFIG_MULTIDRAW_INDIRECT
+	bgfx::VertexBufferHandle dummyVB = bgfx::createVertexBuffer(bgfx::copy(ctx->m_IndirectData, sizeof(IndirectData) * ctx->m_NumIndirect), ctx->m_IndirectDataLayout, BGFX_BUFFER_DRAW_INDIRECT);
+	bgfx::IndirectBufferHandle indirectBuffer = { dummyVB.idx };
+
+	ctx->m_NumIndirect = 0;
+#endif
 
 	for (uint32_t iCmd = 0; iCmd < numDrawCommands; ++iCmd) {
 		DrawCommand* cmd = &ctx->m_DrawCommands[iCmd];
@@ -1167,7 +1224,11 @@ void end(Context* ctx)
 				| BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA, BGFX_STATE_BLEND_ONE, BGFX_STATE_BLEND_INV_SRC_ALPHA));
 			bgfx::setStencil(stencilState);
 
+#if !VG_CONFIG_MULTIDRAW_INDIRECT
 			bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::Textured], 0, false);
+#else
+			bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::Textured], indirectBuffer, (uint16_t)cmd->m_FirstIndirectID, (uint16_t)cmd->m_NumIndirect, 0, false);
+#endif
 		} else if (cmd->m_Type == DrawCommand::Type::ColorGradient) {
 			VG_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid gradient handle");
 			Gradient* grad = &ctx->m_Gradients[cmd->m_HandleID];
@@ -1208,6 +1269,10 @@ void end(Context* ctx)
 		ctx->m_Stats.m_NumTriangles += cmd->m_NumIndices / 3;
 	}
 	ctx->m_Stats.m_NumDrawCalls += numDrawCommands;
+
+#if VG_CONFIG_MULTIDRAW_INDIRECT
+	bgfx::destroy(dummyVB);
+#endif
 }
 
 void frame(Context* ctx)
@@ -3084,7 +3149,7 @@ static void ctxFillPathColor(Context* ctx, Color color, uint32_t flags)
 			if (recordClipCommands) {
 				createDrawCommand_Clip(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
 			} else {
-				createDrawCommand_VertexColor(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+				createDrawCommand_VertexColor(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices, &kIdentityTransform[0]);
 			}
 		}
 	} else if (pathType == PathType::Concave) {
@@ -3124,7 +3189,7 @@ static void ctxFillPathColor(Context* ctx, Color color, uint32_t flags)
 			if (recordClipCommands) {
 				createDrawCommand_Clip(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
 			} else {
-				createDrawCommand_VertexColor(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+				createDrawCommand_VertexColor(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices, &kIdentityTransform[0]);
 			}
 		}
 	}
@@ -3441,7 +3506,7 @@ static void ctxStrokePathColor(Context* ctx, Color color, float width, uint32_t 
 		if (recordClipCommands) {
 			createDrawCommand_Clip(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, mesh.m_IndexBuffer, mesh.m_NumIndices);
 		} else {
-			createDrawCommand_VertexColor(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices);
+			createDrawCommand_VertexColor(ctx, mesh.m_PosBuffer, mesh.m_NumVertices, colors, numColors, mesh.m_IndexBuffer, mesh.m_NumIndices, &kIdentityTransform[0]);
 		}
 	}
 
@@ -5173,8 +5238,10 @@ static void releaseIndexBuffer(Context* ctx, uint16_t* data)
 	VG_CHECK(false, "Index buffer not found");
 }
 
-static void createDrawCommand_VertexColor(Context* ctx, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
+static void createDrawCommand_VertexColor(Context* ctx, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, const float* transformMtx)
 {
+	BX_UNUSED(transformMtx); // TODO: Instance data
+
 	// Allocate the draw command
 	const ImageHandle fontImg = ctx->m_FontImages[0];
 	DrawCommand* cmd = allocDrawCommand(ctx, numVertices, numIndices, DrawCommand::Type::Textured, fontImg.idx);
@@ -5206,7 +5273,11 @@ static void createDrawCommand_VertexColor(Context* ctx, const float* vtx, uint32
 	// Index buffer
 	IndexBuffer* ib = &ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID];
 	uint16_t* dstIndex = &ib->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
+#if !VG_CONFIG_MULTIDRAW_INDIRECT
 	vgutil::batchTransformDrawIndices(indices, numIndices, dstIndex, (uint16_t)cmd->m_NumVertices);
+#else
+	bx::memCopy(dstIndex, indices, sizeof(uint16_t) * numIndices);
+#endif
 
 	cmd->m_NumVertices += numVertices;
 	cmd->m_NumIndices += numIndices;
@@ -5328,6 +5399,23 @@ static uint32_t allocIndices(Context* ctx, uint32_t numIndices)
 	return firstIndexID;
 }
 
+#if VG_CONFIG_MULTIDRAW_INDIRECT
+static IndirectData* allocIndirectData(Context* ctx)
+{
+	if (ctx->m_NumIndirect == ctx->m_IndirectCapacity) {
+		const uint32_t oldCapacity = ctx->m_IndirectCapacity;
+		ctx->m_IndirectCapacity += 32;
+		ctx->m_IndirectData = (IndirectData*)BX_REALLOC(ctx->m_Allocator, ctx->m_IndirectData, sizeof(IndirectData) * ctx->m_IndirectCapacity);
+
+		bx::memSet(&ctx->m_IndirectData[oldCapacity], 0, sizeof(IndirectData) * (ctx->m_IndirectCapacity - oldCapacity));
+	}
+
+	const uint32_t id = ctx->m_NumIndirect;
+	ctx->m_NumIndirect++;
+	return &ctx->m_IndirectData[id];
+}
+#endif
+
 static DrawCommand* allocDrawCommand(Context* ctx, uint32_t numVertices, uint32_t numIndices, DrawCommand::Type::Enum type, uint16_t handle)
 {
 	uint32_t vertexBufferID;
@@ -5347,6 +5435,16 @@ static DrawCommand* allocDrawCommand(Context* ctx, uint32_t numVertices, uint32_
 		      && prevCmd->m_ScissorRect[3] == (uint16_t)scissor[3], "Invalid scissor rect");
 
 		if (prevCmd->m_Type == type && prevCmd->m_HandleID == handle) {
+#if VG_CONFIG_MULTIDRAW_INDIRECT
+			const uint32_t indirectID = prevCmd->m_FirstIndirectID + prevCmd->m_NumIndirect;
+			prevCmd->m_NumIndirect++;
+			IndirectData* indirectData = allocIndirectData(ctx);
+			indirectData->m_NumIndices = numIndices;
+			indirectData->m_NumInstances = 1;
+			indirectData->m_StartIndex = firstIndexID;
+			indirectData->m_StartInstance = indirectID - prevCmd->m_FirstIndirectID;
+			indirectData->m_StartVertex = firstVertexID - prevCmd->m_FirstVertexID;
+#endif
 			return prevCmd;
 		}
 	}
@@ -5363,6 +5461,10 @@ static DrawCommand* allocDrawCommand(Context* ctx, uint32_t numVertices, uint32_
 	cmd->m_VertexBufferID = vertexBufferID;
 	cmd->m_FirstVertexID = firstVertexID;
 	cmd->m_FirstIndexID = firstIndexID;
+#if VG_CONFIG_MULTIDRAW_INDIRECT
+	cmd->m_FirstIndirectID = ctx->m_NumIndirect;
+	cmd->m_NumIndirect = 1;
+#endif
 	cmd->m_NumVertices = 0;
 	cmd->m_NumIndices = 0;
 	cmd->m_Type = type;
@@ -5373,7 +5475,18 @@ static DrawCommand* allocDrawCommand(Context* ctx, uint32_t numVertices, uint32_
 	cmd->m_ScissorRect[3] = (uint16_t)scissor[3];
 	bx::memCopy(&cmd->m_ClipState, &ctx->m_ClipState, sizeof(ClipState));
 
+#if VG_CONFIG_MULTIDRAW_INDIRECT
+	IndirectData* indirectData = allocIndirectData(ctx);
+	indirectData->m_NumIndices = numIndices;
+	indirectData->m_NumInstances = 1;
+	indirectData->m_StartIndex = firstIndexID;
+	indirectData->m_StartInstance = 0;
+	indirectData->m_StartVertex = 0;
+#endif
+
+#if 1
 	ctx->m_ForceNewDrawCommand = false;
+#endif
 
 	return cmd;
 }
@@ -6129,8 +6242,9 @@ static void submitCachedMesh(Context* ctx, Color col, const CachedMesh* meshList
 			const uint32_t* colors = mesh->m_Colors ? mesh->m_Colors : &col;
 			const uint32_t numColors = mesh->m_Colors ? numVertices : 1;
 			
+			// TODO: Path mtx as instance transformation matrix and avoid batchTransformPositions()
 			vgutil::batchTransformPositions(mesh->m_Pos, numVertices, transformedVertices, mtx);
-			createDrawCommand_VertexColor(ctx, transformedVertices, numVertices, colors, numColors, mesh->m_Indices, mesh->m_NumIndices);
+			createDrawCommand_VertexColor(ctx, transformedVertices, numVertices, colors, numColors, mesh->m_Indices, mesh->m_NumIndices, &kIdentityTransform[0]);
 		}
 	}
 }
