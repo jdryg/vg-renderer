@@ -3,7 +3,7 @@
 # License: http://www.opensource.org/licenses/BSD-2-Clause
 #
 
-include ../../../scripts/shader-embeded.mk
+include ../../../bgfx/scripts/shader-embeded.mk
 
 rebuild:
 	@make -s --no-print-directory clean all

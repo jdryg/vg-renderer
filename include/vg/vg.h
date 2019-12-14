@@ -44,6 +44,10 @@
 #	define VG_CONFIG_COMMAND_LIST_BEGIN_END_API 1
 #endif
 
+#ifndef VG_CONFIG_MULTIDRAW_INDIRECT
+#	define VG_CONFIG_MULTIDRAW_INDIRECT 0
+#endif
+
 #if VG_CONFIG_DEBUG
 #include <bx/debug.h>
 
