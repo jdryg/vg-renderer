@@ -767,7 +767,9 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 
 	const ContextConfig* cfg = userCfg ? userCfg : &defaultConfig;
 
-	VG_CHECK(cfg->m_MaxVBVertices <= 65536, "Vertex buffers cannot be larger than 64k vertices because indices are always uint16");
+#if !VG_CONFIG_MULTIDRAW_INDIRECT
+	VG_WARN(cfg->m_MaxVBVertices <= 65536, "Vertex buffers cannot be larger than 64k vertices because indices are always uint16");
+#endif
 
 	const uint32_t alignment = 8;
 	const uint32_t totalMem = 0
@@ -793,6 +795,9 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 #endif
 
 	bx::memCopy(&ctx->m_Config, cfg, sizeof(ContextConfig));
+#if !VG_CONFIG_MULTIDRAW_INDIRECT
+	ctx->m_Config.m_MaxVBVertices = bx::min<uint32_t>(ctx->m_Config.m_MaxVBVertices, 65536);
+#endif
 	ctx->m_Allocator = allocator;
 	ctx->m_ViewID = 0;
 	ctx->m_DevicePixelRatio = 1.0f;
@@ -4935,7 +4940,7 @@ static void updateWhitePixelUV(Context* ctx)
 #if VG_CONFIG_UV_INT16
 	ctx->m_FontImageWhitePixelUV[0] = INT16_MAX / (int16_t)w;
 	ctx->m_FontImageWhitePixelUV[1] = INT16_MAX / (int16_t)h;
-#else	#else
+#else
 	ctx->m_FontImageWhitePixelUV[0] = 0.5f / (float)w;
 	ctx->m_FontImageWhitePixelUV[1] = 0.5f / (float)h;
 #endif
