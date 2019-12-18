@@ -202,9 +202,12 @@ struct CommandType
 		StrokePathColor,
 		StrokePathGradient,
 		StrokePathImagePattern,
-		IndexedTriList,
+		
 		FirstStrokerCommand = FillPathColor,
-		LastStrokerCommand = IndexedTriList,
+		LastStrokerCommand = StrokePathImagePattern,
+
+		//
+		IndexedTriList,
 
 		// State commands
 		BeginClip,
