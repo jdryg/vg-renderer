@@ -2333,7 +2333,8 @@ void resetCommandList(Context* ctx, CommandListHandle handle)
 #else
 	BX_UNUSED(ctx);
 #endif
-	
+
+	ctx->m_Stats.m_CmdListMemoryUsed -= cl->m_CommandBufferPos;
 	cl->m_CommandBufferPos = 0;
 	cl->m_StringBufferPos = 0;
 	cl->m_NumImagePatterns = 0;
