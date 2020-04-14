@@ -746,6 +746,7 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 
 #if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable = &g_CtxVTable;
+	ctx->m_ActiveCommandList = VG_INVALID_HANDLE;
 #endif
 
 	bx::memCopy(&ctx->m_Config, cfg, sizeof(ContextConfig));
