@@ -3368,7 +3368,7 @@ static void ctxStrokePathColor(Context* ctx, Color color, float width, uint32_t 
 	const float globalAlpha = hasCache ? 1.0f : state->m_GlobalAlpha;
 	const float fringeWidth = ctx->m_FringeWidth;
 
-	const float scaledStrokeWidth = bx::clamp<float>(width * avgScale, 0.0f, 200.0f);
+	const float scaledStrokeWidth = ((flags & StrokeFlags::FixedWidth) != 0) ? width : bx::clamp<float>(width * avgScale, 0.0f, 200.0f);
 	const bool isThin = scaledStrokeWidth <= fringeWidth;
 
 	const float alphaScale = !isThin ? globalAlpha : globalAlpha * bx::square(bx::clamp<float>(scaledStrokeWidth, 0.0f, fringeWidth));
@@ -3468,7 +3468,7 @@ static void ctxStrokePathGradient(Context* ctx, GradientHandle gradientHandle, f
 
 	const State* state = getState(ctx);
 	const float avgScale = state->m_AvgScale;
-	float strokeWidth = bx::clamp<float>(width * avgScale, 0.0f, 200.0f);
+	float strokeWidth = ((flags & StrokeFlags::FixedWidth) != 0) ? width : bx::clamp<float>(width * avgScale, 0.0f, 200.0f);
 	bool isThin = false;
 	if (strokeWidth <= ctx->m_FringeWidth) {
 		strokeWidth = ctx->m_FringeWidth;
@@ -3547,7 +3547,7 @@ static void ctxStrokePathImagePattern(Context* ctx, ImagePatternHandle imgPatter
 	const float globalAlpha = hasCache ? 1.0f : state->m_GlobalAlpha;
 	const float fringeWidth = ctx->m_FringeWidth;
 
-	const float scaledStrokeWidth = bx::clamp<float>(width * avgScale, 0.0f, 200.0f);
+	const float scaledStrokeWidth = ((flags & StrokeFlags::FixedWidth) != 0) ? width : bx::clamp<float>(width * avgScale, 0.0f, 200.0f);
 	const bool isThin = scaledStrokeWidth <= fringeWidth;
 
 	const float alphaScale = isThin ? globalAlpha : globalAlpha * bx::square(bx::clamp<float>(scaledStrokeWidth, 0.0f, fringeWidth));

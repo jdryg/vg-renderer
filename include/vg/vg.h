@@ -172,10 +172,10 @@ struct LineJoin
 	};
 };
 
-#define VG_STROKE_FLAGS(cap, join, aa) (((aa) << 4) | ((cap) << 2) | (join))
-#define VG_STROKE_FLAGS_LINE_CAP(flags) (LineCap::Enum)(((flags) >> 2) & 0x03)
+#define VG_STROKE_FLAGS(cap, join, aa)   (((aa) << 4) | ((cap) << 2) | (join))
+#define VG_STROKE_FLAGS_LINE_CAP(flags)  (LineCap::Enum)(((flags) >> 2) & 0x03)
 #define VG_STROKE_FLAGS_LINE_JOIN(flags) (LineJoin::Enum)(((flags) >> 0) & 0x03)
-#define VG_STROKE_FLAGS_AA(flags) (((flags) & 0x10) != 0)
+#define VG_STROKE_FLAGS_AA(flags)        (((flags) & 0x10) != 0)
 
 struct StrokeFlags
 {
@@ -202,6 +202,8 @@ struct StrokeFlags
 		SquareMiterAA = VG_STROKE_FLAGS(LineCap::Square, LineJoin::Miter, 1),
 		SquareRoundAA = VG_STROKE_FLAGS(LineCap::Square, LineJoin::Round, 1),
 		SquareBevelAA = VG_STROKE_FLAGS(LineCap::Square, LineJoin::Bevel, 1),
+
+		FixedWidth = 1u << 5 // NOTE: Scale independent stroke width
 	};
 };
 
