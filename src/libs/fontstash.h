@@ -249,6 +249,18 @@ void fonsDrawDebug(FONScontext* s, float x, float y);
 #include FT_ADVANCES_H
 #include <math.h>
 
+#	include <malloc.h>
+#	include <string.h>
+#ifndef FONSmalloc
+#define FONSmalloc malloc
+#endif
+#ifndef FONSrealloc
+#define FONSrealloc realloc
+#endif
+#ifndef FONSfree
+#define FONSfree free
+#endif
+
 struct FONSttFontImpl {
 	FT_Face font;
 };
@@ -320,7 +332,7 @@ void fons__tt_renderGlyphBitmap(FONSttFontImpl *font, unsigned char *output, int
 {
 	FT_GlyphSlot ftGlyph = font->font->glyph;
 	int ftGlyphOffset = 0;
-	int x, y;
+	unsigned int x, y;
 	FONS_NOTUSED(outWidth);
 	FONS_NOTUSED(outHeight);
 	FONS_NOTUSED(scaleX);
