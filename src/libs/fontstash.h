@@ -303,15 +303,17 @@ int fons__tt_getGlyphIndex(FONSttFontImpl *font, int codepoint)
 	return FT_Get_Char_Index(font->font, codepoint);
 }
 
-int fons__tt_buildGlyphBitmap(FONSttFontImpl *font, int glyph, float size, float scale,
-							  int *advance, int *lsb, int *x0, int *y0, int *x1, int *y1)
+int fons__tt_buildGlyphBitmap(FONSttFontImpl *font, FONSttFontImpl *baseFont, int glyph, float size, float scale, int *advance, int *lsb, int *x0, int *y0, int *x1, int *y1)
 {
 	FT_Error ftError;
 	FT_GlyphSlot ftGlyph;
 	FT_Fixed advFixed;
 	FONS_NOTUSED(scale);
 
-	ftError = FT_Set_Pixel_Sizes(font->font, 0, (FT_UInt)(size * (float)font->font->units_per_EM / (float)(font->font->ascender - font->font->descender)));
+	const FT_UInt pxSize = (FT_UInt)(size * (float)font->font->units_per_EM / (float)(font->font->ascender - font->font->descender));
+	const FT_UInt basePxSize = (FT_UInt)(size * (float)baseFont->font->units_per_EM / (float)(baseFont->font->ascender - baseFont->font->descender));
+
+	ftError = FT_Set_Pixel_Sizes(font->font, 0, pxSize);
 	if (ftError) return 0;
 	ftError = FT_Load_Glyph(font->font, glyph, FT_LOAD_RENDER);
 	if (ftError) return 0;
@@ -322,7 +324,7 @@ int fons__tt_buildGlyphBitmap(FONSttFontImpl *font, int glyph, float size, float
 	*lsb = (int)ftGlyph->metrics.horiBearingX;
 	*x0 = ftGlyph->bitmap_left;
 	*x1 = *x0 + ftGlyph->bitmap.width;
-	*y0 = -ftGlyph->bitmap_top;
+	*y0 = -ftGlyph->bitmap_top + ((int)pxSize - (int)basePxSize) / 2;
 	*y1 = *y0 + ftGlyph->bitmap.rows;
 	return 1;
 }
@@ -464,7 +466,7 @@ int fons__tt_getGlyphIndex(FONSttFontImpl *font, int codepoint)
 	return stbtt_FindGlyphIndex(&font->font, codepoint);
 }
 
-int fons__tt_buildGlyphBitmap(FONSttFontImpl *font, int glyph, float size, float scale,
+int fons__tt_buildGlyphBitmap(FONSttFontImpl *font, FONSttFontImpl* baseFont, int glyph, float size, float scale,
 							  int *advance, int *lsb, int *x0, int *y0, int *x1, int *y1)
 {
 	FONS_NOTUSED(size);
@@ -1334,7 +1336,7 @@ static FONSglyph* fons__getGlyph(FONScontext* stash, FONSfont* font, unsigned in
 		// In that case the glyph index 'g' is 0, and we'll proceed below and cache empty glyph.
 	}
 	scale = fons__tt_getPixelHeightScale(&renderFont->font, size);
-	fons__tt_buildGlyphBitmap(&renderFont->font, g, size, scale, &advance, &lsb, &x0, &y0, &x1, &y1);
+	fons__tt_buildGlyphBitmap(&renderFont->font, &font->font, g, size, scale, &advance, &lsb, &x0, &y0, &x1, &y1);
 	gw = x1-x0 + pad*2;
 	gh = y1-y0 + pad*2;
 
@@ -2101,7 +2103,7 @@ void fonsResetString(FONScontext* stash, FONSstring* str, const char* text, cons
 	str->m_LastBakeAtlasID = 0;
 }
 
-static FONSglyph* fons__bakeGlyph(FONScontext* stash, FONSfont* font, int glyphIndex, unsigned int codepoint, short isize, short iblur, float scale)
+static FONSglyph* fons__bakeGlyph(FONScontext* stash, FONSfont* font, int glyphIndex, unsigned int codepoint, short isize, short iblur)
 {
 	FONSglyph* glyph = NULL;
 	FONSfont* renderFont = font;
@@ -2164,8 +2166,10 @@ static FONSglyph* fons__bakeGlyph(FONScontext* stash, FONSfont* font, int glyphI
 		// In that case the glyph index 'g' is 0, and we'll proceed below and cache empty glyph.
 	}
 
+	const float scale = fons__tt_getPixelHeightScale(&renderFont->font, size);
+
 	int advance, lsb, x0, y0, x1, y1, x, y;
-	fons__tt_buildGlyphBitmap(&renderFont->font, glyphIndex, size, scale, &advance, &lsb, &x0, &y0, &x1, &y1);
+	fons__tt_buildGlyphBitmap(&renderFont->font, &font->font, glyphIndex, size, scale, &advance, &lsb, &x0, &y0, &x1, &y1);
 	
 	int gw = x1 - x0 + pad * 2;
 	int gh = y1 - y0 + pad * 2;
@@ -2270,7 +2274,7 @@ int fonsBakeString(FONScontext* stash, FONSstring* str)
 
 		FONSquad* q = &str->m_Quads[i];
 
-		FONSglyph* glyph = fons__bakeGlyph(stash, font, gi, cp, isize, iblur, scale);
+		FONSglyph* glyph = fons__bakeGlyph(stash, font, gi, cp, isize, iblur);
 		if(!glyph) {
 			// Failed to insert glyph into atlas.
 			return -1;
