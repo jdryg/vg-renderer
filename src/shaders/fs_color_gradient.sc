@@ -1,6 +1,6 @@
 $input v_texcoord0, v_color0
 
-#include "../../shaders/common.sh"
+#include <bgfx_shader.sh>
 
 uniform vec4 u_extentRadiusFeather;
 uniform vec4 u_innerCol;

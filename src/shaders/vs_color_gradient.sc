@@ -1,7 +1,7 @@
 $input a_position, a_color0
 $output v_texcoord0, v_color0
 
-#include "../../shaders/common.sh"
+#include <bgfx_shader.sh>
 
 uniform mat3 u_paintMat;
 
