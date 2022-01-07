@@ -4875,7 +4875,11 @@ static void updateState(State* state)
 
 	const float quantFactor = 0.1f;
 	const float quantScale = (bx::floor((avgScale / quantFactor) + 0.5f)) * quantFactor;
+#if 0
 	state->m_FontScale = bx::clamp<float>(quantScale, VG_CONFIG_MIN_FONT_SCALE, VG_CONFIG_MAX_FONT_SCALE);
+#else
+	state->m_FontScale = quantScale;
+#endif
 }
 
 static float* allocTransformedVertices(Context* ctx, uint32_t numVertices)
