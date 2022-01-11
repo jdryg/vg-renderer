@@ -2867,6 +2867,7 @@ void clSetViewBox(Context* ctx, CommandListHandle handle, float x, float y, floa
 void clText(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, const char* str, const char* end)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
+	VG_CHECK(isValid(cfg.m_FontHandle), "Invalid font handle");
 	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	const uint32_t len = end ? (uint32_t)(end - str) : (uint32_t)bx::strLen(str);
