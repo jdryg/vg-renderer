@@ -632,22 +632,18 @@ void pathArc(Path* path, float cx, float cy, float r, float a0, float a1, Windin
 		a1 -= bx::kPi2;
 	}
 
-	if (a1 < a0) {
-		bx::swap<float>(a0, a1);
-	}
-
 	if (dir == Winding::CCW) {
 		while (a0 < a1) {
 			a0 += bx::kPi2;
 		}
-
-		bx::swap<float>(a0, a1);
 	} else {
-		// CW order should be taken care from the common code at the top.
+		while (a1 < a0) {
+			a1 += bx::kPi2;
+		}
 	}
 
 	const float da = bx::acos((path->m_Scale * r) / ((path->m_Scale * r) + path->m_TesselationTolerance)) * 2.0f;
-	const uint32_t numPoints = bx::uint32_max(2, (uint32_t)bx::ceil((a1 - a0) / da));
+	const uint32_t numPoints = bx::uint32_max(2, (uint32_t)bx::ceil(bx::abs(a1 - a0) / da));
 
 	const float dtheta = (a1 - a0) / (float)numPoints;
 	const float cos_dtheta = bx::cos(dtheta);
