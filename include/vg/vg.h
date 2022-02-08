@@ -261,6 +261,7 @@ struct TextBoxFlags
 {
 	enum Enum : uint32_t
 	{
+		None       = 0,
 		KeepSpaces = 1 << 0
 	};
 };
@@ -375,6 +376,7 @@ struct CommandListFlags
 {
 	enum Enum : uint32_t
 	{
+		None                = 0,
 		Cacheable           = 1 << 0, // Cache the generated geometry in order to avoid retesselation every frame; uses extra memory
 		AllowCommandCulling = 1 << 1, // If the scissor rect ends up being zero-sized, don't execute fill/stroke commands.
 	};
@@ -384,6 +386,7 @@ struct FontFlags
 {
 	enum Enum : uint32_t
 	{
+		None         = 0,
 		DontCopyData = 1 << 0, // The calling code will keep the font data alive for as long as the Context is alive so there's no need to copy the data internally.
 	};
 };
