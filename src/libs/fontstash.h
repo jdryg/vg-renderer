@@ -470,6 +470,7 @@ int fons__tt_buildGlyphBitmap(FONSttFontImpl *font, FONSttFontImpl* baseFont, in
 							  int *advance, int *lsb, int *x0, int *y0, int *x1, int *y1)
 {
 	FONS_NOTUSED(size);
+	FONS_NOTUSED(baseFont);
 	stbtt_GetGlyphHMetrics(&font->font, glyph, advance, lsb);
 	stbtt_GetGlyphBitmapBox(&font->font, glyph, scale, scale, x0, y0, x1, y1);
 	return 1;

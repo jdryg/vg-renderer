@@ -12,10 +12,7 @@
 #include <vg/path.h>
 #include <vg/stroker.h>
 #include "vg_util.h"
-namespace vg
-{
 #include "libs/fontstash.h"
-}
 #include <bx/allocator.h>
 #include <bx/mutex.h>
 #include <bx/handlealloc.h>
