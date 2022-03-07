@@ -82,15 +82,29 @@ inline uint8_t colorGetBlue(Color c)
 }
 
 // Text helpers
-inline TextConfig makeTextConfig(Context* ctx, const char* fontName, float fontSize, uint32_t alignment, Color color)
+inline TextConfig makeTextConfig(Context* ctx, const char* fontName, float fontSize, uint32_t alignment, Color color, float blur, float spacing)
 {
-	return { getFontByName(ctx, fontName), fontSize, alignment, color };
+	TextConfig cfg;
+	cfg.m_FontHandle = getFontByName(ctx, fontName);
+	cfg.m_FontSize = fontSize;
+	cfg.m_Alignment = alignment;
+	cfg.m_Color = color;
+	cfg.m_Blur = blur;
+	cfg.m_Spacing = spacing;
+	return cfg;
 }
 
-inline TextConfig makeTextConfig(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, Color color)
+inline TextConfig makeTextConfig(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, Color color, float blur, float spacing)
 {
 	BX_UNUSED(ctx);
-	return { fontHandle, fontSize, alignment, color };
+	TextConfig cfg;
+	cfg.m_FontHandle = fontHandle;
+	cfg.m_FontSize = fontSize;
+	cfg.m_Alignment = alignment;
+	cfg.m_Color = color;
+	cfg.m_Blur = blur;
+	cfg.m_Spacing = spacing;
+	return cfg;
 }
 
 inline void text(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, Color color, float x, float y, const char* str, const char* end)

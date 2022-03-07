@@ -1449,8 +1449,8 @@ static void fons__getQuad(FONScontext* stash, FONSfont* font,
 	x1 = (float)(glyph->x1-1);
 	y1 = (float)(glyph->y1-1);
 
-	if (stash->params.flags & FONS_ZERO_TOPLEFT) {
 #if FONS_SNAP_TO_GRID
+	if (stash->params.flags & FONS_ZERO_TOPLEFT) {
 		rx = (float)(int)(*x + xoff);
 		ry = (float)(int)(*y + yoff);
 #else 

@@ -12,7 +12,7 @@
 #include <vg/path.h>
 #include <vg/stroker.h>
 #include "vg_util.h"
-#include "libs/fontstash.h"
+#include "font_system.h"
 #include <bx/allocator.h>
 #include <bx/mutex.h>
 #include <bx/handlealloc.h>
@@ -35,7 +35,7 @@ BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment within conditional express
 #define VG_CONFIG_MIN_FONT_SCALE                 0.1f
 #define VG_CONFIG_MAX_FONT_SCALE                 4.0f
 #define VG_CONFIG_MAX_FONT_IMAGES                4
-#define VG_CONFIG_MIN_FONT_ATLAS_SIZE            512
+#define VG_CONFIG_MIN_FONT_ATLAS_SIZE            256
 #define VG_CONFIG_COMMAND_LIST_CACHE_STACK_SIZE  32
 #define VG_CONFIG_COMMAND_LIST_ALIGNMENT         16
 
@@ -164,13 +164,6 @@ struct Image
 	uint16_t m_Height;
 	uint32_t m_Flags;
 	bgfx::TextureHandle m_bgfxHandle;
-};
-
-struct FontData
-{
-	uint8_t* m_Data;
-	int m_FonsHandle;
-	bool m_Owned;
 };
 
 struct CommandType
@@ -418,17 +411,20 @@ struct Context
 	ImagePattern* m_ImagePatterns;
 	uint32_t m_NextImagePatternID;
 
-	FONScontext* m_FontStashContext;
+	FontSystem* m_FontSystem;
+#if 0
 	ImageHandle m_FontImages[VG_CONFIG_MAX_FONT_IMAGES];
 	uint32_t m_FontImageID;
 	uv_t m_FontImageWhitePixelUV[2];
+#endif
 
 	float* m_TextVertices;
+	uint32_t m_TextVertexCapacity;
+#if 0
 	FONSquad* m_TextQuads;
 	uint32_t m_TextQuadCapacity;
 	FONSstring m_TextString;
-	FontData* m_FontData;
-	uint32_t m_NextFontID;
+#endif
 
 	bgfx::VertexLayout m_PosVertexDecl;
 	bgfx::VertexLayout m_UVVertexDecl;
@@ -443,8 +439,8 @@ struct Context
 
 static State* getState(Context* ctx);
 static void updateState(State* state);
-static const uv_t* getWhitePixelUV(Context* ctx);
-static void updateWhitePixelUV(Context* ctx);
+//static const uv_t* getWhitePixelUV(Context* ctx);
+//static void updateWhitePixelUV(Context* ctx);
 
 static float* allocTransformedVertices(Context* ctx, uint32_t numVertices);
 static const float* transformPath(Context* ctx);
@@ -477,9 +473,7 @@ static void createDrawCommand_Clip(Context* ctx, const float* vtx, uint32_t numV
 static ImageHandle allocImage(Context* ctx);
 static void resetImage(Image* img);
 
-static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color);
-static bool allocTextAtlas(Context* ctx);
-static void flushTextAtlas(Context* ctx);
+static void renderTextQuads(Context* ctx, const TextQuad* quads, uint32_t numQuads, Color color, ImageHandle img);
 
 static CommandListHandle allocCommandList(Context* ctx);
 static bool isCommandListHandleValid(Context* ctx, CommandListHandle handle);
@@ -731,7 +725,6 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 		+ alignSize(sizeof(Gradient) * cfg->m_MaxGradients, alignment)
 		+ alignSize(sizeof(ImagePattern) * cfg->m_MaxImagePatterns, alignment)
 		+ alignSize(sizeof(State) * cfg->m_MaxStateStackSize, alignment)
-		+ alignSize(sizeof(FontData) * cfg->m_MaxFonts, alignment)
 		+ alignSize(sizeof(CommandList) * cfg->m_MaxCommandLists, alignment);
 
 	uint8_t* mem = (uint8_t*)BX_ALIGNED_ALLOC(allocator, totalMem, alignment);
@@ -741,7 +734,6 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 	ctx->m_Gradients = (Gradient*)mem;         mem += alignSize(sizeof(Gradient) * cfg->m_MaxGradients, alignment);
 	ctx->m_ImagePatterns = (ImagePattern*)mem; mem += alignSize(sizeof(ImagePattern) * cfg->m_MaxImagePatterns, alignment);
 	ctx->m_StateStack = (State*)mem;           mem += alignSize(sizeof(State) * cfg->m_MaxStateStackSize, alignment);
-	ctx->m_FontData = (FontData*)mem;          mem += alignSize(sizeof(FontData) * cfg->m_MaxFonts, alignment);
 	ctx->m_CmdLists = (CommandList*)mem;       mem += alignSize(sizeof(CommandList) * cfg->m_MaxCommandLists, alignment);
 
 #if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
@@ -811,42 +803,43 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 	ctx->m_ExtentRadiusFeatherUniform = bgfx::createUniform("u_extentRadiusFeather", bgfx::UniformType::Vec4, 1);
 	ctx->m_InnerColorUniform = bgfx::createUniform("u_innerCol", bgfx::UniformType::Vec4, 1);
 	ctx->m_OuterColorUniform = bgfx::createUniform("u_outerCol", bgfx::UniformType::Vec4, 1);
-	
-	// FontStash
-	// Init font stash
+
+	// Initialize font system
 	const bgfx::Caps* caps = bgfx::getCaps();
-	FONSparams fontParams;
-	bx::memSet(&fontParams, 0, sizeof(fontParams));
-	fontParams.width = VG_CONFIG_MIN_FONT_ATLAS_SIZE;
-	fontParams.height = VG_CONFIG_MIN_FONT_ATLAS_SIZE;
-	fontParams.flags = FONS_ZERO_TOPLEFT;
-#if FONS_CUSTOM_WHITE_RECT
+	FontSystemConfig fsCfg;
+	fsCfg.m_AtlasWidth = VG_CONFIG_MIN_FONT_ATLAS_SIZE;
+	fsCfg.m_AtlasHeight = VG_CONFIG_MIN_FONT_ATLAS_SIZE;
+	fsCfg.m_Flags = FontSystemFlags::Origin_TopLeft;
+	fsCfg.m_FontAtlasImageFlags = cfg->m_FontAtlasImageFlags;
 	// NOTE: White rect might get too large but since the atlas limit is the texture size limit
 	// it should be that large. Otherwise shapes cached when the atlas was 512x512 will get wrong
 	// white pixel UVs when the atlas gets to the texture size limit (should not happen but better
 	// be safe).
-	fontParams.whiteRectWidth = caps->limits.maxTextureSize / VG_CONFIG_MIN_FONT_ATLAS_SIZE;
-	fontParams.whiteRectHeight = caps->limits.maxTextureSize / VG_CONFIG_MIN_FONT_ATLAS_SIZE;
-#endif
-	fontParams.renderCreate = nullptr;
-	fontParams.renderUpdate = nullptr;
-	fontParams.renderDraw = nullptr;
-	fontParams.renderDelete = nullptr;
-	fontParams.userPtr = nullptr;
-	ctx->m_FontStashContext = fonsCreateInternal(&fontParams);
-	VG_CHECK(ctx->m_FontStashContext != nullptr, "Failed to initialize FontStash");
+	fsCfg.m_WhiteRectWidth = (uint16_t)(caps->limits.maxTextureSize / VG_CONFIG_MIN_FONT_ATLAS_SIZE);
+	fsCfg.m_WhiteRectHeight = (uint16_t)(caps->limits.maxTextureSize / VG_CONFIG_MIN_FONT_ATLAS_SIZE);
+	fsCfg.m_MaxTextureSize = caps->limits.maxTextureSize;
+	ctx->m_FontSystem = fsCreate(ctx, allocator, &fsCfg);
+	if (!ctx->m_FontSystem) {
+		destroyContext(ctx);
+		return nullptr;
+	}
 
+#if 0
 	for (uint32_t i = 0; i < VG_CONFIG_MAX_FONT_IMAGES; ++i) {
 		ctx->m_FontImages[i] = VG_INVALID_HANDLE;
 	}
 
-	ctx->m_FontImages[0] = createImage(ctx, (uint16_t)fontParams.width, (uint16_t)fontParams.height, cfg->m_FontAtlasImageFlags, nullptr);
+	ctx->m_FontImages[0] = createImage(ctx, (uint16_t)fsCfg.m_AtlasWidth, (uint16_t)fsCfg.m_AtlasHeight, cfg->m_FontAtlasImageFlags, nullptr);
 	VG_CHECK(isValid(ctx->m_FontImages[0]), "Failed to initialize font texture");
 	
 	ctx->m_FontImageID = 0;
-	updateWhitePixelUV(ctx);
 
+	updateWhitePixelUV(ctx);
+#endif
+
+#if 0
 	fonsInitString(&ctx->m_TextString);
+#endif
 
 	return ctx;
 }
@@ -854,9 +847,10 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 void destroyContext(Context* ctx)
 {
 	bx::AllocatorI* allocator = ctx->m_Allocator;
-	const ContextConfig* cfg = &ctx->m_Config;
 
+#if 0
 	fonsDestroyString(&ctx->m_TextString);
+#endif
 
 	for (uint32_t i = 0; i < DrawCommand::Type::NumTypes; ++i) {
 		if (bgfx::isValid(ctx->m_ProgramHandle[i])) {
@@ -962,22 +956,17 @@ void destroyContext(Context* ctx)
 	BX_FREE(allocator, ctx->m_ClipCommands);
 	ctx->m_ClipCommands = nullptr;
 
-	// Font data
-	for (int i = 0; i < cfg->m_MaxFonts; ++i) {
-		FontData* fd = &ctx->m_FontData[i];
-		if (fd->m_Data && fd->m_Owned) {
-			BX_FREE(allocator, fd->m_Data);
-			fd->m_Data = nullptr;
-			fd->m_Owned = false;
-		}
+	if (ctx->m_FontSystem) {
+		fsDestroy(ctx->m_FontSystem, ctx);
+		ctx->m_FontSystem = nullptr;
 	}
 
-	fonsDeleteInternal(ctx->m_FontStashContext);
-
+#if 0
 	for (uint32_t i = 0; i < VG_CONFIG_MAX_FONT_IMAGES; ++i) {
 		destroyImage(ctx, ctx->m_FontImages[i]);
 	}
-
+#endif
+	
 	for (uint32_t i = 0; i < ctx->m_ImageCapacity; ++i) {
 		Image* img = &ctx->m_Images[i];
 		if (bgfx::isValid(img->m_bgfxHandle)) {
@@ -999,8 +988,10 @@ void destroyContext(Context* ctx)
 	destroyStroker(ctx->m_Stroker);
 	ctx->m_Stroker = nullptr;
 
+#if 0
 	BX_ALIGNED_FREE(allocator, ctx->m_TextQuads, 16);
 	ctx->m_TextQuads = nullptr;
+#endif
 
 	BX_ALIGNED_FREE(allocator, ctx->m_TextVertices, 16);
 	ctx->m_TextVertices = nullptr;
@@ -1078,7 +1069,7 @@ void end(Context* ctx)
 		return;
 	}
 
-	flushTextAtlas(ctx);
+	fsFlushFontAtlasImage(ctx->m_FontSystem, ctx);
 
 	// Update bgfx vertex buffers...
 	const uint32_t numVertexBuffers = ctx->m_NumVertexBuffers;
@@ -1272,40 +1263,7 @@ void frame(Context* ctx)
 {
 	ctx->m_NumVertexBuffers = 0;
 
-	if (ctx->m_FontImageID != 0) {
-		ImageHandle fontImage = ctx->m_FontImages[ctx->m_FontImageID];
-
-		// delete images that smaller than current one
-		if (isValid(fontImage)) {
-			uint16_t iw, ih;
-			getImageSize(ctx, fontImage, &iw, &ih);
-
-			uint32_t j = 0;
-			for (uint32_t i = 0; i < ctx->m_FontImageID; i++) {
-				if (isValid(ctx->m_FontImages[i])) {
-					uint16_t nw, nh;
-					getImageSize(ctx, ctx->m_FontImages[i], &nw, &nh);
-
-					if (nw < iw || nh < ih) {
-						destroyImage(ctx, ctx->m_FontImages[i]);
-					} else {
-						ctx->m_FontImages[j++] = ctx->m_FontImages[i];
-					}
-				}
-			}
-
-			// make current font image to first
-			ctx->m_FontImages[j++] = ctx->m_FontImages[0];
-			ctx->m_FontImages[0] = fontImage;
-			ctx->m_FontImageID = 0;
-			updateWhitePixelUV(ctx);
-
-			// clear all images after j
-			for (int i = j; i < VG_CONFIG_MAX_FONT_IMAGES; i++) {
-				ctx->m_FontImages[i] = VG_INVALID_HANDLE;
-			}
-		}
-	}
+	fsFrame(ctx->m_FontSystem, ctx);
 }
 
 const Stats* getStats(Context* ctx)
@@ -1711,77 +1669,51 @@ void getScissor(Context* ctx, float* rect)
 
 FontHandle createFont(Context* ctx, const char* name, uint8_t* data, uint32_t size, uint32_t flags)
 {
-	if (ctx->m_NextFontID == ctx->m_Config.m_MaxFonts) {
-		return VG_INVALID_HANDLE;
-	}
-
-	const bool copyData = (flags & FontFlags::DontCopyData) == 0;
-
-	uint8_t* fontData = nullptr;
-	if (copyData) {
-		fontData = (uint8_t*)BX_ALLOC(ctx->m_Allocator, size);
-		bx::memCopy(fontData, data, size);
-	} else {
-		fontData = data;
-	}
-
-	int fonsHandle = fonsAddFontMem(ctx->m_FontStashContext, name, fontData, size, 0);
-	if (fonsHandle == FONS_INVALID) {
-		if (copyData) {
-			BX_FREE(ctx->m_Allocator, fontData);
-		}
-		return VG_INVALID_HANDLE;
-	}
-
-	FontData* fd = &ctx->m_FontData[ctx->m_NextFontID++];
-	fd->m_FonsHandle = fonsHandle;
-	fd->m_Data = fontData;
-	fd->m_Owned = copyData;
-
-	return { (uint16_t)fonsHandle };
+	return fsAddFont(ctx->m_FontSystem, name, data, size, flags);
 }
 
 FontHandle getFontByName(Context* ctx, const char* name)
 {
-	const int fonsHandle = fonsGetFontByName(ctx->m_FontStashContext, name);
-	return { (uint16_t)fonsHandle };
+	return fsFindFont(ctx->m_FontSystem, name);
 }
 
 bool setFallbackFont(Context* ctx, FontHandle base, FontHandle fallback)
 {
 	VG_CHECK(isValid(base) && isValid(fallback), "Invalid font handle");
-
-	FONScontext* fons = ctx->m_FontStashContext;
-	return fonsAddFallbackFont(fons, base.idx, fallback.idx) == 1;
+	return fsAddFallbackFont(ctx->m_FontSystem, base, fallback);
 }
 
 float measureText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end, float* bounds)
 {
-	// nvgTextBounds()
-	const State* state = getState(ctx);
-	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
-	const float invscale = 1.0f / scale;
+	const uint32_t len = end
+		? (uint32_t)(end - str)
+		: bx::strLen(str)
+		;
 
-	FONScontext* fons = ctx->m_FontStashContext;
-	fonsSetSize(fons, cfg.m_FontSize * scale);
-	fonsSetAlign(fons, cfg.m_Alignment);
-	fonsSetFont(fons, cfg.m_FontHandle.idx);
-
-	float width = fonsTextBounds(fons, x * scale, y * scale, str, end, bounds);
-	if (bounds != nullptr) {
-		// Use line bounds for height.
-		fonsLineBounds(fons, y * scale, &bounds[1], &bounds[3]);
-		bounds[0] *= invscale;
-		bounds[1] *= invscale;
-		bounds[2] *= invscale;
-		bounds[3] *= invscale;
+	TextMesh mesh;
+	bx::memSet(&mesh, 0, sizeof(TextMesh));
+	if (!fsText(ctx->m_FontSystem, nullptr, cfg, str, len, 0, &mesh)) {
+		if (bounds) {
+			bx::memSet(bounds, 0, sizeof(float) * 4);
+		}
+		return 0.0f;
 	}
 
-	return width * invscale;
+	if (bounds) {
+		fsLineBounds(ctx->m_FontSystem, cfg, 0.0f, &mesh.m_Bounds[1], &mesh.m_Bounds[3]);
+
+		bounds[0] = x + mesh.m_Bounds[0];
+		bounds[1] = y + mesh.m_Bounds[1];
+		bounds[2] = x + mesh.m_Bounds[2];
+		bounds[3] = y + mesh.m_Bounds[3];
+	}
+
+	return mesh.m_Width;
 }
 
 void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, float* bounds, uint32_t flags)
 {
+#if 0
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
@@ -1849,259 +1781,22 @@ void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float
 		bounds[2] = maxx;
 		bounds[3] = maxy;
 	}
+#endif
 }
 
 float getTextLineHeight(Context* ctx, const TextConfig& cfg)
 {
-	const State* state = getState(ctx);
-	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
-	const float invscale = 1.0f / scale;
-
-	FONScontext* fons = ctx->m_FontStashContext;
-	fonsSetSize(fons, cfg.m_FontSize * scale);
-	fonsSetAlign(fons, cfg.m_Alignment);
-	fonsSetFont(fons, cfg.m_FontHandle.idx);
-
-	float lineh;
-	fonsVertMetrics(fons, nullptr, nullptr, &lineh);
-	lineh *= invscale;
-
-	return lineh;
+	return fsGetLineHeight(ctx->m_FontSystem, cfg);
 }
 
 int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const char* end, float breakRowWidth, TextRow* rows, int maxRows, uint32_t flags)
 {
-	// nvgTextBreakLines()
-#define CP_SPACE  0
-#define CP_NEW_LINE  1
-#define CP_CHAR 2
-
-	const State* state = getState(ctx);
-	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
-	const float invscale = 1.0f / scale;
-
-	if (maxRows == 0) {
-		return 0;
-	}
-
-	if (end == nullptr) {
-		end = str + bx::strLen(str);
-	}
-
-	if (str == end) {
-		return 0;
-	}
-
-	FONScontext* fons = ctx->m_FontStashContext;
-	fonsSetSize(fons, cfg.m_FontSize * scale);
-	fonsSetAlign(fons, cfg.m_Alignment);
-	fonsSetFont(fons, cfg.m_FontHandle.idx);
-
-	breakRowWidth *= scale;
-
-	int nrows = 0;
-	float rowStartX = 0;
-	float rowWidth = 0;
-	float rowMinX = 0;
-	float rowMaxX = 0;
-	const char* rowStart = nullptr;
-	const char* rowEnd = nullptr;
-	const char* wordStart = nullptr;
-	float wordStartX = 0;
-	float wordMinX = 0;
-	const char* breakEnd = nullptr;
-	float breakWidth = 0;
-	float breakMaxX = 0;
-	int type = CP_SPACE, ptype = CP_SPACE;
-	unsigned int pcodepoint = 0;
-
-	FONStextIter iter, prevIter;
-	fonsTextIterInit(fons, &iter, 0, 0, str, end, FONS_GLYPH_BITMAP_OPTIONAL);
-	prevIter = iter;
-
-	FONSquad q;
-	while (fonsTextIterNext(fons, &iter, &q)) {
-		if (iter.prevGlyphIndex < 0 && allocTextAtlas(ctx)) {
-			// can not retrieve glyph?
-			iter = prevIter;
-			fonsTextIterNext(fons, &iter, &q); // try again
-		}
-
-		prevIter = iter;
-		switch (iter.codepoint) {
-		case 9:			// \t
-		case 11:		// \v
-		case 12:		// \f
-		case 0x00a0:	// NBSP
-			type = CP_SPACE;
-			break;
-		case 32:		// space 
-			// JD: Treat spaces as regular characters in order to be able to have pre and post spaces in an edit box.
-			if (flags & TextBoxFlags::KeepSpaces) {
-				type = CP_CHAR;
-			} else {
-				type = CP_SPACE;
-			}
-			break;
-		case 10:		// \n
-			type = pcodepoint == 13 ? CP_SPACE : CP_NEW_LINE;
-			break;
-		case 13:		// \r
-			type = pcodepoint == 10 ? CP_SPACE : CP_NEW_LINE;
-			break;
-		case 0x0085:	// NEL
-			type = CP_NEW_LINE;
-			break;
-		default:
-			type = CP_CHAR;
-			break;
-		}
-
-		if (type == CP_NEW_LINE) {
-			// Always handle new lines.
-			rows[nrows].start = rowStart != nullptr ? rowStart : iter.str;
-			rows[nrows].end = rowEnd != nullptr ? rowEnd : iter.str;
-			rows[nrows].width = rowWidth * invscale;
-			rows[nrows].minx = rowMinX * invscale;
-			rows[nrows].maxx = rowMaxX * invscale;
-			rows[nrows].next = iter.next;
-			nrows++;
-			if (nrows >= maxRows) {
-				return nrows;
-			}
-
-			// Set null break point
-			breakEnd = rowStart;
-			breakWidth = 0.0;
-			breakMaxX = 0.0;
-
-			// Indicate to skip the white space at the beginning of the row.
-			rowStart = nullptr;
-			rowEnd = nullptr;
-			rowWidth = 0;
-			rowMinX = rowMaxX = 0;
-		} else {
-			if (rowStart == nullptr) {
-				// Skip white space until the beginning of the line
-				if (type == CP_CHAR) {
-					// The current char is the row so far
-					rowStartX = iter.x;
-					rowStart = iter.str;
-					rowEnd = iter.next;
-					rowWidth = iter.nextx - rowStartX; // q.x1 - rowStartX;
-					rowMinX = q.x0 - rowStartX;
-					rowMaxX = q.x1 - rowStartX;
-					wordStart = iter.str;
-					wordStartX = iter.x;
-					wordMinX = q.x0 - rowStartX;
-
-					// Set null break point
-					breakEnd = rowStart;
-					breakWidth = 0.0;
-					breakMaxX = 0.0;
-				}
-			} else {
-				float nextWidth = iter.nextx - rowStartX;
-
-				// track last non-white space character
-				if (type == CP_CHAR) {
-					rowEnd = iter.next;
-//					rowWidth = iter.nextx - rowStartX;
-					rowMaxX = q.x1 - rowStartX;
-				}
-
-				// track last end of a word
-				if (ptype == CP_CHAR && type == CP_SPACE) {
-					breakEnd = iter.str;
-					breakWidth = nextWidth; // rowWidth;
-					breakMaxX = rowMaxX;
-				}
-
-				// track last beginning of a word
-				if (ptype == CP_SPACE && type == CP_CHAR) {
-					wordStart = iter.str;
-					wordStartX = iter.x;
-					wordMinX = q.x0 - rowStartX;
-				}
-
-				// Break to new line when a character is beyond break width.
-				if (type == CP_CHAR && nextWidth > breakRowWidth) {
-					// The run length is too long, need to break to new line.
-					if (breakEnd == rowStart) {
-						// The current word is longer than the row length, just break it from here.
-						rows[nrows].start = rowStart;
-						rows[nrows].end = iter.str;
-						rows[nrows].width = rowWidth * invscale;
-						rows[nrows].minx = rowMinX * invscale;
-						rows[nrows].maxx = rowMaxX * invscale;
-						rows[nrows].next = iter.str;
-						nrows++;
-						if (nrows >= maxRows) {
-							return nrows;
-						}
-						rowStartX = iter.x;
-						rowStart = iter.str;
-						rowEnd = iter.next;
-						rowWidth = iter.nextx - rowStartX;
-						rowMinX = q.x0 - rowStartX;
-						rowMaxX = q.x1 - rowStartX;
-						wordStart = iter.str;
-						wordStartX = iter.x;
-						wordMinX = q.x0 - rowStartX;
-					} else {
-						// Break the line from the end of the last word, and start new line from the beginning of the new.
-						rows[nrows].start = rowStart;
-						rows[nrows].end = breakEnd;
-						rows[nrows].width = breakWidth * invscale;
-						rows[nrows].minx = rowMinX * invscale;
-						rows[nrows].maxx = breakMaxX * invscale;
-						rows[nrows].next = wordStart;
-						nrows++;
-						if (nrows >= maxRows) {
-							return nrows;
-						}
-						rowStartX = wordStartX;
-						rowStart = wordStart;
-						rowEnd = iter.next;
-						rowWidth = iter.nextx - rowStartX;
-						rowMinX = wordMinX;
-						rowMaxX = q.x1 - rowStartX;
-						// No change to the word start
-					}
-					// Set null break point
-					breakEnd = rowStart;
-					breakWidth = 0.0;
-					breakMaxX = 0.0;
-				} else {
-					rowWidth = nextWidth;
-				}
-			}
-		}
-
-		pcodepoint = iter.codepoint;
-		ptype = type;
-	}
-
-	// Break the line from the end of the last word, and start new line from the beginning of the new.
-	if (rowStart != nullptr) {
-		rows[nrows].start = rowStart;
-		rows[nrows].end = rowEnd;
-		rows[nrows].width = rowWidth * invscale;
-		rows[nrows].minx = rowMinX * invscale;
-		rows[nrows].maxx = rowMaxX * invscale;
-		rows[nrows].next = end;
-		nrows++;
-	}
-
-	return nrows;
-
-#undef CP_SPACE
-#undef CP_NEW_LINE
-#undef CP_CHAR
+	return (int32_t)fsTextBreakLines(ctx->m_FontSystem, cfg, str, end, breakRowWidth, rows, maxRows, flags);
 }
 
 int textGlyphPositions(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end, GlyphPosition* positions, int maxPositions)
 {
+#if 0
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
@@ -2144,6 +1839,9 @@ int textGlyphPositions(Context* ctx, const TextConfig& cfg, float x, float y, co
 	}
 
 	return npos;
+#else
+	return 0;
+#endif
 }
 
 bool getImageSize(Context* ctx, ImageHandle handle, uint16_t* w, uint16_t* h)
@@ -4079,7 +3777,7 @@ static void ctxSetViewBox(Context* ctx, float x, float y, float w, float h)
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
 {
 	if (!isValid(img)) {
-		img = ctx->m_FontImages[0];
+		img = fsGetFontAtlasImage(ctx->m_FontSystem);
 	}
 
 	const State* state = getState(ctx);
@@ -4098,7 +3796,7 @@ static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, ui
 	if (uv) {
 		bx::memCopy(dstUV, uv, sizeof(uv_t) * 2 * numVertices);
 	} else {
-		const uv_t* whiteRectUV = getWhitePixelUV(ctx);
+		const uv_t* whiteRectUV = fsGetWhitePixelUV(ctx->m_FontSystem);
 
 #if VG_CONFIG_UV_INT16
 		vgutil::memset32(dstUV, numVertices, &whiteRectUV[0]);
@@ -4126,97 +3824,71 @@ static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, ui
 
 static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end)
 {
-	VG_CHECK(isValid(cfg.m_FontHandle), "Invalid font handle");
-
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
+
+	const uint32_t c = colorSetAlpha(cfg.m_Color, (uint8_t)(state->m_GlobalAlpha * colorGetAlpha(cfg.m_Color)));
+	if (colorGetAlpha(c) == 0) {
+		return;
+	}
+
 	const float scaledFontSize = cfg.m_FontSize * scale;
 	if (scaledFontSize < VG_CONFIG_MIN_FONT_SIZE) {
 		return;
 	}
 
-	end = end ? end : (str + bx::strLen(str));
-	if (end == str) {
+	const uint32_t len = end
+		? (uint32_t)(end - str)
+		: bx::strLen(str)
+		;
+
+	const TextConfig newCfg = makeTextConfig(ctx, cfg.m_FontHandle, scaledFontSize, cfg.m_Alignment, c, cfg.m_Blur * scale, cfg.m_Spacing * scale);
+
+	TextMesh mesh;
+	bx::memSet(&mesh, 0, sizeof(TextMesh));
+	if (!fsText(ctx->m_FontSystem, ctx, newCfg, str, len, TextFlags::BuildBitmaps, &mesh)) {
 		return;
 	}
-
-	FONSstring* vgs = &ctx->m_TextString;
-	FONScontext* fons = ctx->m_FontStashContext;
-	fonsSetSize(fons, scaledFontSize);
-	fonsSetFont(fons, cfg.m_FontHandle.idx);
-
-	fonsResetString(fons, vgs, str, end);
-
-	int numBakedChars = fonsBakeString(fons, vgs);
-	if (numBakedChars == -1) {
-		// Atlas full? Retry
-		if (!allocTextAtlas(ctx)) {
-			VG_WARN(false, "Failed to allocate enough text atlas space for string");
-			return;
-		}
-
-		numBakedChars = fonsBakeString(fons, vgs);
-	}
-
-	if (numBakedChars <= 0) {
-		return;
-	}
-
-	if (ctx->m_TextQuadCapacity < (uint32_t)numBakedChars) {
-		bx::AllocatorI* allocator = ctx->m_Allocator;
-
-		ctx->m_TextQuadCapacity = (uint32_t)numBakedChars;
-		ctx->m_TextQuads = (FONSquad*)BX_ALIGNED_REALLOC(allocator, ctx->m_TextQuads, sizeof(FONSquad) * ctx->m_TextQuadCapacity, 16);
-		ctx->m_TextVertices = (float*)BX_ALIGNED_REALLOC(allocator, ctx->m_TextVertices, sizeof(float) * 2 * (ctx->m_TextQuadCapacity * 4), 16);
-	}
-
-	bx::memCopy(ctx->m_TextQuads, vgs->m_Quads, sizeof(FONSquad) * numBakedChars);
-
-	float dx = 0.0f, dy = 0.0f;
-	fonsAlignString(fons, vgs, cfg.m_Alignment, &dx, &dy);
 
 	ctxPushState(ctx);
-	ctxTransformTranslate(ctx, x + dx / scale, y + dy / scale);
-	renderTextQuads(ctx, numBakedChars, cfg.m_Color);
+	ctxTransformTranslate(ctx, x + mesh.m_Alignment[0] / scale, y + mesh.m_Alignment[1] / scale);
+	renderTextQuads(ctx, mesh.m_Quads, mesh.m_Size, newCfg.m_Color, fsGetFontAtlasImage(ctx->m_FontSystem));
 	ctxPopState(ctx);
 }
 
-static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags)
+static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textBreakFlags)
 {
-	VG_CHECK(isValid(cfg.m_FontHandle), "Invalid font handle");
+	end = end
+		? end
+		: str + bx::strLen(str)
+		;
 
-	const State* state = getState(ctx);
-	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
-	const float scaledFontSize = cfg.m_FontSize * scale;
-	if (scaledFontSize < VG_CONFIG_MIN_FONT_SIZE) {
-		return;
-	}
+	const float lineHeight = fsGetLineHeight(ctx->m_FontSystem, cfg);
+	const TextAlignHor::Enum halign = VG_TEXT_ALIGN_HOR(cfg.m_Alignment);
+	const TextAlignVer::Enum valign = VG_TEXT_ALIGN_VER(cfg.m_Alignment);
 
-	const uint32_t alignment = cfg.m_Alignment;
-	const int halign = alignment & (FONS_ALIGN_LEFT | FONS_ALIGN_CENTER | FONS_ALIGN_RIGHT);
-	const int valign = alignment & (FONS_ALIGN_TOP | FONS_ALIGN_MIDDLE | FONS_ALIGN_BOTTOM | FONS_ALIGN_BASELINE);
-	const float lineh = getTextLineHeight(ctx, cfg);
+	const TextConfig newCfg = makeTextConfig(ctx, cfg.m_FontHandle, cfg.m_FontSize, VG_TEXT_ALIGN(vg::TextAlignHor::Left, valign), cfg.m_Color, cfg.m_Blur, cfg.m_Spacing);
 
-	const TextConfig newCfg = makeTextConfig(ctx, cfg.m_FontHandle, cfg.m_FontSize, FONS_ALIGN_LEFT | valign, cfg.m_Color);
+	TextRow rows[4];
+	uint32_t numRows = 0;
+	while ((numRows = fsTextBreakLines(ctx->m_FontSystem, cfg, str, end, breakWidth, &rows[0], BX_COUNTOF(rows), textBreakFlags)) != 0) {
+		for (uint32_t i = 0; i < numRows; ++i) {
+			if (halign == TextAlignHor::Left) {
+				ctxText(ctx, newCfg, x, y, rows[i].start, rows[i].end);
 
-	TextRow rows[2];
-	int nrows;
-	while ((nrows = textBreakLines(ctx, cfg, str, end, breakWidth, rows, 2, textboxFlags))) {
-		for (int i = 0; i < nrows; ++i) {
-			TextRow* row = &rows[i];
-
-			if (halign & FONS_ALIGN_LEFT) {
-				ctxText(ctx, newCfg, x, y, row->start, row->end);
-			} else if (halign & FONS_ALIGN_CENTER) {
-				ctxText(ctx, newCfg, x + (breakWidth - row->width) * 0.5f, y, row->start, row->end);
-			} else if (halign & FONS_ALIGN_RIGHT) {
-				ctxText(ctx, newCfg, x + breakWidth - row->width, y, row->start, row->end);
+				vg::beginPath(ctx);
+				vg::rect(ctx, x + rows[i].minx, y, rows[i].maxx - rows[i].minx, lineHeight);
+				vg::strokePath(ctx, vg::Colors::Green, 1.0f, vg::StrokeFlags::ButtMiterAA);
+			} else if (halign == TextAlignHor::Center) {
+				ctxText(ctx, newCfg, x + (breakWidth - rows[i].width) * 0.5f, y, rows[i].start, rows[i].end);
+			} else if (halign == TextAlignHor::Right) {
+				ctxText(ctx, newCfg, x + breakWidth - rows[i].width, y, rows[i].start, rows[i].end);
 			}
 
-			y += lineh; // Assume line height multiplier to be 1.0 (NanoVG allows the user to change it, but I don't use it).
+			y += lineHeight;
 		}
 
-		str = rows[nrows - 1].next;
+		str = rows[numRows - 1].next;
 	}
 }
 
@@ -4839,25 +4511,6 @@ static void aclSubmitCommandList(Context* ctx, CommandListHandle handle)
 #endif // VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 
 // Internal
-static inline const uv_t* getWhitePixelUV(Context* ctx)
-{
-	return ctx->m_FontImageWhitePixelUV;
-}
-
-static void updateWhitePixelUV(Context* ctx)
-{
-	uint16_t w, h;
-	getImageSize(ctx, ctx->m_FontImages[0], &w, &h);
-
-#if VG_CONFIG_UV_INT16
-	ctx->m_FontImageWhitePixelUV[0] = INT16_MAX / (int16_t)w;
-	ctx->m_FontImageWhitePixelUV[1] = INT16_MAX / (int16_t)h;
-#else
-	ctx->m_FontImageWhitePixelUV[0] = 0.5f / (float)w;
-	ctx->m_FontImageWhitePixelUV[1] = 0.5f / (float)h;
-#endif
-}
-
 static State* getState(Context* ctx)
 {
 	const uint32_t top = ctx->m_StateStackTop;
@@ -5147,7 +4800,7 @@ static void releaseIndexBuffer(Context* ctx, uint16_t* data)
 static void createDrawCommand_VertexColor(Context* ctx, const float* vtx, uint32_t numVertices, const uint32_t* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices)
 {
 	// Allocate the draw command
-	const ImageHandle fontImg = ctx->m_FontImages[0];
+	const ImageHandle fontImg = fsGetFontAtlasImage(ctx->m_FontSystem);
 	DrawCommand* cmd = allocDrawCommand(ctx, numVertices, numIndices, DrawCommand::Type::Textured, fontImg.idx);
 
 	// Vertex buffer
@@ -5157,7 +4810,7 @@ static void createDrawCommand_VertexColor(Context* ctx, const float* vtx, uint32
 	float* dstPos = &vb->m_Pos[vbOffset << 1];
 	bx::memCopy(dstPos, vtx, sizeof(float) * 2 * numVertices);
 
-	const uv_t* uv = getWhitePixelUV(ctx);
+	const uv_t* uv = fsGetWhitePixelUV(ctx->m_FontSystem);
 
 	uv_t* dstUV = &vb->m_UV[vbOffset << 1];
 #if VG_CONFIG_UV_INT16
@@ -5435,57 +5088,19 @@ static ImageHandle allocImage(Context* ctx)
 	return handle;
 }
 
-static bool allocTextAtlas(Context* ctx)
+static void renderTextQuads(Context* ctx, const TextQuad* quads, uint32_t numQuads, Color color, ImageHandle img)
 {
-	flushTextAtlas(ctx);
+	const uint32_t numDrawVertices = numQuads * 4;
+	const uint32_t numDrawIndices = numQuads * 6;
 
-	if (ctx->m_FontImageID + 1 >= VG_CONFIG_MAX_FONT_IMAGES) {
-		VG_WARN(false, "No more text atlases for this frame");
-		return false;
+	if (ctx->m_TextVertexCapacity < numDrawVertices) {
+		ctx->m_TextVertices = (float*)BX_ALIGNED_REALLOC(ctx->m_Allocator, ctx->m_TextVertices, sizeof(float) * 2 * numDrawVertices, 16);
+		ctx->m_TextVertexCapacity = numDrawVertices;
 	}
 
-	// if next fontImage already have a texture
-	uint16_t iw, ih;
-	if (isValid(ctx->m_FontImages[ctx->m_FontImageID + 1])) {
-		getImageSize(ctx, ctx->m_FontImages[ctx->m_FontImageID + 1], &iw, &ih);
-	} else {
-		// calculate the new font image size and create it.
-		bool imgSizeValid = getImageSize(ctx, ctx->m_FontImages[ctx->m_FontImageID], &iw, &ih);
-		VG_CHECK(imgSizeValid, "Invalid font atlas dimensions");
-		BX_UNUSED(imgSizeValid);
-
-		if (iw > ih) {
-			ih *= 2;
-		} else {
-			iw *= 2;
-		}
-
-		const uint32_t maxTextureSize = bgfx::getCaps()->limits.maxTextureSize;
-		if (iw > maxTextureSize || ih > maxTextureSize) {
-			iw = ih = (uint16_t)maxTextureSize;
-		}
-
-		ctx->m_FontImages[ctx->m_FontImageID + 1] = createImage(ctx, iw, ih, ctx->m_Config.m_FontAtlasImageFlags, nullptr);
-	}
-
-	++ctx->m_FontImageID;
-	updateWhitePixelUV(ctx);
-
-	fonsResetAtlas(ctx->m_FontStashContext, iw, ih);
-
-	return true;
-}
-
-static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color)
-{
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
-
-	const uint32_t c = colorSetAlpha(color, (uint8_t)(state->m_GlobalAlpha * colorGetAlpha(color)));
-	if (colorGetAlpha(c) == 0) {
-		return;
-	}
 
 	float mtx[6];
 	mtx[0] = state->m_TransformMtx[0] * invscale;
@@ -5496,12 +5111,9 @@ static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color)
 	mtx[5] = state->m_TransformMtx[5];
 
 	// TODO: Calculate bounding rect of the quads.
-	vgutil::batchTransformTextQuads(&ctx->m_TextQuads->x0, numQuads, mtx, ctx->m_TextVertices);
+	vgutil::batchTransformTextQuads(&quads->m_Pos[0], numQuads, mtx, ctx->m_TextVertices);
 
-	const uint32_t numDrawVertices = numQuads * 4;
-	const uint32_t numDrawIndices = numQuads * 6;
-
-	DrawCommand* cmd = allocDrawCommand(ctx, numDrawVertices, numDrawIndices, DrawCommand::Type::Textured, ctx->m_FontImages[ctx->m_FontImageID].idx);
+	DrawCommand* cmd = allocDrawCommand(ctx, numDrawVertices, numDrawIndices, DrawCommand::Type::Textured, img.idx);
 
 	VertexBuffer* vb = &ctx->m_VertexBuffers[cmd->m_VertexBufferID];
 	const uint32_t vbOffset = cmd->m_FirstVertexID + cmd->m_NumVertices;
@@ -5510,35 +5122,16 @@ static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color)
 	bx::memCopy(dstPos, ctx->m_TextVertices, sizeof(float) * 2 * numDrawVertices);
 
 	uint32_t* dstColor = &vb->m_Color[vbOffset];
-	vgutil::memset32(dstColor, numDrawVertices, &c);
+	vgutil::memset32(dstColor, numDrawVertices, &color);
 
-#if VG_CONFIG_UV_INT16
-	int16_t* dstUV = &vb->m_UV[vbOffset << 1];
-	const FONSquad* q = ctx->m_TextQuads;
+	uv_t* dstUV = &vb->m_UV[vbOffset << 1];
+	const TextQuad* q = quads;
 	uint32_t nq = numQuads;
 	while (nq-- > 0) {
-		const float s0 = q->s0;
-		const float s1 = q->s1;
-		const float t0 = q->t0;
-		const float t1 = q->t1;
-
-		dstUV[0] = (int16_t)(s0 * INT16_MAX); dstUV[1] = (int16_t)(t0 * INT16_MAX);
-		dstUV[2] = (int16_t)(s1 * INT16_MAX); dstUV[3] = (int16_t)(t0 * INT16_MAX);
-		dstUV[4] = (int16_t)(s1 * INT16_MAX); dstUV[5] = (int16_t)(t1 * INT16_MAX);
-		dstUV[6] = (int16_t)(s0 * INT16_MAX); dstUV[7] = (int16_t)(t1 * INT16_MAX);
-
-		dstUV += 8;
-		++q;
-	}
-#else
-	float* dstUV = &vb->m_UV[vbOffset << 1];
-	const FONSquad* q = ctx->m_TextQuads;
-	uint32_t nq = numQuads;
-	while (nq-- > 0) {
-		const float s0 = q->s0;
-		const float s1 = q->s1;
-		const float t0 = q->t0;
-		const float t1 = q->t1;
+		const uv_t s0 = q->m_TexCoord[0];
+		const uv_t t0 = q->m_TexCoord[1];
+		const uv_t s1 = q->m_TexCoord[2];
+		const uv_t t1 = q->m_TexCoord[3];
 
 		dstUV[0] = s0; dstUV[1] = t0;
 		dstUV[2] = s1; dstUV[3] = t0;
@@ -5548,7 +5141,6 @@ static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color)
 		dstUV += 8;
 		++q;
 	}
-#endif
 
 	IndexBuffer* ib = &ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID];
 	uint16_t* dstIndex = &ib->m_Indices[cmd->m_FirstIndexID + cmd->m_NumIndices];
@@ -5556,38 +5148,6 @@ static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color)
 
 	cmd->m_NumVertices += numDrawVertices;
 	cmd->m_NumIndices += numDrawIndices;
-}
-
-static void flushTextAtlas(Context* ctx)
-{
-	FONScontext* fons = ctx->m_FontStashContext;
-
-	int dirty[4];
-	if (!fonsValidateTexture(fons, dirty)) {
-		return;
-	}
-
-	// Update texture
-	ImageHandle fontImage = ctx->m_FontImages[ctx->m_FontImageID];
-	if (!isValid(fontImage)) {
-		return;
-	}
-
-	int iw, ih;
-	const uint8_t* a8Data = fonsGetTextureData(fons, &iw, &ih);
-	VG_CHECK(iw > 0 && ih > 0, "Invalid font atlas dimensions");
-
-	// TODO: Convert only the dirty part of the texture (it's the only part that will be uploaded to the backend)
-	uint32_t* rgbaData = (uint32_t*)BX_ALLOC(ctx->m_Allocator, sizeof(uint32_t) * iw * ih);
-	vgutil::convertA8_to_RGBA8(rgbaData, a8Data, (uint32_t)iw, (uint32_t)ih, 0x00FFFFFF);
-
-	int x = dirty[0];
-	int y = dirty[1];
-	int w = dirty[2] - dirty[0];
-	int h = dirty[3] - dirty[1];
-	updateImage(ctx, fontImage, (uint16_t)x, (uint16_t)y, (uint16_t)w, (uint16_t)h, (const uint8_t*)rgbaData);
-
-	BX_FREE(ctx->m_Allocator, rgbaData);
 }
 
 static CommandListHandle allocCommandList(Context* ctx)

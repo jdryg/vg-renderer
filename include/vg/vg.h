@@ -115,40 +115,55 @@ struct Colors
 	enum Enum : uint32_t
 	{
 		Transparent = 0x00000000,
-		Black = 0xFF000000,
-		Red = 0xFF0000FF,
-		Green = 0xFF00FF00,
-		Blue = 0xFFFF0000,
-		White = 0xFFFFFFFF
+		Black       = 0xFF000000,
+		Red         = 0xFF0000FF,
+		Green       = 0xFF00FF00,
+		Blue        = 0xFFFF0000,
+		White       = 0xFFFFFFFF
 	};
 };
 
-struct TextAlign
+struct TextAlignHor
 {
-	// Values identical to FontStash's alignment flags
 	enum Enum : uint32_t
 	{
-		Left     = 1 << 0,
-		Center   = 1 << 1,
-		Right    = 1 << 2,
-		Top      = 1 << 3,
-		Middle   = 1 << 4,
-		Bottom   = 1 << 5,
-		Baseline = 1 << 6,
+		Left   = 0,
+		Center = 1,
+		Right  = 2
+	};
+};
 
-		// Shortcuts
-		TopLeft        = Top | Left,
-		TopCenter      = Top | Center,
-		TopRight       = Top | Right,
-		MiddleLeft     = Middle | Left,
-		MiddleCenter   = Middle | Center,
-		MiddleRight    = Middle | Right,
-		BottomLeft     = Bottom | Left,
-		BottomCenter   = Bottom | Center,
-		BottomRight    = Bottom | Right,
-		BaselineLeft   = Baseline | Left,
-		BaselineCenter = Baseline | Center,
-		BaselineRight  = Baseline | Right
+struct TextAlignVer
+{
+	enum Enum : uint32_t
+	{
+		Top      = 0,
+		Middle   = 1,
+		Baseline = 2,
+		Bottom   = 3
+	};
+};
+
+#define VG_TEXT_ALIGN(hor, ver)  (((hor) << 2) | (ver))
+#define VG_TEXT_ALIGN_HOR(align) (TextAlignHor::Enum)(((align) >> 2) & 0x03)
+#define VG_TEXT_ALIGN_VER(align) (TextAlignVer::Enum)(((align) >> 0) & 0x03)
+
+struct TextAlign
+{
+	enum Enum : uint32_t
+	{
+		TopLeft        = VG_TEXT_ALIGN(TextAlignHor::Left, TextAlignVer::Top),
+		TopCenter      = VG_TEXT_ALIGN(TextAlignHor::Center, TextAlignVer::Top),
+		TopRight       = VG_TEXT_ALIGN(TextAlignHor::Right, TextAlignVer::Top),
+		MiddleLeft     = VG_TEXT_ALIGN(TextAlignHor::Left, TextAlignVer::Middle),
+		MiddleCenter   = VG_TEXT_ALIGN(TextAlignHor::Center, TextAlignVer::Middle),
+		MiddleRight    = VG_TEXT_ALIGN(TextAlignHor::Right, TextAlignVer::Middle),
+		BaselineLeft   = VG_TEXT_ALIGN(TextAlignHor::Left, TextAlignVer::Baseline),
+		BaselineCenter = VG_TEXT_ALIGN(TextAlignHor::Center, TextAlignVer::Baseline),
+		BaselineRight  = VG_TEXT_ALIGN(TextAlignHor::Right, TextAlignVer::Baseline),
+		BottomLeft     = VG_TEXT_ALIGN(TextAlignHor::Left, TextAlignVer::Bottom),
+		BottomCenter   = VG_TEXT_ALIGN(TextAlignHor::Center, TextAlignVer::Bottom),
+		BottomRight    = VG_TEXT_ALIGN(TextAlignHor::Right, TextAlignVer::Bottom),
 	};
 };
 
@@ -234,17 +249,12 @@ struct FillFlags
 {
 	enum Enum : uint32_t
 	{
-		Convex  = VG_FILL_FLAGS(PathType::Convex, FillRule::NonZero, 0),
-		ConvexAA = VG_FILL_FLAGS(PathType::Convex, FillRule::NonZero, 1),
-
-		ConcaveNonZero = VG_FILL_FLAGS(PathType::Concave, FillRule::NonZero, 0),
-		ConcaveEvenOdd = VG_FILL_FLAGS(PathType::Concave, FillRule::EvenOdd, 0),
+		Convex           = VG_FILL_FLAGS(PathType::Convex, FillRule::NonZero, 0),
+		ConvexAA         = VG_FILL_FLAGS(PathType::Convex, FillRule::NonZero, 1),
+		ConcaveNonZero   = VG_FILL_FLAGS(PathType::Concave, FillRule::NonZero, 0),
+		ConcaveEvenOdd   = VG_FILL_FLAGS(PathType::Concave, FillRule::EvenOdd, 0),
 		ConcaveNonZeroAA = VG_FILL_FLAGS(PathType::Concave, FillRule::NonZero, 1),
 		ConcaveEvenOddAA = VG_FILL_FLAGS(PathType::Concave, FillRule::EvenOdd, 1),
-
-		// These are kept for backwards compatibility
-		Concave = ConcaveNonZero,
-		ConcaveAA = ConcaveNonZeroAA,
 	};
 };
 
@@ -257,12 +267,12 @@ struct Winding
 	};
 };
 
-struct TextBoxFlags
+struct TextBreakFlags
 {
 	enum Enum : uint32_t
 	{
-		None       = 0,
-		KeepSpaces = 1 << 0
+		None               = 0,
+		KeepTrailingSpaces = 1 << 0,
 	};
 };
 
@@ -276,8 +286,8 @@ struct ImageFlags
 		Filter_LinearW   = 1 << 3,
 
 		// Shortcuts
-		Filter_Nearest = Filter_NearestUV | Filter_NearestW,
-		Filter_Bilinear = Filter_LinearUV | Filter_NearestW,
+		Filter_Nearest   = Filter_NearestUV | Filter_NearestW,
+		Filter_Bilinear  = Filter_LinearUV | Filter_NearestW,
 		Filter_Trilinear = Filter_LinearUV | Filter_LinearW
 	};
 };
@@ -339,10 +349,12 @@ struct Stats
 
 struct TextConfig
 {
-	FontHandle m_FontHandle;
 	float m_FontSize;
+	float m_Blur;
+	float m_Spacing;
 	uint32_t m_Alignment;
 	Color m_Color;
+	FontHandle m_FontHandle;
 };
 
 struct Mesh
@@ -537,8 +549,8 @@ void clSubmitCommandList(Context* ctx, CommandListHandle parent, CommandListHand
 //////////////////////////////////////////////////////////////////////////
 // Helpers
 //
-TextConfig makeTextConfig(Context* ctx, const char* fontName, float fontSize, uint32_t alignment, Color color);
-TextConfig makeTextConfig(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, Color color);
+TextConfig makeTextConfig(Context* ctx, const char* fontName, float fontSize, uint32_t alignment, Color color, float blur = 0.0f, float spacing = 0.0f);
+TextConfig makeTextConfig(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, Color color, float blur = 0.0f, float spacing = 0.0f);
 void text(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, Color color, float x, float y, const char* str, const char* end);
 void textBox(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, Color color, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
 float measureText(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, float x, float y, const char* str, const char* end, float* bounds);
