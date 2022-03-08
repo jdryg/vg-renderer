@@ -412,19 +412,8 @@ struct Context
 	uint32_t m_NextImagePatternID;
 
 	FontSystem* m_FontSystem;
-#if 0
-	ImageHandle m_FontImages[VG_CONFIG_MAX_FONT_IMAGES];
-	uint32_t m_FontImageID;
-	uv_t m_FontImageWhitePixelUV[2];
-#endif
-
 	float* m_TextVertices;
 	uint32_t m_TextVertexCapacity;
-#if 0
-	FONSquad* m_TextQuads;
-	uint32_t m_TextQuadCapacity;
-	FONSstring m_TextString;
-#endif
 
 	bgfx::VertexLayout m_PosVertexDecl;
 	bgfx::VertexLayout m_UVVertexDecl;
@@ -824,23 +813,6 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 		return nullptr;
 	}
 
-#if 0
-	for (uint32_t i = 0; i < VG_CONFIG_MAX_FONT_IMAGES; ++i) {
-		ctx->m_FontImages[i] = VG_INVALID_HANDLE;
-	}
-
-	ctx->m_FontImages[0] = createImage(ctx, (uint16_t)fsCfg.m_AtlasWidth, (uint16_t)fsCfg.m_AtlasHeight, cfg->m_FontAtlasImageFlags, nullptr);
-	VG_CHECK(isValid(ctx->m_FontImages[0]), "Failed to initialize font texture");
-	
-	ctx->m_FontImageID = 0;
-
-	updateWhitePixelUV(ctx);
-#endif
-
-#if 0
-	fonsInitString(&ctx->m_TextString);
-#endif
-
 	return ctx;
 }
 
@@ -848,9 +820,6 @@ void destroyContext(Context* ctx)
 {
 	bx::AllocatorI* allocator = ctx->m_Allocator;
 
-#if 0
-	fonsDestroyString(&ctx->m_TextString);
-#endif
 
 	for (uint32_t i = 0; i < DrawCommand::Type::NumTypes; ++i) {
 		if (bgfx::isValid(ctx->m_ProgramHandle[i])) {
@@ -960,12 +929,6 @@ void destroyContext(Context* ctx)
 		fsDestroy(ctx->m_FontSystem, ctx);
 		ctx->m_FontSystem = nullptr;
 	}
-
-#if 0
-	for (uint32_t i = 0; i < VG_CONFIG_MAX_FONT_IMAGES; ++i) {
-		destroyImage(ctx, ctx->m_FontImages[i]);
-	}
-#endif
 	
 	for (uint32_t i = 0; i < ctx->m_ImageCapacity; ++i) {
 		Image* img = &ctx->m_Images[i];
@@ -987,11 +950,6 @@ void destroyContext(Context* ctx)
 
 	destroyStroker(ctx->m_Stroker);
 	ctx->m_Stroker = nullptr;
-
-#if 0
-	BX_ALIGNED_FREE(allocator, ctx->m_TextQuads, 16);
-	ctx->m_TextQuads = nullptr;
-#endif
 
 	BX_ALIGNED_FREE(allocator, ctx->m_TextVertices, 16);
 	ctx->m_TextVertices = nullptr;
@@ -1711,77 +1669,44 @@ float measureText(Context* ctx, const TextConfig& cfg, float x, float y, const c
 	return mesh.m_Width;
 }
 
-void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, float* bounds, uint32_t flags)
+void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, float* bounds, uint32_t textBreakFlags)
 {
-#if 0
-	const State* state = getState(ctx);
-	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
-	const float invscale = 1.0f / scale;
+	VG_CHECK(bounds != nullptr, "There's no point in calling this functions without a valid bounds pointer.");
 
-	const uint32_t alignment = cfg.m_Alignment;
+	end = end
+		? end
+		: str + bx::strLen(str)
+		;
 
-	const uint32_t halign = alignment & (FONS_ALIGN_LEFT | FONS_ALIGN_CENTER | FONS_ALIGN_RIGHT);
-	const uint32_t valign = alignment & (FONS_ALIGN_TOP | FONS_ALIGN_MIDDLE | FONS_ALIGN_BOTTOM | FONS_ALIGN_BASELINE);
+	const float lineHeight = fsGetLineHeight(ctx->m_FontSystem, cfg);
+	const TextAlignHor::Enum halign = VG_TEXT_ALIGN_HOR(cfg.m_Alignment);
+	const TextAlignVer::Enum valign = VG_TEXT_ALIGN_VER(cfg.m_Alignment);
 
-	const uint32_t newAlignment = FONS_ALIGN_LEFT | valign;
+	const TextConfig newCfg = makeTextConfig(ctx, cfg.m_FontHandle, cfg.m_FontSize, VG_TEXT_ALIGN(vg::TextAlignHor::Left, valign), cfg.m_Color, cfg.m_Blur, cfg.m_Spacing);
 
-	FONScontext* fons = ctx->m_FontStashContext;
-	fonsSetAlign(fons, newAlignment);
-	fonsSetSize(fons, cfg.m_FontSize * scale);
-	fonsSetFont(fons, cfg.m_FontHandle.idx);
+	fsLineBounds(ctx->m_FontSystem, newCfg, y, &bounds[1], &bounds[3]);
+	bounds[0] = x;
+	bounds[2] = x;
 
-	float lineh;
-	fonsVertMetrics(fons, nullptr, nullptr, &lineh);
-	lineh *= invscale;
-
-	float rminy = 0, rmaxy = 0;
-	fonsLineBounds(fons, 0, &rminy, &rmaxy);
-	rminy *= invscale;
-	rmaxy *= invscale;
-
-	float minx, miny, maxx, maxy;
-	minx = maxx = x;
-	miny = maxy = y;
-
-	TextRow rows[2];
-	int nrows = 0;
-
-	const TextConfig newTextCfg = { cfg.m_FontHandle, cfg.m_FontSize, newAlignment, vg::Colors::Transparent };
-	while ((nrows = textBreakLines(ctx, newTextCfg, text, end, breakWidth, rows, 2, flags))) {
-		for (uint32_t i = 0; i < (uint32_t)nrows; i++) {
-			const TextRow* row = &rows[i];
-
-			// Horizontal bounds
-			float dx = 0.0f; // Assume left align
-			if (halign & FONS_ALIGN_CENTER) {
-				dx = breakWidth * 0.5f - row->width * 0.5f;
-			} else if (halign & FONS_ALIGN_RIGHT) {
-				dx = breakWidth - row->width;
+	TextRow rows[4];
+	uint32_t numRows = 0;
+	while ((numRows = fsTextBreakLines(ctx->m_FontSystem, cfg, str, end, breakWidth, &rows[0], BX_COUNTOF(rows), textBreakFlags)) != 0) {
+		for (uint32_t i = 0; i < numRows; ++i) {
+			float dx = 0.0f;
+			if (halign == TextAlignHor::Center) {
+				dx = (breakWidth - rows[i].width) * 0.5f;
+			} else if (halign == TextAlignHor::Right) {
+				dx = breakWidth - rows[i].width;
 			}
 
-			const float rminx = x + row->minx + dx;
-			const float rmaxx = x + row->maxx + dx;
-
-			minx = bx::min<float>(minx, rminx);
-			maxx = bx::max<float>(maxx, rmaxx);
-
-			// Vertical bounds.
-			miny = bx::min<float>(miny, y + rminy);
-			maxy = bx::max<float>(maxy, y + rmaxy);
-
-			y += lineh; // Assume line height multiplier of 1.0
+			bounds[0] = bx::min<float>(bounds[0], x + dx + rows[i].minx);
+			bounds[2] = bx::max<float>(bounds[2], x + dx + rows[i].maxx);
 		}
 
-		text = rows[nrows - 1].next;
-	}
+		bounds[3] += lineHeight * numRows;
 
-	if (bounds != nullptr) {
-		bounds[0] = minx;
-		bounds[1] = miny;
-		bounds[2] = maxx;
-		bounds[3] = maxy;
+		str = rows[numRows - 1].next;
 	}
-#endif
 }
 
 float getTextLineHeight(Context* ctx, const TextConfig& cfg)
@@ -1796,6 +1721,7 @@ int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const c
 
 int textGlyphPositions(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end, GlyphPosition* positions, int maxPositions)
 {
+	BX_UNUSED(y);
 	const uint32_t len = end
 		? (uint32_t)(end - str)
 		: bx::strLen(str)
@@ -3851,10 +3777,6 @@ static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, fl
 		for (uint32_t i = 0; i < numRows; ++i) {
 			if (halign == TextAlignHor::Left) {
 				ctxText(ctx, newCfg, x, y, rows[i].start, rows[i].end);
-
-				vg::beginPath(ctx);
-				vg::rect(ctx, x + rows[i].minx, y, rows[i].maxx - rows[i].minx, lineHeight);
-				vg::strokePath(ctx, vg::Colors::Green, 1.0f, vg::StrokeFlags::ButtMiterAA);
 			} else if (halign == TextAlignHor::Center) {
 				ctxText(ctx, newCfg, x + (breakWidth - rows[i].width) * 0.5f, y, rows[i].start, rows[i].end);
 			} else if (halign == TextAlignHor::Right) {

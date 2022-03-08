@@ -562,14 +562,16 @@ uint32_t fsText(FontSystem* fs, vg::Context* ctx, const vg::TextConfig& cfg, con
 				q->m_TexCoord[3] = (uv_t)(atlasMaxY * y_to_v);
 
 				// Update bounding box
-				minx = bx::min<float>(minx, q->m_Pos[0]);
 				miny = bx::min<float>(miny, q->m_Pos[bboxMinYID]);
-				maxx = bx::max<float>(maxx, q->m_Pos[2]);
 				maxy = bx::max<float>(maxy, q->m_Pos[bboxMaxYID]);
 			}
 
 			cursorX += FS_SNAP_COORD(((float)glyph->m_XAdv / 10.0f) * width_mult + spacing);
 		}
+
+		// Calculate x bounds here. No need to do it inside the loop.
+		minx = tb->m_Quads[0].m_Pos[0];
+		maxx = tb->m_Quads[numCodepoints - 1].m_Pos[2];
 	}
 
 	float dx = 0.0f;
@@ -682,8 +684,9 @@ uint32_t fsTextBreakLines(FontSystem* fs, const vg::TextConfig& cfg, const char*
 
 	uint32_t curRowID = 0;
 	rows[curRowID].start = str;
-	rows[curRowID].width = 0.0f;
 	rows[curRowID].end = end;
+	rows[curRowID].width = 0.0f;
+	rows[curRowID].next = end;
 	while (cursor <= end && prevCodepoint != 0) {
 		const char* codepointStartCursor = cursor;
 		const char* codepointEndCursor = cursor;
@@ -732,6 +735,16 @@ uint32_t fsTextBreakLines(FontSystem* fs, const vg::TextConfig& cfg, const char*
 					rows[curRowID].end = prevWordEnd;
 				}
 				rows[curRowID].next = codepointEndCursor;
+
+				// TODO: Until I find a way to keep track of true row bounds, this will do
+				{
+					TextMesh tmpMesh;
+					fsText(fs, nullptr, cfg, rows[curRowID].start, (uint32_t)(rows[curRowID].end - rows[curRowID].start), 0, &tmpMesh);
+					rows[curRowID].minx = tmpMesh.m_Bounds[0];
+					rows[curRowID].maxx = tmpMesh.m_Bounds[2];
+					rows[curRowID].width = tmpMesh.m_Width;
+				}
+
 				++curRowID;
 				if (curRowID == maxRows) {
 					return curRowID;
@@ -758,6 +771,16 @@ uint32_t fsTextBreakLines(FontSystem* fs, const vg::TextConfig& cfg, const char*
 				} else {
 					rows[curRowID].end = spanStart;
 					rows[curRowID].next = wordStart;
+
+					// TODO: Until I find a way to keep track of true row bounds, this will do
+					{
+						TextMesh tmpMesh;
+						fsText(fs, nullptr, cfg, rows[curRowID].start, (uint32_t)(rows[curRowID].end - rows[curRowID].start), 0, &tmpMesh);
+						rows[curRowID].minx = tmpMesh.m_Bounds[0];
+						rows[curRowID].maxx = tmpMesh.m_Bounds[2];
+						rows[curRowID].width = tmpMesh.m_Width;
+					}
+
 					++curRowID;
 					if (curRowID == maxRows) {
 						return curRowID;
@@ -769,6 +792,7 @@ uint32_t fsTextBreakLines(FontSystem* fs, const vg::TextConfig& cfg, const char*
 						if (cp == ' ' || cp == '\t') {
 							mesh.m_Width -= mesh.m_Quads[i + 1].m_Pos[0] - mesh.m_Quads[i].m_Pos[0];
 						} else {
+							mesh.m_Bounds[0] = mesh.m_Quads[i].m_Pos[0];
 							break;
 						}
 					}
@@ -783,6 +807,16 @@ uint32_t fsTextBreakLines(FontSystem* fs, const vg::TextConfig& cfg, const char*
 			if (charClass == CharClass::MandatoryBreak) {
 				rows[curRowID].end = codepointStartCursor;
 				rows[curRowID].next = codepointEndCursor;
+
+				// TODO: Until I find a way to keep track of true row bounds, this will do
+				{
+					TextMesh tmpMesh;
+					fsText(fs, nullptr, cfg, rows[curRowID].start, (uint32_t)(rows[curRowID].end - rows[curRowID].start), 0, &tmpMesh);
+					rows[curRowID].minx = tmpMesh.m_Bounds[0];
+					rows[curRowID].maxx = tmpMesh.m_Bounds[2];
+					rows[curRowID].width = tmpMesh.m_Width;
+				}
+
 				++curRowID;
 				if (curRowID == maxRows) {
 					return curRowID;
@@ -806,6 +840,7 @@ uint32_t fsTextBreakLines(FontSystem* fs, const vg::TextConfig& cfg, const char*
 	// If the last row has something in it, count it to the total number of rows.
 	uint32_t numRows = curRowID;
 	if (rows[curRowID].start != rows[curRowID].end) {
+		rows[curRowID].next = end;
 		numRows++;
 	}
 
