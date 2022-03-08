@@ -77,6 +77,7 @@ struct TextBuffer
 
 	TextQuad* m_Quads;
 	uint32_t* m_Codepoints;
+	uint32_t* m_CodepointPos;
 	int32_t* m_GlyphIndices;
 	int32_t* m_KernAdv;
 	FontHandle* m_GlyphFonts;
@@ -408,12 +409,17 @@ uint32_t fsText(FontSystem* fs, vg::Context* ctx, const vg::TextConfig& cfg, con
 	{
 		uint32_t utf8State = 0;
 		uint32_t* codepointPtr = tb->m_Codepoints;
+		uint32_t* codepointPos = tb->m_CodepointPos;
+		uint32_t codepointStartID = 0;
 		for (uint32_t i = 0; i < len; ++i) {
 			if (decodeUTF8(&utf8State, codepointPtr, (uint8_t)str[i])) {
 				continue;
 			}
 
+			*codepointPos = codepointStartID;
+			++codepointPos;
 			++codepointPtr;
+			codepointStartID = i;
 		}
 		tb->m_Size = (uint32_t)(codepointPtr - tb->m_Codepoints);
 	}
@@ -593,6 +599,7 @@ uint32_t fsText(FontSystem* fs, vg::Context* ctx, const vg::TextConfig& cfg, con
 	mesh->m_Bounds[3] = maxy;
 	mesh->m_Quads = tb->m_Quads;
 	mesh->m_Codepoints = tb->m_Codepoints;
+	mesh->m_CodepointPos = tb->m_CodepointPos;
 	mesh->m_Size = numCodepoints;
 	mesh->m_Width = width;
 
@@ -1249,6 +1256,7 @@ static bool fsTextBufferReset(TextBuffer* tb, uint32_t capacity, bx::AllocatorI*
 		const uint32_t totalMemory = 0
 			+ bx::strideAlign(sizeof(TextQuad) * capacity, 16)   // m_Quads
 			+ bx::strideAlign(sizeof(uint32_t) * capacity, 16)   // m_Codepoints
+			+ bx::strideAlign(sizeof(uint32_t) * capacity, 16)   // m_CodepointPos
 			+ bx::strideAlign(sizeof(int32_t) * capacity, 16)    // m_GlyphIndices
 			+ bx::strideAlign(sizeof(int32_t) * capacity, 16)    // m_KernAdv
 			+ bx::strideAlign(sizeof(FontHandle) * capacity, 16) // m_GlyphFonts
@@ -1262,11 +1270,12 @@ static bool fsTextBufferReset(TextBuffer* tb, uint32_t capacity, bx::AllocatorI*
 		BX_ALIGNED_FREE(allocator, tb->m_Buffer, 16);
 
 		uint8_t* ptr = buffer;
-		tb->m_Quads = (TextQuad*)ptr;        ptr += bx::strideAlign(sizeof(TextQuad) * capacity, 16);
-		tb->m_Codepoints = (uint32_t*)ptr;   ptr += bx::strideAlign(sizeof(uint32_t) * capacity, 16);
-		tb->m_GlyphIndices = (int32_t*)ptr;  ptr += bx::strideAlign(sizeof(int32_t) * capacity, 16);
-		tb->m_KernAdv = (int32_t*)ptr;       ptr += bx::strideAlign(sizeof(int32_t) * capacity, 16);
-		tb->m_GlyphFonts = (FontHandle*)ptr; ptr += bx::strideAlign(sizeof(FontHandle) * capacity, 16);
+		tb->m_Quads = (TextQuad*)ptr;         ptr += bx::strideAlign(sizeof(TextQuad) * capacity, 16);
+		tb->m_Codepoints = (uint32_t*)ptr;    ptr += bx::strideAlign(sizeof(uint32_t) * capacity, 16);
+		tb->m_CodepointPos = (uint32_t*)ptr;  ptr += bx::strideAlign(sizeof(uint32_t) * capacity, 16);
+		tb->m_GlyphIndices = (int32_t*)ptr;   ptr += bx::strideAlign(sizeof(int32_t) * capacity, 16);
+		tb->m_KernAdv = (int32_t*)ptr;        ptr += bx::strideAlign(sizeof(int32_t) * capacity, 16);
+		tb->m_GlyphFonts = (FontHandle*)ptr;  ptr += bx::strideAlign(sizeof(FontHandle) * capacity, 16);
 		tb->m_Capacity = capacity;
 	}
 

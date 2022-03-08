@@ -1796,52 +1796,28 @@ int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const c
 
 int textGlyphPositions(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end, GlyphPosition* positions, int maxPositions)
 {
-#if 0
-	const State* state = getState(ctx);
-	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
-	const float invscale = 1.0f / scale;
+	const uint32_t len = end
+		? (uint32_t)(end - str)
+		: bx::strLen(str)
+		;
 
-	if (!end) {
-		end = str + bx::strLen(str);
-	}
-
-	if (str == end) {
+	TextMesh mesh;
+	if (!fsText(ctx->m_FontSystem, ctx, cfg, str, len, 0, &mesh)) {
 		return 0;
 	}
 
-	FONScontext* fons = ctx->m_FontStashContext;
-	fonsSetSize(fons, cfg.m_FontSize * scale);
-	fonsSetAlign(fons, cfg.m_Alignment);
-	fonsSetFont(fons, cfg.m_FontHandle.idx);
+	float curX = x;
+	const uint32_t n = bx::min<uint32_t>(maxPositions, mesh.m_Size);
+	for (uint32_t i = 0; i < n; ++i) {
+		positions[i].str = &str[mesh.m_CodepointPos[i]];
+		positions[i].x = curX;
+		positions[i].minx = x + mesh.m_Quads[i].m_Pos[0];
+		positions[i].maxx = x + mesh.m_Quads[i].m_Pos[2];
 
-	FONStextIter iter, prevIter;
-	fonsTextIterInit(fons, &iter, x * scale, y * scale, str, end, FONS_GLYPH_BITMAP_OPTIONAL);
-	prevIter = iter;
-
-	FONSquad q;
-	int npos = 0;
-	while (fonsTextIterNext(fons, &iter, &q)) {
-		if (iter.prevGlyphIndex < 0 && allocTextAtlas(ctx)) {
-			iter = prevIter;
-			fonsTextIterNext(fons, &iter, &q);
-		}
-
-		prevIter = iter;
-		positions[npos].str = iter.str;
-		positions[npos].x = iter.x * invscale;
-		positions[npos].minx = bx::min<float>(iter.x, q.x0) * invscale;
-		positions[npos].maxx = bx::max<float>(iter.nextx, q.x1) * invscale;
-
-		npos++;
-		if (npos >= maxPositions) {
-			break;
-		}
+		curX += (mesh.m_Quads[i].m_Pos[2] - mesh.m_Quads[i].m_Pos[0]);
 	}
 
-	return npos;
-#else
-	return 0;
-#endif
+	return n;
 }
 
 bool getImageSize(Context* ctx, ImageHandle handle, uint16_t* w, uint16_t* h)
