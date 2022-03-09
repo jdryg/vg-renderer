@@ -50,7 +50,7 @@ struct TextMesh
 {
 	const TextQuad* m_Quads;
 	const uint32_t* m_Codepoints;
-	const uint32_t* m_CodepointPos;
+	const uint8_t* m_CodepointSize;
 	uint32_t m_Size;
 	float m_Width;
 	float m_Alignment[2];

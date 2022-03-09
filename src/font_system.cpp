@@ -77,7 +77,7 @@ struct TextBuffer
 
 	TextQuad* m_Quads;
 	uint32_t* m_Codepoints;
-	uint32_t* m_CodepointPos;
+	uint8_t* m_CodepointSize;
 	int32_t* m_GlyphIndices;
 	int32_t* m_KernAdv;
 	FontHandle* m_GlyphFonts;
@@ -116,9 +116,11 @@ static bool fsAtlasAddSkylineLevel(Atlas* atlas, uint32_t nodeID, uint16_t x, ui
 static void fsAtlasReset(Atlas* atlas, uint16_t w, uint16_t h);
 static uint32_t decodeUTF8(uint32_t* state, uint32_t* codep, uint8_t byte);
 static void fsUpdateWhitePixelUV(FontSystem* fs, vg::Context* ctx);
+static uint32_t fsTextBuildMesh(FontSystem* fs, TextBuffer* tb, vg::Context* ctx, const vg::TextConfig& cfg, uint32_t flags, TextMesh* mesh);
 static void fsTextBufferInit(TextBuffer* tb);
 static void fsTextBufferShutdown(TextBuffer* tb, bx::AllocatorI* allocator);
 static bool fsTextBufferReset(TextBuffer* tb, uint32_t capacity, bx::AllocatorI* allocator);
+static bool fsTextBufferPushCodepoint(TextBuffer* tb, uint32_t codepoint, uint8_t codepointSize, bx::AllocatorI* allocator);
 static float fsGetVertAlign(FontSystem* fs, const Font* font, uint32_t align, int16_t isize);
 static Glyph* fsBakeGlyph(FontSystem* fs, Font* font, int32_t glyphIndex, uint32_t codepoint, int16_t isize, int16_t iblur, bool glyphBitmapOptional);
 static Glyph* fsAllocGlyph(FontSystem* fs, Font* font);
@@ -388,7 +390,7 @@ void fsFlushFontAtlasImage(FontSystem* fs, vg::Context* ctx)
 uint32_t fsText(FontSystem* fs, vg::Context* ctx, const vg::TextConfig& cfg, const char* str, uint32_t len, uint32_t flags, TextMesh* mesh)
 {
 	VG_CHECK(vg::isValid(cfg.m_FontHandle), "Invalid font handle");
-	
+
 	bx::memSet(mesh, 0, sizeof(TextMesh));
 
 	if (len == 0) {
@@ -409,20 +411,27 @@ uint32_t fsText(FontSystem* fs, vg::Context* ctx, const vg::TextConfig& cfg, con
 	{
 		uint32_t utf8State = 0;
 		uint32_t* codepointPtr = tb->m_Codepoints;
-		uint32_t* codepointPos = tb->m_CodepointPos;
+		uint8_t* codepointSize = tb->m_CodepointSize;
 		uint32_t codepointStartID = 0;
 		for (uint32_t i = 0; i < len; ++i) {
 			if (decodeUTF8(&utf8State, codepointPtr, (uint8_t)str[i])) {
 				continue;
 			}
 
-			*codepointPos = codepointStartID;
-			++codepointPos;
+			*codepointSize = (uint8_t)(i - codepointStartID);
+			++codepointSize;
 			++codepointPtr;
 			codepointStartID = i;
 		}
 		tb->m_Size = (uint32_t)(codepointPtr - tb->m_Codepoints);
 	}
+
+	return fsTextBuildMesh(fs, tb, ctx, cfg, flags, mesh);
+}
+
+static uint32_t fsTextBuildMesh(FontSystem* fs, TextBuffer* tb, vg::Context* ctx, const vg::TextConfig& cfg, uint32_t flags, TextMesh* mesh)
+{
+	const int16_t isize = (int16_t)(cfg.m_FontSize * 10.0f);
 
 	// Check if there are actually any codepoints. This can happen if the input string contains an incomplete utf8 character (?).
 	const uint32_t numCodepoints = tb->m_Size;
@@ -601,7 +610,7 @@ uint32_t fsText(FontSystem* fs, vg::Context* ctx, const vg::TextConfig& cfg, con
 	mesh->m_Bounds[3] = maxy;
 	mesh->m_Quads = tb->m_Quads;
 	mesh->m_Codepoints = tb->m_Codepoints;
-	mesh->m_CodepointPos = tb->m_CodepointPos;
+	mesh->m_CodepointSize = tb->m_CodepointSize;
 	mesh->m_Size = numCodepoints;
 	mesh->m_Width = width;
 
@@ -665,37 +674,49 @@ struct State
 	};
 };
 
-// TODO: Handle words bigger than the breakRowWidth
-// Leading spaces after a mandatory line break are kept.
-// Traling spaces after a soft line break at trimmed.
+static inline bool isWhitespace(uint32_t codepoint)
+{
+	return false
+		|| codepoint == ' ' 
+		|| codepoint == '\t'
+		;
+}
+
+// NOTE: Differs from the original NanoVG equivalent on the way min/max row boundaries are calculated.
+// It does not take into account the X offset of glyphs. { minx, maxx } are always equal to { 0.0f, width }
 uint32_t fsTextBreakLines(FontSystem* fs, const vg::TextConfig& cfg, const char* str, const char* end, float breakRowWidth, TextRow* rows, uint32_t maxRows, uint32_t textBreakFlags)
 {
+	if (maxRows < 2) {
+		VG_CHECK(false, "At least 2 rows are needed.");
+		return 0;
+	}
+
 	if (str == end) {
 		return 0;
 	}
 
-	const bool keepTrailingWhitespaces = (textBreakFlags & TextBreakFlags::KeepTrailingSpaces) != 0;
+	// Decode UTF-8 string while searching for mandatory breaks. Every time a mandatory break is found, generate quads for 
+	// the line and try to fit as many characters/words possible to each row.
+	TextBuffer* tb = &fs->m_TextBuffer;
 
-	uint32_t prevCodepoint = UINT32_MAX;
+	if (!fsTextBufferReset(tb, 0, fs->m_Allocator)) {
+		return 0;
+	}
+
+	const bool keepTrailingSpaces = (textBreakFlags & TextBreakFlags::KeepTrailingSpaces) != 0;
+
 	const char* cursor = str;
-	State::Enum state = State::SkipWhitespaces;
-	const char* wordStart = nullptr;
-	const char* prevWordEnd = str;
-
-	uint32_t curRowID = 0;
-	rows[curRowID].start = str;
-	rows[curRowID].end = end;
-	rows[curRowID].width = 0.0f;
-	rows[curRowID].next = end;
+	const char* rowStart = str;
+	uint32_t numRows = 0;
+	uint32_t prevCodepoint = UINT32_MAX;
 	while (cursor <= end && prevCodepoint != 0) {
-		const char* codepointStartCursor = cursor;
-		const char* codepointEndCursor = cursor;
-		const uint32_t codepoint = decodeCodepoint(&codepointEndCursor, end);
+		const char* nextCursor = cursor;
+		const uint32_t codepoint = decodeCodepoint(&nextCursor, end);
 
-		CharClass::Enum charClass = CharClass::Char;
+		bool newline = false;
 		switch (codepoint) {
-		case 0x0000: // Null
-			charClass = CharClass::EndOfText;
+		case 0x0000: // Null character
+			newline = true;
 			break;
 		case 0x000A: // Line Feed (LF)
 		case 0x000B: // Line Tabulation (VT)
@@ -703,145 +724,141 @@ uint32_t fsTextBreakLines(FontSystem* fs, const vg::TextConfig& cfg, const char*
 		case 0x0085: // Next Line (NEL)
 		case 0x2028: // Line Separator
 		case 0x2029: // Paragraph Separator
-			charClass = CharClass::MandatoryBreak;
+			newline = true;
 			break;
-		case 0x000D: // Carriage Return (CR)
-			charClass = peekCodepoint(codepointEndCursor, end) == 0x000A
-				? CharClass::Char
-				: CharClass::MandatoryBreak
-				;
-			break;
-		case 0x0009: // Tab
-		case 0x0020: // Space
-			charClass = CharClass::Space;
-			break;
+		case 0x000D: { // Carriage Return (CR)
+			const char* lookaheadCursor = nextCursor;
+			if (decodeCodepoint(&lookaheadCursor, end) == 0x000A) {
+				// CR LF => Skip both
+				nextCursor = lookaheadCursor;
+			}
+			newline = true;
+		} break;
 		default:
 			break;
 		}
 
-		if (state == State::SkipWhitespaces) {
-			if (charClass == CharClass::Char) {
-				wordStart = codepointStartCursor;
-				state = State::SeekLineBreak;
-			} else if (charClass == CharClass::MandatoryBreak) {
-				if (keepTrailingWhitespaces) {
-					const char* spanStart = prevWordEnd ? prevWordEnd : wordStart;
-					TextMesh mesh;
-					fsText(fs, nullptr, cfg, spanStart, (uint32_t)(codepointStartCursor - spanStart), 0, &mesh);
+		if (newline) {
+			// Calculate quads for the text buffer so far...
+			TextMesh mesh;
+			bx::memSet(&mesh, 0, sizeof(TextMesh));
+			fsTextBuildMesh(fs, tb, nullptr, cfg, 0, &mesh);
 
-					rows[curRowID].end = codepointStartCursor;
-					rows[curRowID].width += mesh.m_Width;
-				} else {
-					rows[curRowID].end = prevWordEnd;
-				}
-				rows[curRowID].next = codepointEndCursor;
+			// Build rows.
+			TextRow* row = &rows[numRows];
+			row->start = rowStart;
+			row->end = cursor; // Row ends before the line break.
+			row->next = nextCursor;
+			row->width = mesh.m_Width;
+			row->minx = 0.0f;
+			row->maxx = mesh.m_Width;
+			++numRows;
 
-				// TODO: Until I find a way to keep track of true row bounds, this will do
-				{
-					TextMesh tmpMesh;
-					fsText(fs, nullptr, cfg, rows[curRowID].start, (uint32_t)(rows[curRowID].end - rows[curRowID].start), 0, &tmpMesh);
-					rows[curRowID].minx = tmpMesh.m_Bounds[0];
-					rows[curRowID].maxx = tmpMesh.m_Bounds[2];
-					rows[curRowID].width = tmpMesh.m_Width;
-				}
-
-				++curRowID;
-				if (curRowID == maxRows) {
-					return curRowID;
-				}
-
-				rows[curRowID].start = codepointEndCursor;
-				rows[curRowID].end = end;
-				rows[curRowID].width = 0.0f;
-				prevWordEnd = codepointEndCursor;
-
-				// No state change.
-			}
-		} else if (state == State::SeekLineBreak) {
-			if (charClass != CharClass::Char) {
-				// Found either a space or a mandatory break. Measure the current span and check 
-				// if it fits in the current row.
-				const char* spanStart = prevWordEnd ? prevWordEnd : wordStart;
-				TextMesh mesh;
-				fsText(fs, nullptr, cfg, spanStart, (uint32_t)(codepointStartCursor - spanStart), 0, &mesh);
-				if (rows[curRowID].width + mesh.m_Width <= breakRowWidth) {
-					// Span fits. Increase the width of the current row.
-					rows[curRowID].width += mesh.m_Width;
-					prevWordEnd = codepointStartCursor;
-				} else {
-					rows[curRowID].end = spanStart;
-					rows[curRowID].next = wordStart;
-
-					// TODO: Until I find a way to keep track of true row bounds, this will do
-					{
-						TextMesh tmpMesh;
-						fsText(fs, nullptr, cfg, rows[curRowID].start, (uint32_t)(rows[curRowID].end - rows[curRowID].start), 0, &tmpMesh);
-						rows[curRowID].minx = tmpMesh.m_Bounds[0];
-						rows[curRowID].maxx = tmpMesh.m_Bounds[2];
-						rows[curRowID].width = tmpMesh.m_Width;
+			const uint32_t numCodepoints = tb->m_Size;
+			if (numCodepoints != 0) {
+				if (mesh.m_Width < breakRowWidth) {
+					if (!keepTrailingSpaces) {
+						uint32_t i = numCodepoints;
+						while (i != 0 && isWhitespace(tb->m_Codepoints[i - 1])) {
+							--i;
+						}
+						const float rowWidth = mesh.m_Quads[i].m_Pos[2] - mesh.m_Quads[0].m_Pos[0];
+						row->width = rowWidth;
+						row->maxx = rowWidth;
 					}
+				} else {
+					float rowStartX = tb->m_Quads[0].m_Pos[0];
 
-					++curRowID;
-					if (curRowID == maxRows) {
-						return curRowID;
-					}
+					uint32_t nextCodepointPos = tb->m_CodepointSize[0];
+					for (uint32_t i = 1; i < numCodepoints; ++i) {
+						const float width = tb->m_Quads[i].m_Pos[2] - rowStartX;
+						if (width > breakRowWidth) {
+							// i-th glyph does not fit in current row. Find previous space.
+							const uint32_t breakCodepointID = i - 1;
+							const uint32_t breakNextCodepointPos = nextCodepointPos;
+							{
+								--i;
+								while (i != 0 && !isWhitespace(tb->m_Codepoints[i])) {
+									nextCodepointPos -= tb->m_CodepointSize[i];
+									--i;
+								}
+							}
 
-					// Remove leading spaces from new row.
-					for (uint32_t i = 0; i < mesh.m_Size - 1; ++i) {
-						const uint32_t cp = mesh.m_Codepoints[i];
-						if (cp == ' ' || cp == '\t') {
-							mesh.m_Width -= mesh.m_Quads[i + 1].m_Pos[0] - mesh.m_Quads[i].m_Pos[0];
+							if (i == 0) {
+								// No spaces found from the break position to the start of the row.
+								// Single word too big for the specified break width. Break at this point.
+								i = breakCodepointID;
+								nextCodepointPos = breakNextCodepointPos;
+							} else {
+								if (!keepTrailingSpaces) {
+									// Client does need the trailing spaces of each row. Find the last non-whitespace character.
+									// TODO: What will happen if the whole line is full of spaces?
+									while (i < numCodepoints && isWhitespace(tb->m_Codepoints[i])) {
+										nextCodepointPos += tb->m_CodepointSize[i];
+										++i;
+									}
+								}
+							}
+
+							// Set row end and calculate bounds.
+							{
+								row->end = &rowStart[nextCodepointPos - tb->m_CodepointSize[i]];
+
+								const float rowWidth = tb->m_Quads[i].m_Pos[2] - rowStartX;
+								row->minx = 0.0f;
+								row->maxx = rowWidth;
+								row->width = rowWidth;
+							}
+
+							// Find next non-whitespace.
+							{
+								while (i < numCodepoints && isWhitespace(tb->m_Codepoints[i])) {
+									nextCodepointPos += tb->m_CodepointSize[i];
+									++i;
+								}
+							}
+
+							row->next = &rowStart[nextCodepointPos - tb->m_CodepointSize[i]];
+
+							if (numRows == maxRows) {
+								return numRows;
+							}
+
+							rowStartX = tb->m_Quads[i].m_Pos[0];
+							row = &rows[numRows];
+							row->start = &rowStart[nextCodepointPos - tb->m_CodepointSize[i]];
+							row->end = cursor;
+							row->next = nextCursor;
+							row->width = tb->m_Quads[numCodepoints - 1].m_Pos[2] - rowStartX;
+							row->minx = 0.0f;
+							row->maxx = row->width;
+							++numRows;
 						} else {
-							mesh.m_Bounds[0] = mesh.m_Quads[i].m_Pos[0];
-							break;
+							nextCodepointPos += tb->m_CodepointSize[i];
 						}
 					}
-
-					rows[curRowID].start = wordStart;
-					rows[curRowID].end = codepointStartCursor;
-					rows[curRowID].width = mesh.m_Width;
-					prevWordEnd = codepointEndCursor;
 				}
 			}
 
-			if (charClass == CharClass::MandatoryBreak) {
-				rows[curRowID].end = codepointStartCursor;
-				rows[curRowID].next = codepointEndCursor;
+			// Start a new row after the break.
+			rowStart = nextCursor;
 
-				// TODO: Until I find a way to keep track of true row bounds, this will do
-				{
-					TextMesh tmpMesh;
-					fsText(fs, nullptr, cfg, rows[curRowID].start, (uint32_t)(rows[curRowID].end - rows[curRowID].start), 0, &tmpMesh);
-					rows[curRowID].minx = tmpMesh.m_Bounds[0];
-					rows[curRowID].maxx = tmpMesh.m_Bounds[2];
-					rows[curRowID].width = tmpMesh.m_Width;
-				}
-
-				++curRowID;
-				if (curRowID == maxRows) {
-					return curRowID;
-				}
-
-				rows[curRowID].start = codepointEndCursor;
-				rows[curRowID].end = end;
-				rows[curRowID].width = 0.0f;
-				prevWordEnd = codepointEndCursor;
+			if (numRows == maxRows) {
+				break;
 			}
 
-			if (charClass != CharClass::Char) {
-				state = State::SkipWhitespaces;
+			// Reset text buffer
+			if (!fsTextBufferReset(tb, 0, fs->m_Allocator)) {
+				return 0;
+			}
+		} else {
+			if (!fsTextBufferPushCodepoint(tb, codepoint, (uint8_t)(nextCursor - cursor), fs->m_Allocator)) {
+				return 0; // Failed to add codepoint to text buffer
 			}
 		}
 
+		cursor = nextCursor;
 		prevCodepoint = codepoint;
-		cursor = codepointEndCursor;
-	}
-
-	// If the last row has something in it, count it to the total number of rows.
-	uint32_t numRows = curRowID;
-	if (rows[curRowID].start != rows[curRowID].end) {
-		rows[curRowID].next = end;
-		numRows++;
 	}
 
 	return numRows;
@@ -1279,43 +1296,84 @@ static void fsTextBufferInit(TextBuffer* tb)
 
 static void fsTextBufferShutdown(TextBuffer* tb, bx::AllocatorI* allocator)
 {
-	BX_FREE(allocator, tb->m_Buffer);
+	BX_ALIGNED_FREE(allocator, tb->m_Buffer, 16);
 	bx::memSet(tb, 0, sizeof(TextBuffer));
+}
+
+static bool fsTextBufferExpand(TextBuffer* tb, uint32_t newCapacity, bool keepOldData, bx::AllocatorI* allocator)
+{
+	VG_CHECK(newCapacity > tb->m_Capacity, "Don't call expand with a smaller capacity.");
+
+	const uint32_t totalMemory = 0
+		+ bx::strideAlign(sizeof(TextQuad) * newCapacity, 16)   // m_Quads
+		+ bx::strideAlign(sizeof(uint32_t) * newCapacity, 16)   // m_Codepoints
+		+ bx::strideAlign(sizeof(uint8_t) * newCapacity, 16)    // m_CodepointSize
+		+ bx::strideAlign(sizeof(int32_t) * newCapacity, 16)    // m_GlyphIndices
+		+ bx::strideAlign(sizeof(int32_t) * newCapacity, 16)    // m_KernAdv
+		+ bx::strideAlign(sizeof(FontHandle) * newCapacity, 16) // m_GlyphFonts
+		;
+
+	uint8_t* buffer = (uint8_t*)BX_ALIGNED_ALLOC(allocator, totalMemory, 16);
+	if (!buffer) {
+		return false;
+	}
+
+	uint8_t* ptr = buffer;
+	TextQuad* newQuads = (TextQuad*)ptr;           ptr += bx::strideAlign(sizeof(TextQuad) * newCapacity, 16);
+	uint32_t* newCodepoints = (uint32_t*)ptr;      ptr += bx::strideAlign(sizeof(uint32_t) * newCapacity, 16);
+	uint8_t* newCodepointSizes = (uint8_t*)ptr;    ptr += bx::strideAlign(sizeof(uint8_t) * newCapacity, 16);
+	int32_t* newGlyphIndices = (int32_t*)ptr;      ptr += bx::strideAlign(sizeof(int32_t) * newCapacity, 16);
+	int32_t* newKernAdv = (int32_t*)ptr;           ptr += bx::strideAlign(sizeof(int32_t) * newCapacity, 16);
+	FontHandle* newGlyphFonts = (FontHandle*)ptr;  ptr += bx::strideAlign(sizeof(FontHandle) * newCapacity, 16);
+
+	if (keepOldData) {
+		const uint32_t oldCapacity = tb->m_Capacity;
+		bx::memCopy(newQuads, tb->m_Quads, sizeof(TextQuad) * oldCapacity);
+		bx::memCopy(newCodepoints, tb->m_Codepoints, sizeof(uint32_t) * oldCapacity);
+		bx::memCopy(newCodepointSizes, tb->m_CodepointSize, sizeof(uint8_t) * oldCapacity);
+		bx::memCopy(newGlyphIndices, tb->m_GlyphIndices, sizeof(int32_t) * oldCapacity);
+		bx::memCopy(newKernAdv, tb->m_KernAdv, sizeof(int32_t) * oldCapacity);
+		bx::memCopy(newGlyphFonts, tb->m_GlyphFonts, sizeof(FontHandle) * oldCapacity);
+	}
+
+	BX_ALIGNED_FREE(allocator, tb->m_Buffer, 16);
+	tb->m_Buffer = buffer;
+	tb->m_Quads = newQuads;
+	tb->m_Codepoints = newCodepoints;
+	tb->m_CodepointSize = newCodepointSizes;
+	tb->m_GlyphIndices = newGlyphIndices;
+	tb->m_KernAdv = newKernAdv;
+	tb->m_GlyphFonts = newGlyphFonts;
+	tb->m_Capacity = newCapacity;
+
+	return true;
 }
 
 static bool fsTextBufferReset(TextBuffer* tb, uint32_t capacity, bx::AllocatorI* allocator)
 {
 	if (capacity > tb->m_Capacity) {
-		capacity = bx::strideAlign(capacity, 64);
-
-		const uint32_t totalMemory = 0
-			+ bx::strideAlign(sizeof(TextQuad) * capacity, 16)   // m_Quads
-			+ bx::strideAlign(sizeof(uint32_t) * capacity, 16)   // m_Codepoints
-			+ bx::strideAlign(sizeof(uint32_t) * capacity, 16)   // m_CodepointPos
-			+ bx::strideAlign(sizeof(int32_t) * capacity, 16)    // m_GlyphIndices
-			+ bx::strideAlign(sizeof(int32_t) * capacity, 16)    // m_KernAdv
-			+ bx::strideAlign(sizeof(FontHandle) * capacity, 16) // m_GlyphFonts
-			;
-
-		uint8_t* buffer = (uint8_t*)BX_ALIGNED_ALLOC(allocator, totalMemory, 16);
-		if (!buffer) {
+		if (!fsTextBufferExpand(tb, bx::strideAlign(capacity, 64), false, allocator)) {
 			return false;
 		}
-
-		BX_ALIGNED_FREE(allocator, tb->m_Buffer, 16);
-
-		uint8_t* ptr = buffer;
-		tb->m_Quads = (TextQuad*)ptr;         ptr += bx::strideAlign(sizeof(TextQuad) * capacity, 16);
-		tb->m_Codepoints = (uint32_t*)ptr;    ptr += bx::strideAlign(sizeof(uint32_t) * capacity, 16);
-		tb->m_CodepointPos = (uint32_t*)ptr;  ptr += bx::strideAlign(sizeof(uint32_t) * capacity, 16);
-		tb->m_GlyphIndices = (int32_t*)ptr;   ptr += bx::strideAlign(sizeof(int32_t) * capacity, 16);
-		tb->m_KernAdv = (int32_t*)ptr;        ptr += bx::strideAlign(sizeof(int32_t) * capacity, 16);
-		tb->m_GlyphFonts = (FontHandle*)ptr;  ptr += bx::strideAlign(sizeof(FontHandle) * capacity, 16);
-		tb->m_Capacity = capacity;
 	}
 
 	tb->m_Size = 0;
 
+	return true;
+}
+
+static bool fsTextBufferPushCodepoint(TextBuffer* tb, uint32_t codepoint, uint8_t codepointSize, bx::AllocatorI* allocator)
+{
+	if (tb->m_Size == tb->m_Capacity) {
+		if (!fsTextBufferExpand(tb, bx::strideAlign(tb->m_Capacity + 64, 64), true, allocator)) {
+			return false;
+		}
+	}
+
+	const uint32_t id = tb->m_Size;
+	tb->m_Codepoints[id] = codepoint;
+	tb->m_CodepointSize[id] = codepointSize;
+	++tb->m_Size;
 	return true;
 }
 

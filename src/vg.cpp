@@ -1678,13 +1678,14 @@ void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float
 		: str + bx::strLen(str)
 		;
 
-	const float lineHeight = fsGetLineHeight(ctx->m_FontSystem, cfg);
 	const TextAlignHor::Enum halign = VG_TEXT_ALIGN_HOR(cfg.m_Alignment);
 	const TextAlignVer::Enum valign = VG_TEXT_ALIGN_VER(cfg.m_Alignment);
 
 	const TextConfig newCfg = makeTextConfig(ctx, cfg.m_FontHandle, cfg.m_FontSize, VG_TEXT_ALIGN(vg::TextAlignHor::Left, valign), cfg.m_Color, cfg.m_Blur, cfg.m_Spacing);
 
 	fsLineBounds(ctx->m_FontSystem, newCfg, y, &bounds[1], &bounds[3]);
+	const float lineHeight = bounds[3] - bounds[1];
+	bounds[3] = bounds[1];
 	bounds[0] = x;
 	bounds[2] = x;
 
@@ -1733,14 +1734,16 @@ int textGlyphPositions(Context* ctx, const TextConfig& cfg, float x, float y, co
 	}
 
 	float curX = x;
+	uint32_t cursor = 0;
 	const uint32_t n = bx::min<uint32_t>(maxPositions, mesh.m_Size);
 	for (uint32_t i = 0; i < n; ++i) {
-		positions[i].str = &str[mesh.m_CodepointPos[i]];
+		positions[i].str = &str[cursor];
 		positions[i].x = curX;
 		positions[i].minx = x + mesh.m_Quads[i].m_Pos[0];
 		positions[i].maxx = x + mesh.m_Quads[i].m_Pos[2];
 
 		curX += (mesh.m_Quads[i].m_Pos[2] - mesh.m_Quads[i].m_Pos[0]);
+		cursor += mesh.m_CodepointSize[i];
 	}
 
 	return n;
