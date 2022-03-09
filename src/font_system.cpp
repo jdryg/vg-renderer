@@ -623,17 +623,6 @@ float fsGetLineHeight(FontSystem* fs, const vg::TextConfig& cfg)
 	return font->m_LineHeight * (float)((int32_t)(cfg.m_FontSize * 10.0f)) / 10.0f;
 }
 
-struct CharClass
-{
-	enum Enum : uint32_t
-	{
-		MandatoryBreak,
-		Space,
-		Char,
-		EndOfText,
-	};
-};
-
 static uint32_t decodeCodepoint(const char** str, const char* end)
 {
 	uint32_t utf8State = 0;
@@ -648,31 +637,6 @@ static uint32_t decodeCodepoint(const char** str, const char* end)
 
 	return 0;
 }
-
-uint32_t peekCodepoint(const char* str, const char* end)
-{
-	uint32_t utf8State = 0;
-	uint32_t codepoint = 0;
-	uint32_t i = 0;
-	while (str + i != end) {
-		decodeUTF8(&utf8State, &codepoint, (uint8_t)str[i]);
-		++i;
-		if (!utf8State) {
-			return codepoint;
-		}
-	}
-
-	return 0;
-}
-
-struct State
-{
-	enum Enum : uint32_t
-	{
-		SkipWhitespaces = 0,
-		SeekLineBreak = 1,
-	};
-};
 
 static inline bool isWhitespace(uint32_t codepoint)
 {
