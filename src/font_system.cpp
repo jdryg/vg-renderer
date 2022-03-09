@@ -762,7 +762,7 @@ uint32_t fsTextBreakLines(FontSystem* fs, const vg::TextConfig& cfg, const char*
 						while (i != 0 && isWhitespace(tb->m_Codepoints[i - 1])) {
 							--i;
 						}
-						const float rowWidth = mesh.m_Quads[i].m_Pos[2] - mesh.m_Quads[0].m_Pos[0];
+						const float rowWidth = mesh.m_Quads[i - 1].m_Pos[2] - mesh.m_Quads[0].m_Pos[0];
 						row->width = rowWidth;
 						row->maxx = rowWidth;
 					}
