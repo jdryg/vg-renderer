@@ -1063,7 +1063,7 @@ static bool fsAtlasInsertNode(Atlas* atlas, uint32_t nodeID, uint16_t x, uint16_
 	}
 
 	// Move everything up one slot
-	bx::memMove(&atlas->m_Nodes[nodeID + 1], &atlas->m_Nodes[nodeID], sizeof(AtlasNode) * (atlas->m_NumNodes - nodeID));
+	bx::memMove(&atlas->m_Nodes[nodeID + 1], &atlas->m_Nodes[nodeID], sizeof(AtlasNode) * (atlas->m_NumNodes - nodeID - 1));
 	
 	// Set the new node
 	fsAtlasSetNode(atlas, nodeID, x, y, w);
