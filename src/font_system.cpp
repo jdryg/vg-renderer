@@ -126,14 +126,15 @@ static Glyph* fsBakeGlyph(FontSystem* fs, Font* font, int32_t glyphIndex, uint32
 static Glyph* fsAllocGlyph(FontSystem* fs, Font* font);
 static bool fsAllocTextAtlas(FontSystem* fs, Context* ctx);
 
-bool fsBackendInit(FontSystem* fs);
-void* fsBackendLoadFont(FontSystem* fs, uint8_t* data, uint32_t dataSize);
-void fsBackendGetFontVMetrics(void* fontPtr, int32_t* ascent, int32_t* descent, int32_t* lineGap);
-float fsBackendGetPixelHeightScale(void* fontPtr, float size);
-int32_t fsBackendGetGlyphIndex(void* fontPtr, uint32_t codepoint);
-bool fsBackendBuildGlyphBitmap(void* fontPtr, int32_t glyph, float size, float scale, int32_t* advance, int32_t* lsb, int32_t* x0, int32_t* y0, int32_t* x1, int32_t* y1);
-void fsBackendRenderGlyphBitmap(void* fontPtr, uint8_t* output, int32_t outWidth, int32_t outHeight, int32_t outStride, float scaleX, float scaleY, int glyph);
-int32_t fsBackendGetGlyphKernAdvance(void* fontPtr, int32_t glyph1, int32_t glyph2);
+static bool fsBackendInit(FontSystem* fs);
+static void* fsBackendLoadFont(FontSystem* fs, uint8_t* data, uint32_t dataSize);
+static void fsBackendFreeFont(FontSystem* fs, void* fontPtr);
+static void fsBackendGetFontVMetrics(void* fontPtr, int32_t* ascent, int32_t* descent, int32_t* lineGap);
+static float fsBackendGetPixelHeightScale(void* fontPtr, float size);
+static int32_t fsBackendGetGlyphIndex(void* fontPtr, uint32_t codepoint);
+static bool fsBackendBuildGlyphBitmap(void* fontPtr, int32_t glyph, float size, float scale, int32_t* advance, int32_t* lsb, int32_t* x0, int32_t* y0, int32_t* x1, int32_t* y1);
+static void fsBackendRenderGlyphBitmap(void* fontPtr, uint8_t* output, int32_t outWidth, int32_t outHeight, int32_t outStride, float scaleX, float scaleY, int glyph);
+static int32_t fsBackendGetGlyphKernAdvance(void* fontPtr, int32_t glyph1, int32_t glyph2);
 
 FontSystem* fsCreate(vg::Context* ctx, bx::AllocatorI* allocator, const FontSystemConfig* cfg)
 {
@@ -203,11 +204,17 @@ void fsDestroy(FontSystem* fs, vg::Context* ctx)
 	const uint32_t numFonts = fs->m_NumFonts;
 	for (uint32_t i = 0; i < numFonts; ++i) {
 		Font* font = &fs->m_Fonts[i];
+		fsBackendFreeFont(fs, font->m_BackendData);
+
 		if ((font->m_Flags & FontFlags::DontCopyData) == 0) {
 			BX_FREE(allocator, font->m_Data);
 		}
+
+		BX_FREE(allocator, font->m_Glyphs);
 	}
 	BX_FREE(allocator, fs->m_Fonts);
+
+	BX_FREE(allocator, fs->m_ImageData);
 
 	fsDestroyAtlas(fs->m_Atlas);
 
@@ -1582,23 +1589,25 @@ struct FontStb
 	int m_MaxGlyphIndex;
 };
 
-bool fsBackendInit(FontSystem* fs)
+static bool fsBackendInit(FontSystem* fs)
 {
 	BX_UNUSED(fs);
 	return true;
 }
 
-void* fsBackendLoadFont(FontSystem* fs, uint8_t* data, uint32_t dataSize)
+static void* fsBackendLoadFont(FontSystem* fs, uint8_t* data, uint32_t dataSize)
 {
 	BX_UNUSED(dataSize);
 
-	FontStb* font = (FontStb*)BX_ALLOC(fs->m_Allocator, sizeof(FontStb));
+	bx::AllocatorI* allocator = fs->m_Allocator;
+
+	FontStb* font = (FontStb*)BX_ALLOC(allocator, sizeof(FontStb));
 	bx::memSet(font, 0, sizeof(FontStb));
 
-	font->m_Font.userdata = fs;
+	font->m_Font.userdata = nullptr;
 	int32_t stbError = stbtt_InitFont(&font->m_Font, data, 0);
 	if (!stbError) {
-		BX_FREE(fs->m_Allocator, font);
+		BX_FREE(allocator, font);
 		return nullptr;
 	}
 
@@ -1621,7 +1630,7 @@ void* fsBackendLoadFont(FontSystem* fs, uint8_t* data, uint32_t dataSize)
 	
 	const uint32_t numGlyphs = maxGlyphIndex - minGlyphIndex + 1;
 	const uint32_t totalPairs = numGlyphs * numGlyphs;
-	font->m_Kern = (int32_t*)BX_ALLOC(fs->m_Allocator, sizeof(int32_t) * totalPairs);
+	font->m_Kern = (int32_t*)BX_ALLOC(allocator, sizeof(int32_t) * totalPairs);
 	if (font->m_Kern) {
 		for (int32_t second = minGlyphIndex; second <= maxGlyphIndex; ++second) {
 			const int32_t mult = (second - minGlyphIndex) * numGlyphs;
@@ -1634,13 +1643,26 @@ void* fsBackendLoadFont(FontSystem* fs, uint8_t* data, uint32_t dataSize)
 	return font;
 }
 
-void fsBackendGetFontVMetrics(void* fontPtr, int32_t* ascent, int32_t* descent, int32_t* lineGap)
+static void fsBackendFreeFont(FontSystem* fs, void* fontPtr)
+{
+	FontStb* font = (FontStb*)fontPtr;
+	if (!font) {
+		return;
+	}
+
+	bx::AllocatorI* allocator = fs->m_Allocator;
+
+	BX_FREE(allocator, font->m_Kern);
+	BX_FREE(allocator, font);
+}
+
+static void fsBackendGetFontVMetrics(void* fontPtr, int32_t* ascent, int32_t* descent, int32_t* lineGap)
 {
 	FontStb* font = (FontStb*)fontPtr;
 	stbtt_GetFontVMetrics(&font->m_Font, ascent, descent, lineGap);
 }
 
-float fsBackendGetPixelHeightScale(void* fontPtr, float size)
+static float fsBackendGetPixelHeightScale(void* fontPtr, float size)
 {
 	FontStb* font = (FontStb*)fontPtr;
 #if FS_CONFIG_FONT_SIZE_EM
@@ -1650,7 +1672,7 @@ float fsBackendGetPixelHeightScale(void* fontPtr, float size)
 #endif
 }
 
-int32_t fsBackendGetGlyphIndex(void* fontPtr, uint32_t codepoint)
+static int32_t fsBackendGetGlyphIndex(void* fontPtr, uint32_t codepoint)
 {
 	FontStb* font = (FontStb*)fontPtr;
 	if (codepoint >= FS_STBTT_FIRST_GLYPH && codepoint <= FS_STBTT_LAST_GLYPH) {
@@ -1660,7 +1682,7 @@ int32_t fsBackendGetGlyphIndex(void* fontPtr, uint32_t codepoint)
 	return stbtt_FindGlyphIndex(&font->m_Font, codepoint);
 }
 
-bool fsBackendBuildGlyphBitmap(void* fontPtr, int32_t glyph, float size, float scale, int32_t* advance, int32_t* lsb, int32_t* x0, int32_t* y0, int32_t* x1, int32_t* y1)
+static bool fsBackendBuildGlyphBitmap(void* fontPtr, int32_t glyph, float size, float scale, int32_t* advance, int32_t* lsb, int32_t* x0, int32_t* y0, int32_t* x1, int32_t* y1)
 {
 	BX_UNUSED(size);
 	FontStb* font = (FontStb*)fontPtr;
@@ -1669,13 +1691,13 @@ bool fsBackendBuildGlyphBitmap(void* fontPtr, int32_t glyph, float size, float s
 	return true;
 }
 
-void fsBackendRenderGlyphBitmap(void* fontPtr, uint8_t* output, int32_t outWidth, int32_t outHeight, int32_t outStride, float scaleX, float scaleY, int glyph)
+static void fsBackendRenderGlyphBitmap(void* fontPtr, uint8_t* output, int32_t outWidth, int32_t outHeight, int32_t outStride, float scaleX, float scaleY, int glyph)
 {
 	FontStb* font = (FontStb*)fontPtr;
 	stbtt_MakeGlyphBitmap(&font->m_Font, output, outWidth, outHeight, outStride, scaleX, scaleY, glyph);
 }
 
-int32_t fsBackendGetGlyphKernAdvance(void* fontPtr, int32_t glyph1, int32_t glyph2)
+static int32_t fsBackendGetGlyphKernAdvance(void* fontPtr, int32_t glyph1, int32_t glyph2)
 {
 	FontStb* font = (FontStb*)fontPtr;
 	const int minID = font->m_MinGlyphIndex;

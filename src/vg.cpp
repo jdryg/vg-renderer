@@ -34,14 +34,9 @@ BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment within conditional express
 
 #define VG_CONFIG_MIN_FONT_SCALE                 0.1f
 #define VG_CONFIG_MAX_FONT_SCALE                 4.0f
-#define VG_CONFIG_MAX_FONT_IMAGES                4
-#define VG_CONFIG_MIN_FONT_ATLAS_SIZE            256
+#define VG_CONFIG_MIN_FONT_ATLAS_SIZE            512
 #define VG_CONFIG_COMMAND_LIST_CACHE_STACK_SIZE  32
 #define VG_CONFIG_COMMAND_LIST_ALIGNMENT         16
-
-// Minimum font size (after scaling with the current transformation matrix),
-// below which no text will be rendered.
-#define VG_CONFIG_MIN_FONT_SIZE              4.0f
 
 namespace vg
 {
@@ -428,8 +423,6 @@ struct Context
 
 static State* getState(Context* ctx);
 static void updateState(State* state);
-//static const uv_t* getWhitePixelUV(Context* ctx);
-//static void updateWhitePixelUV(Context* ctx);
 
 static float* allocTransformedVertices(Context* ctx, uint32_t numVertices);
 static const float* transformPath(Context* ctx);
@@ -2492,6 +2485,7 @@ void clText(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float
 void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
+	VG_CHECK(isValid(cfg.m_FontHandle), "Invalid font handle");
 	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
 	const uint32_t len = end ? (uint32_t)(end - str) : (uint32_t)bx::strLen(str);
@@ -3738,10 +3732,6 @@ static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const
 	}
 
 	const float scaledFontSize = cfg.m_FontSize * scale;
-	if (scaledFontSize < VG_CONFIG_MIN_FONT_SIZE) {
-		return;
-	}
-
 	const uint32_t len = end
 		? (uint32_t)(end - str)
 		: bx::strLen(str)
