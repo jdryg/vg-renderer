@@ -3,46 +3,7 @@
 
 #include <stdint.h>
 #include <bx/math.h>
-
-#ifndef VG_CONFIG_DEBUG
-#	define VG_CONFIG_DEBUG 0
-#endif
-
-#ifndef VG_CONFIG_ENABLE_SHAPE_CACHING
-#	define VG_CONFIG_ENABLE_SHAPE_CACHING 1
-#endif
-
-#ifndef VG_CONFIG_ENABLE_SIMD
-#	define VG_CONFIG_ENABLE_SIMD 1
-#endif
-
-#ifndef VG_CONFIG_FORCE_AA_OFF
-#	define VG_CONFIG_FORCE_AA_OFF 0
-#endif
-
-#ifndef VG_CONFIG_LIBTESS2_SCRATCH_BUFFER
-#	define VG_CONFIG_LIBTESS2_SCRATCH_BUFFER (4 * 1024 * 1024) // Set to 0 to let libtess2 use malloc/free
-#endif
-
-#ifndef VG_CONFIG_UV_INT16
-#	define VG_CONFIG_UV_INT16 1
-#endif
-
-// If set to 1, submitCommandList() calls pustState()/popState() and resetClip() before and after
-// executing the commands. Otherwise, the state produced by the command list will affect the global
-// state after the execution of the commands.
-#ifndef VG_CONFIG_COMMAND_LIST_PRESERVE_STATE
-#	define VG_CONFIG_COMMAND_LIST_PRESERVE_STATE 0
-#endif
-
-// NOTE: beginCommandList()/endCommandList() blocks require an indirect jump for each function/path command,
-// because they change the Context' vtable. If this is set to 0, all functions call their implementation 
-// directly (i.e. there will probably still be a jump there but it'll be unconditional/direct).
-// If you care about perf so much that an indirect unconditional jump is a problem for you, or if you aren't
-// planning on using command lists at all, set this to 0 and use only clXXX functions to build command lists. 
-#ifndef VG_CONFIG_COMMAND_LIST_BEGIN_END_API
-#	define VG_CONFIG_COMMAND_LIST_BEGIN_END_API 1
-#endif
+#include "config.h"
 
 #if VG_CONFIG_DEBUG
 #include <bx/debug.h>
@@ -76,16 +37,6 @@
 #define VG_HANDLE32(_name) struct _name { uint16_t idx; uint16_t flags; }
 #define VG_INVALID_HANDLE { UINT16_MAX }
 #define VG_INVALID_HANDLE32 { UINT16_MAX, 0 }
-
-#define VG_COLOR_RED_SHIFT   0
-#define VG_COLOR_GREEN_SHIFT 8
-#define VG_COLOR_BLUE_SHIFT  16
-#define VG_COLOR_ALPHA_SHIFT 24
-#define VG_COLOR_RGB_MASK    0x00FFFFFF
-
-#define VG_COLOR32(r, g, b, a) (uint32_t)(((uint32_t)(r) << VG_COLOR_RED_SHIFT) | ((uint32_t)(g) << VG_COLOR_GREEN_SHIFT) | ((uint32_t)(b) << VG_COLOR_BLUE_SHIFT) | ((uint32_t)(a) << VG_COLOR_ALPHA_SHIFT))
-
-#define VG_EPSILON 1e-5f
 
 namespace bx
 {
@@ -144,10 +95,6 @@ struct TextAlignVer
 	};
 };
 
-#define VG_TEXT_ALIGN(hor, ver)  (((hor) << 2) | (ver))
-#define VG_TEXT_ALIGN_HOR(align) (TextAlignHor::Enum)(((align) >> 2) & 0x03)
-#define VG_TEXT_ALIGN_VER(align) (TextAlignVer::Enum)(((align) >> 0) & 0x03)
-
 struct TextAlign
 {
 	enum Enum : uint32_t
@@ -186,11 +133,6 @@ struct LineJoin
 		Bevel = 2
 	};
 };
-
-#define VG_STROKE_FLAGS(cap, join, aa)   (((aa) << 4) | ((cap) << 2) | (join))
-#define VG_STROKE_FLAGS_LINE_CAP(flags)  (LineCap::Enum)(((flags) >> 2) & 0x03)
-#define VG_STROKE_FLAGS_LINE_JOIN(flags) (LineJoin::Enum)(((flags) >> 0) & 0x03)
-#define VG_STROKE_FLAGS_AA(flags)        (((flags) & 0x10) != 0)
 
 struct StrokeFlags
 {
@@ -239,11 +181,6 @@ struct FillRule
 		EvenOdd = 1,
 	};
 };
-
-#define VG_FILL_FLAGS(type, rule, aa) ((((rule) << 4) | (aa) << 2) | (type))
-#define VG_FILL_FLAGS_PATH_TYPE(flags) (PathType::Enum)((flags) & 0x01)
-#define VG_FILL_FLAGS_AA(flags) (((flags) & 0x04) != 0)
-#define VG_FILL_FLAGS_RULE(flags) (FillRule::Enum)(((flags) & 0x10) >> 4)
 
 struct FillFlags
 {

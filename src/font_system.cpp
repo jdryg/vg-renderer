@@ -592,7 +592,7 @@ static uint32_t fsTextBuildMesh(FontSystem* fs, TextBuffer* tb, vg::Context* ctx
 
 	float dx = 0.0f;
 	const float width = cursorX;
-	switch (VG_TEXT_ALIGN_HOR(cfg.m_Alignment)) {
+	switch ((cfg.m_Alignment & VG_TEXT_ALIGN_HOR_Msk) >> VG_TEXT_ALIGN_HOR_Pos) {
 	case vg::TextAlignHor::Left:
 		break;
 	case vg::TextAlignHor::Center:
@@ -1351,7 +1351,7 @@ static bool fsTextBufferPushCodepoint(TextBuffer* tb, uint32_t codepoint, uint8_
 static float fsGetVertAlign(FontSystem* fs, const Font* font, uint32_t align, int16_t isize)
 {
 	if ((fs->m_Config.m_Flags & FontSystemFlags::Origin_Msk) == FontSystemFlags::Origin_TopLeft) {
-		switch (VG_TEXT_ALIGN_VER(align)) {
+		switch ((align & VG_TEXT_ALIGN_VER_Msk) >> VG_TEXT_ALIGN_VER_Pos) {
 		case vg::TextAlignVer::Top:
 			return font->m_Ascender * (float)isize / 10.0f;
 		case vg::TextAlignVer::Middle:
@@ -1362,7 +1362,7 @@ static float fsGetVertAlign(FontSystem* fs, const Font* font, uint32_t align, in
 			return font->m_Descender * (float)isize / 10.0f;
 		}
 	} else {
-		switch (VG_TEXT_ALIGN_VER(align)) {
+		switch ((align & VG_TEXT_ALIGN_VER_Msk) >> VG_TEXT_ALIGN_VER_Pos) {
 		case vg::TextAlignVer::Top:
 			return -font->m_Ascender * (float)isize / 10.0f;
 		case vg::TextAlignVer::Middle:

@@ -58,27 +58,27 @@ inline Color colorHSB(float hue, float sat, float brightness)
 
 inline Color colorSetAlpha(Color c, uint8_t a)
 {
-	return (c & VG_COLOR_RGB_MASK) | ((uint32_t)a << VG_COLOR_ALPHA_SHIFT);
+	return (c & VG_COLOR_RGB_Msk) | (((uint32_t)a << VG_COLOR_ALPHA_Pos) & VG_COLOR_ALPHA_Msk);
 }
 
 inline uint8_t colorGetAlpha(Color c) 
 {
-	return (uint8_t)((c >> VG_COLOR_ALPHA_SHIFT) & 0xFF); 
+	return (uint8_t)((c & VG_COLOR_ALPHA_Msk) >> VG_COLOR_ALPHA_Pos); 
 }
 
 inline uint8_t colorGetRed(Color c) 
 { 
-	return (uint8_t)((c >> VG_COLOR_RED_SHIFT) & 0xFF); 
+	return (uint8_t)((c & VG_COLOR_RED_Msk) >> VG_COLOR_RED_Pos);
 }
 
 inline uint8_t colorGetGreen(Color c) 
 {
-	return (uint8_t)((c >> VG_COLOR_GREEN_SHIFT) & 0xFF); 
+	return (uint8_t)((c & VG_COLOR_GREEN_Msk) >> VG_COLOR_GREEN_Pos); 
 }
 
 inline uint8_t colorGetBlue(Color c)
 {
-	return (uint8_t)((c >> VG_COLOR_BLUE_SHIFT) & 0xFF); 
+	return (uint8_t)((c & VG_COLOR_BLUE_Msk) >> VG_COLOR_BLUE_Pos);
 }
 
 // Text helpers

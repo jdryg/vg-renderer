@@ -1671,8 +1671,8 @@ void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float
 		: str + bx::strLen(str)
 		;
 
-	const TextAlignHor::Enum halign = VG_TEXT_ALIGN_HOR(cfg.m_Alignment);
-	const TextAlignVer::Enum valign = VG_TEXT_ALIGN_VER(cfg.m_Alignment);
+	const TextAlignHor::Enum halign = (TextAlignHor::Enum)((cfg.m_Alignment & VG_TEXT_ALIGN_HOR_Msk) >> VG_TEXT_ALIGN_HOR_Pos);
+	const TextAlignVer::Enum valign = (TextAlignVer::Enum)((cfg.m_Alignment & VG_TEXT_ALIGN_VER_Msk) >> VG_TEXT_ALIGN_VER_Pos);
 
 	const TextConfig newCfg = makeTextConfig(ctx, cfg.m_FontHandle, cfg.m_FontSize, VG_TEXT_ALIGN(vg::TextAlignHor::Left, valign), cfg.m_Color, cfg.m_Blur, cfg.m_Spacing);
 
@@ -2629,10 +2629,13 @@ static void ctxFillPathColor(Context* ctx, Color color, uint32_t flags)
 #if VG_CONFIG_FORCE_AA_OFF
 	const bool aa = false;
 #else
-	const bool aa = recordClipCommands ? false : VG_FILL_FLAGS_AA(flags);
+	const bool aa = recordClipCommands 
+		? false 
+		: (bool)((flags & VG_FILL_FLAGS_AA_Msk) >> VG_FILL_FLAGS_AA_Pos)
+		;
 #endif
-	const PathType::Enum pathType = VG_FILL_FLAGS_PATH_TYPE(flags);
-	const FillRule::Enum fillRule = VG_FILL_FLAGS_RULE(flags);
+	const PathType::Enum pathType = (PathType::Enum)((flags & VG_FILL_FLAGS_PATH_TYPE_Msk) >> VG_FILL_FLAGS_PATH_TYPE_Pos);
+	const FillRule::Enum fillRule = (FillRule::Enum)((flags & VG_FILL_FLAGS_FILL_RULE_Msk) >> VG_FILL_FLAGS_FILL_RULE_Pos);
 
 	const Path* path = ctx->m_Path;
 	const uint32_t numSubPaths = pathGetNumSubPaths(path);
@@ -2740,12 +2743,12 @@ static void ctxFillPathGradient(Context* ctx, GradientHandle gradientHandle, uin
 
 	const float* pathVertices = transformPath(ctx);
 
-	const PathType::Enum pathType = VG_FILL_FLAGS_PATH_TYPE(flags);
-	const FillRule::Enum fillRule = VG_FILL_FLAGS_RULE(flags);
+	const PathType::Enum pathType = (PathType::Enum)((flags & VG_FILL_FLAGS_PATH_TYPE_Msk) >> VG_FILL_FLAGS_PATH_TYPE_Pos);
+	const FillRule::Enum fillRule = (FillRule::Enum)((flags & VG_FILL_FLAGS_FILL_RULE_Msk) >> VG_FILL_FLAGS_FILL_RULE_Pos);
 #if VG_CONFIG_FORCE_AA_OFF
 	const bool aa = false;
 #else
-	const bool aa = VG_FILL_FLAGS_AA(flags);
+	const bool aa = (bool)((flags & VG_FILL_FLAGS_AA_Msk) >> VG_FILL_FLAGS_AA_Pos);
 #endif
 
 	Stroker* stroker = ctx->m_Stroker;
@@ -2855,12 +2858,12 @@ static void ctxFillPathImagePattern(Context* ctx, ImagePatternHandle imgPatternH
 		return;
 	}
 
-	const PathType::Enum pathType = VG_FILL_FLAGS_PATH_TYPE(flags);
-	const FillRule::Enum fillRule = VG_FILL_FLAGS_RULE(flags);
+	const PathType::Enum pathType = (PathType::Enum)((flags & VG_FILL_FLAGS_PATH_TYPE_Msk) >> VG_FILL_FLAGS_PATH_TYPE_Pos);
+	const FillRule::Enum fillRule = (FillRule::Enum)((flags & VG_FILL_FLAGS_FILL_RULE_Msk) >> VG_FILL_FLAGS_FILL_RULE_Pos);
 #if VG_CONFIG_FORCE_AA_OFF
 	const bool aa = false;
 #else
-	const bool aa = VG_FILL_FLAGS_AA(flags);
+	const bool aa = (bool)((flags & VG_FILL_FLAGS_AA_Msk) >> VG_FILL_FLAGS_AA_Pos);
 #endif
 
 	const float* pathVertices = transformPath(ctx);
@@ -2975,12 +2978,15 @@ static void ctxStrokePathColor(Context* ctx, Color color, float width, uint32_t 
 		return;
 	}
 
-	const LineJoin::Enum lineJoin = VG_STROKE_FLAGS_LINE_JOIN(flags);
-	const LineCap::Enum lineCap = VG_STROKE_FLAGS_LINE_CAP(flags);
+	const LineJoin::Enum lineJoin = (LineJoin::Enum)((flags & VG_STROKE_FLAGS_LINE_JOIN_Msk) >> VG_STROKE_FLAGS_LINE_JOIN_Pos);
+	const LineCap::Enum lineCap = (LineCap::Enum)((flags & VG_STROKE_FLAGS_LINE_CAP_Msk) >> VG_STROKE_FLAGS_LINE_CAP_Pos);
 #if VG_CONFIG_FORCE_AA_OFF
 	const bool aa = false;
 #else
-	const bool aa = recordClipCommands ? false : VG_STROKE_FLAGS_AA(flags);
+	const bool aa = recordClipCommands 
+		? false 
+		: (bool)((flags & VG_STROKE_FLAGS_AA_Msk) >> VG_STROKE_FLAGS_AA_Pos)
+		;
 #endif
 
 	const float strokeWidth = isThin ? fringeWidth : scaledStrokeWidth;
@@ -3054,12 +3060,12 @@ static void ctxStrokePathGradient(Context* ctx, GradientHandle gradientHandle, f
 	const bool hasCache = getCommandListCacheStackTop(ctx) != nullptr;
 #endif
 
-	const LineJoin::Enum lineJoin = VG_STROKE_FLAGS_LINE_JOIN(flags);
-	const LineCap::Enum lineCap = VG_STROKE_FLAGS_LINE_CAP(flags);
+	const LineJoin::Enum lineJoin = (LineJoin::Enum)((flags & VG_STROKE_FLAGS_LINE_JOIN_Msk) >> VG_STROKE_FLAGS_LINE_JOIN_Pos);
+	const LineCap::Enum lineCap = (LineCap::Enum)((flags & VG_STROKE_FLAGS_LINE_CAP_Msk) >> VG_STROKE_FLAGS_LINE_CAP_Pos);
 #if VG_CONFIG_FORCE_AA_OFF
 	const bool aa = false;
 #else
-	const bool aa = VG_STROKE_FLAGS_AA(flags);
+	const bool aa = (bool)((flags & VG_STROKE_FLAGS_AA_Msk) >> VG_STROKE_FLAGS_AA_Pos);
 #endif
 
 	const float* pathVertices = transformPath(ctx);
@@ -3154,12 +3160,12 @@ static void ctxStrokePathImagePattern(Context* ctx, ImagePatternHandle imgPatter
 		return;
 	}
 
-	const LineJoin::Enum lineJoin = VG_STROKE_FLAGS_LINE_JOIN(flags);
-	const LineCap::Enum lineCap = VG_STROKE_FLAGS_LINE_CAP(flags);
+	const LineJoin::Enum lineJoin = (LineJoin::Enum)((flags & VG_STROKE_FLAGS_LINE_JOIN_Msk) >> VG_STROKE_FLAGS_LINE_JOIN_Pos);
+	const LineCap::Enum lineCap = (LineCap::Enum)((flags & VG_STROKE_FLAGS_LINE_CAP_Msk) >> VG_STROKE_FLAGS_LINE_CAP_Pos);
 #if VG_CONFIG_FORCE_AA_OFF
 	const bool aa = false;
 #else
-	const bool aa = VG_STROKE_FLAGS_AA(flags);
+	const bool aa = (bool)((flags & VG_STROKE_FLAGS_AA_Msk) >> VG_STROKE_FLAGS_AA_Pos);
 #endif
 
 	const float strokeWidth = isThin ? fringeWidth : scaledStrokeWidth;
@@ -3759,8 +3765,8 @@ static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, fl
 		;
 
 	const float lineHeight = fsGetLineHeight(ctx->m_FontSystem, cfg);
-	const TextAlignHor::Enum halign = VG_TEXT_ALIGN_HOR(cfg.m_Alignment);
-	const TextAlignVer::Enum valign = VG_TEXT_ALIGN_VER(cfg.m_Alignment);
+	const TextAlignHor::Enum halign = (TextAlignHor::Enum)((cfg.m_Alignment & VG_TEXT_ALIGN_HOR_Msk) >> VG_TEXT_ALIGN_HOR_Pos);
+	const TextAlignVer::Enum valign = (TextAlignVer::Enum)((cfg.m_Alignment & VG_TEXT_ALIGN_VER_Msk) >> VG_TEXT_ALIGN_VER_Pos);
 
 	const TextConfig newCfg = makeTextConfig(ctx, cfg.m_FontHandle, cfg.m_FontSize, VG_TEXT_ALIGN(vg::TextAlignHor::Left, valign), cfg.m_Color, cfg.m_Blur, cfg.m_Spacing);
 
@@ -5625,4 +5631,8 @@ static void releaseIndexBufferCallback(void* ptr, void* userData)
 	Context* ctx = (Context*)userData;
 	releaseIndexBuffer(ctx, (uint16_t*)ptr);
 }
-}
+} // namespace vg
+
+#include <bgfx/c99/bgfx.h>
+#include <vg/c99/vg.h>
+#include "vg.c.inl"
