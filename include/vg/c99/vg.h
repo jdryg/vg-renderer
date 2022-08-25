@@ -96,7 +96,7 @@ typedef enum vg_stroke_flags
 	VG_STROKE_FLAGS_SQUARE_ROUND_AA = VG_STROKE_FLAGS(VG_LINE_CAP_SQUARE, VG_LINE_JOIN_ROUND, 1),
 	VG_STROKE_FLAGS_SQUARE_BEVEL_AA = VG_STROKE_FLAGS(VG_LINE_CAP_SQUARE, VG_LINE_JOIN_BEVEL, 1),
 	
-	VG_STROKE_FLAGS_FIXED_WIDTH     = 1u << 5 // NOTE: Scale independent stroke width
+	VG_STROKE_FLAGS_FIXED_WIDTH     = VG_STROKE_FLAGS_FIXED_WIDTH_Msk // NOTE: Scale independent stroke width
 } vg_stroke_flags;
 
 typedef enum vg_path_type

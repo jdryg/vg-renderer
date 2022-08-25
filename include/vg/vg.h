@@ -2,7 +2,6 @@
 #define VG_H
 
 #include <stdint.h>
-#include <bx/math.h>
 #include "config.h"
 
 #if VG_CONFIG_DEBUG
@@ -160,7 +159,7 @@ struct StrokeFlags
 		SquareRoundAA = VG_STROKE_FLAGS(LineCap::Square, LineJoin::Round, 1),
 		SquareBevelAA = VG_STROKE_FLAGS(LineCap::Square, LineJoin::Bevel, 1),
 
-		FixedWidth = 1u << 5 // NOTE: Scale independent stroke width
+		FixedWidth = VG_STROKE_FLAGS_FIXED_WIDTH_Msk // NOTE: Scale independent stroke width
 	};
 };
 

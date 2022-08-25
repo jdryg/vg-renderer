@@ -2,6 +2,8 @@
 #	error "Must be included from vg/vg.h"
 #endif
 
+#include <bx/math.h>
+
 namespace vg
 {
 inline Color color4f(float r, float g, float b, float a)
