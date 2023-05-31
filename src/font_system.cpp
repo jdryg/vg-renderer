@@ -425,10 +425,10 @@ uint32_t fsText(FontSystem* fs, vg::Context* ctx, const vg::TextConfig& cfg, con
 				continue;
 			}
 
-			*codepointSize = (uint8_t)(i - codepointStartID);
+			*codepointSize = (uint8_t)(i - codepointStartID) + 1;
 			++codepointSize;
 			++codepointPtr;
-			codepointStartID = i;
+			codepointStartID = i + 1;
 		}
 		tb->m_Size = (uint32_t)(codepointPtr - tb->m_Codepoints);
 	}

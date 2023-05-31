@@ -164,7 +164,9 @@ typedef struct vg_image_handle         { uint16_t idx; } vg_image_handle;
 typedef struct vg_font_handle          { uint16_t idx; } vg_font_handle;
 typedef struct vg_command_list_handle  { uint16_t idx; } vg_command_list_handle;
 
-#define VG_HANDLE_IS_VALID(h) ((h).idx != UINT16_MAX)
+#undef VG_INVALID_HANDLE
+#define VG_INVALID_HANDLE(type)        (type){ .idx = UINT16_MAX }
+#define VG_HANDLE_IS_VALID(h)          ((h).idx != UINT16_MAX)
 
 typedef struct vg_allocator_o vg_allocator_o;
 typedef struct vg_allocator_i
@@ -242,6 +244,14 @@ typedef enum vg_font_flags
 	VG_FONT_FLAGS_NONE           = 0,
 	VG_FONT_FLAGS_DONT_COPY_DATA = 1u << 0, // The calling code will keep the font data alive for as long as the Context is alive so there's no need to copy the data internally.
 } vg_font_flags;
+
+static vg_color vg_color4f(float r, float g, float b, float a);
+static vg_color vg_color4ub(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+static vg_color vg_colorSetAlpha(vg_color c, uint8_t a);
+static uint8_t vg_colorGetRed(vg_color c);
+static uint8_t vg_colorGetGreen(vg_color c);
+static uint8_t vg_colorGetBlue(vg_color c);
+static uint8_t vg_colorGetAlpha(vg_color c);
 
 typedef struct vg_context vg_context;
 
@@ -531,5 +541,7 @@ typedef struct vg_api
 typedef vg_api* (*PFN_VG_GET_API)();
 
 VG_C_API vg_api* vg_getAPI();
+
+#include "inline/vg.inl"
 
 #endif // VG_VG_H
