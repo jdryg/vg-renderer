@@ -138,7 +138,7 @@ static int32_t fsBackendGetGlyphKernAdvance(void* fontPtr, int32_t glyph1, int32
 
 FontSystem* fsCreate(vg::Context* ctx, bx::AllocatorI* allocator, const FontSystemConfig* cfg)
 {
-	FontSystem* fs = (FontSystem*)BX_ALLOC(allocator, sizeof(FontSystem));
+	FontSystem* fs = (FontSystem*)bx::alloc(allocator, sizeof(FontSystem));
 	if (!fs) {
 		return nullptr;
 	}
@@ -158,7 +158,7 @@ FontSystem* fsCreate(vg::Context* ctx, bx::AllocatorI* allocator, const FontSyst
 	fs->m_AtlasID = 1;
 
 	// Initialize image data
-	fs->m_ImageData = (uint8_t*)BX_ALLOC(allocator, (size_t)cfg->m_AtlasWidth * (size_t)cfg->m_AtlasHeight);
+	fs->m_ImageData = (uint8_t*)bx::alloc(allocator, (size_t)cfg->m_AtlasWidth * (size_t)cfg->m_AtlasHeight);
 	if (!fs->m_ImageData) {
 		fsDestroy(fs, ctx);
 		return nullptr;
@@ -207,18 +207,18 @@ void fsDestroy(FontSystem* fs, vg::Context* ctx)
 		fsBackendFreeFont(fs, font->m_BackendData);
 
 		if ((font->m_Flags & FontFlags::DontCopyData) == 0) {
-			BX_FREE(allocator, font->m_Data);
+			bx::free(allocator, font->m_Data);
 		}
 
-		BX_FREE(allocator, font->m_Glyphs);
+		bx::free(allocator, font->m_Glyphs);
 	}
-	BX_FREE(allocator, fs->m_Fonts);
+	bx::free(allocator, fs->m_Fonts);
 
-	BX_FREE(allocator, fs->m_ImageData);
+	bx::free(allocator, fs->m_ImageData);
 
 	fsDestroyAtlas(fs->m_Atlas);
 
-	BX_FREE(allocator, fs);
+	bx::free(allocator, fs);
 }
 
 void fsFrame(FontSystem* fs, vg::Context* ctx)
@@ -264,7 +264,7 @@ FontHandle fsAddFont(FontSystem* fs, const char* name, uint8_t* data, uint32_t d
 	uint8_t* fontData = nullptr;
 	const bool copyData = (fontFlags & FontFlags::DontCopyData) == 0;
 	if (copyData) {
-		fontData = (uint8_t*)BX_ALLOC(fs->m_Allocator, dataSize);
+		fontData = (uint8_t*)bx::alloc(fs->m_Allocator, dataSize);
 		if (!fontData) {
 			return VG_INVALID_HANDLE;
 		}
@@ -386,12 +386,12 @@ void fsFlushFontAtlasImage(FontSystem* fs, vg::Context* ctx)
 	const uint8_t* a8Data = fsGetImageData(fs, &imgSize[0]);
 
 	// TODO: Convert only the dirty part of the texture (it's the only part that will be uploaded to the backend)
-	uint32_t* rgbaData = (uint32_t*)BX_ALLOC(fs->m_Allocator, sizeof(uint32_t) * imgSize[0] * imgSize[1]);
+	uint32_t* rgbaData = (uint32_t*)bx::alloc(fs->m_Allocator, sizeof(uint32_t) * imgSize[0] * imgSize[1]);
 	vgutil::convertA8_to_RGBA8(rgbaData, a8Data, (uint32_t)imgSize[0], (uint32_t)imgSize[1], 0x00FFFFFF);
 
 	vg::updateImage(ctx, fontImage, dirtyRect[0], dirtyRect[1], dirtyRect[2] - dirtyRect[0], dirtyRect[3] - dirtyRect[1], (const uint8_t*)rgbaData);
 
-	BX_FREE(fs->m_Allocator, rgbaData);
+	bx::free(fs->m_Allocator, rgbaData);
 }
 
 uint32_t fsText(FontSystem* fs, vg::Context* ctx, const vg::TextConfig& cfg, const char* str, uint32_t len, uint32_t flags, TextMesh* mesh)
@@ -887,7 +887,7 @@ static FontHandle fsAllocFont(FontSystem* fs)
 		const uint32_t oldCapacity = fs->m_FontCapacity;
 		const uint32_t newCapacity = oldCapacity + 4;
 
-		Font* newFonts = (Font*)BX_ALLOC(fs->m_Allocator, sizeof(Font) * newCapacity);
+		Font* newFonts = (Font*)bx::alloc(fs->m_Allocator, sizeof(Font) * newCapacity);
 		if (!newFonts) {
 			return VG_INVALID_HANDLE;
 		}
@@ -895,7 +895,7 @@ static FontHandle fsAllocFont(FontSystem* fs)
 		bx::memCopy(&newFonts[0], fs->m_Fonts, sizeof(Font) * oldCapacity);
 		bx::memSet(&newFonts[oldCapacity], 0, sizeof(Font) * (newCapacity - oldCapacity));
 
-		BX_FREE(fs->m_Allocator, fs->m_Fonts);
+		bx::free(fs->m_Allocator, fs->m_Fonts);
 		fs->m_Fonts = newFonts;
 		fs->m_FontCapacity = newCapacity;
 	}
@@ -963,7 +963,7 @@ static bool fsResetAtlas(FontSystem* fs, uint16_t width, uint16_t height)
 	fsAtlasReset(fs->m_Atlas, width, height);
 
 	// Clear texture data.
-	fs->m_ImageData = (uint8_t*)BX_REALLOC(fs->m_Allocator, fs->m_ImageData, width * height);
+	fs->m_ImageData = (uint8_t*)bx::realloc(fs->m_Allocator, fs->m_ImageData, width * height);
 	if (!fs->m_ImageData) {
 		return false;
 	}
@@ -998,7 +998,7 @@ static bool fsResetAtlas(FontSystem* fs, uint16_t width, uint16_t height)
 // Atlas based on Skyline Bin Packer by Jukka Jylänki
 static Atlas* fsCreateAtlas(bx::AllocatorI* allocator, uint16_t w, uint16_t h)
 {
-	Atlas* atlas = (Atlas*)BX_ALLOC(allocator, sizeof(Atlas));
+	Atlas* atlas = (Atlas*)bx::alloc(allocator, sizeof(Atlas));
 	if (!atlas) {
 		return nullptr;
 	}
@@ -1022,8 +1022,8 @@ static Atlas* fsCreateAtlas(bx::AllocatorI* allocator, uint16_t w, uint16_t h)
 static void fsDestroyAtlas(Atlas* atlas)
 {
 	bx::AllocatorI* allocator = atlas->m_Allocator;
-	BX_FREE(allocator, atlas->m_Nodes);
-	BX_FREE(allocator, atlas);
+	bx::free(allocator, atlas->m_Nodes);
+	bx::free(allocator, atlas);
 }
 
 static uint32_t fsAtlasAllocNode(Atlas* atlas)
@@ -1035,7 +1035,7 @@ static uint32_t fsAtlasAllocNode(Atlas* atlas)
 			: oldCapacity * 2
 			;
 
-		AtlasNode* newNodes = (AtlasNode*)BX_ALLOC(atlas->m_Allocator, sizeof(AtlasNode) * newCapacity);
+		AtlasNode* newNodes = (AtlasNode*)bx::alloc(atlas->m_Allocator, sizeof(AtlasNode) * newCapacity);
 		if (!newNodes) {
 			return UINT32_MAX;
 		}
@@ -1043,7 +1043,7 @@ static uint32_t fsAtlasAllocNode(Atlas* atlas)
 		bx::memCopy(&newNodes[0], atlas->m_Nodes, sizeof(AtlasNode) * oldCapacity);
 		bx::memSet(&newNodes[oldCapacity], 0, sizeof(AtlasNode) * (newCapacity - oldCapacity));
 		
-		BX_FREE(atlas->m_Allocator, atlas->m_Nodes);
+		bx::free(atlas->m_Allocator, atlas->m_Nodes);
 		atlas->m_Nodes = newNodes;
 		atlas->m_NodeCapacity = newCapacity;
 	}
@@ -1267,7 +1267,7 @@ static void fsTextBufferInit(TextBuffer* tb)
 
 static void fsTextBufferShutdown(TextBuffer* tb, bx::AllocatorI* allocator)
 {
-	BX_ALIGNED_FREE(allocator, tb->m_Buffer, 16);
+	bx::alignedFree(allocator, tb->m_Buffer, 16);
 	bx::memSet(tb, 0, sizeof(TextBuffer));
 }
 
@@ -1284,7 +1284,7 @@ static bool fsTextBufferExpand(TextBuffer* tb, uint32_t newCapacity, bool keepOl
 		+ bx::strideAlign(sizeof(FontHandle) * newCapacity, 16) // m_GlyphFonts
 		;
 
-	uint8_t* buffer = (uint8_t*)BX_ALIGNED_ALLOC(allocator, totalMemory, 16);
+	uint8_t* buffer = (uint8_t*)bx::alignedAlloc(allocator, totalMemory, 16);
 	if (!buffer) {
 		return false;
 	}
@@ -1307,7 +1307,9 @@ static bool fsTextBufferExpand(TextBuffer* tb, uint32_t newCapacity, bool keepOl
 		bx::memCopy(newGlyphFonts, tb->m_GlyphFonts, sizeof(FontHandle) * oldCapacity);
 	}
 
-	BX_ALIGNED_FREE(allocator, tb->m_Buffer, 16);
+	if (tb->m_Buffer) {
+		bx::alignedFree(allocator, tb->m_Buffer, 16);
+	}
 	tb->m_Buffer = buffer;
 	tb->m_Quads = newQuads;
 	tb->m_Codepoints = newCodepoints;
@@ -1561,7 +1563,7 @@ static Glyph* fsAllocGlyph(FontSystem* fs, Font* font)
 			: font->m_GlyphCapacity * 2
 			;
 
-		font->m_Glyphs = (Glyph*)BX_REALLOC(fs->m_Allocator, font->m_Glyphs, sizeof(Glyph) * font->m_GlyphCapacity);
+		font->m_Glyphs = (Glyph*)bx::realloc(fs->m_Allocator, font->m_Glyphs, sizeof(Glyph) * font->m_GlyphCapacity);
 		if (!font->m_Glyphs) {
 			return nullptr;
 		}
@@ -1601,13 +1603,13 @@ static void* fsBackendLoadFont(FontSystem* fs, uint8_t* data, uint32_t dataSize)
 
 	bx::AllocatorI* allocator = fs->m_Allocator;
 
-	FontStb* font = (FontStb*)BX_ALLOC(allocator, sizeof(FontStb));
+	FontStb* font = (FontStb*)bx::alloc(allocator, sizeof(FontStb));
 	bx::memSet(font, 0, sizeof(FontStb));
 
 	font->m_Font.userdata = nullptr;
 	int32_t stbError = stbtt_InitFont(&font->m_Font, data, 0);
 	if (!stbError) {
-		BX_FREE(allocator, font);
+		bx::free(allocator, font);
 		return nullptr;
 	}
 
@@ -1630,7 +1632,7 @@ static void* fsBackendLoadFont(FontSystem* fs, uint8_t* data, uint32_t dataSize)
 	
 	const uint32_t numGlyphs = maxGlyphIndex - minGlyphIndex + 1;
 	const uint32_t totalPairs = numGlyphs * numGlyphs;
-	font->m_Kern = (int32_t*)BX_ALLOC(allocator, sizeof(int32_t) * totalPairs);
+	font->m_Kern = (int32_t*)bx::alloc(allocator, sizeof(int32_t) * totalPairs);
 	if (font->m_Kern) {
 		for (int32_t second = minGlyphIndex; second <= maxGlyphIndex; ++second) {
 			const int32_t mult = (second - minGlyphIndex) * numGlyphs;
@@ -1652,8 +1654,8 @@ static void fsBackendFreeFont(FontSystem* fs, void* fontPtr)
 
 	bx::AllocatorI* allocator = fs->m_Allocator;
 
-	BX_FREE(allocator, font->m_Kern);
-	BX_FREE(allocator, font);
+	bx::free(allocator, font->m_Kern);
+	bx::free(allocator, font);
 }
 
 static void fsBackendGetFontVMetrics(void* fontPtr, int32_t* ascent, int32_t* descent, int32_t* lineGap)
