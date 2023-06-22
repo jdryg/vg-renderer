@@ -1911,7 +1911,10 @@ void destroyCommandList(Context* ctx, CommandListHandle handle)
 	ctx->m_Stats.m_CmdListMemoryTotal -= cl->m_CommandBufferCapacity;
 	ctx->m_Stats.m_CmdListMemoryUsed -= cl->m_CommandBufferPos;
 
-	bx::alignedFree(allocator, cl->m_CommandBuffer, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
+	if (cl->m_CommandBuffer) {
+		bx::alignedFree(allocator, cl->m_CommandBuffer, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
+		cl->m_CommandBuffer = nullptr;
+	}
 	bx::free(allocator, cl->m_StringBuffer);
 	bx::memSet(cl, 0, sizeof(CommandList));
 
