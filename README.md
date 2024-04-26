@@ -21,7 +21,7 @@ Strokes and fills are generated using the Stroker struct (`src/vg/stroker.cpp, .
 7. Fills with image patterns can be colored.
 8. FontStash: glyph hashing uses BKDR (seems to give better distribution of glyphs in the LUT; fewer collisions when searching for cached glyphs)
 9. FontStash: optional (compile-time flag) caching of glyph indices and kerning info for ASCII chars in order to avoid repeated calls to stbtt functions.
-10. Per-fill and per-stroke control over weather anti-aliassing geometry should be generated.
+10. Per-fill and per-stroke control over whether anti-aliasing geometry should be generated.
 
 ### What's not supported compared to NanoVG
 
@@ -36,13 +36,13 @@ For an example on how to use this library, take a look [here](https://github.com
 
 ### A few tips when porting from NanoVG.
 
- - `nvgBezierTo` should be replaced by `vg::cubicTo`. Note that there is also `vg::quadraticTo` for a lower degree bezier.
+ - `nvgBezierTo` should be replaced by `vg::cubicTo`. Note that there is also `vg::quadraticTo` for a lower degree Bezier curve.
  - `nvgSave` and `nvgRestore` are to be replaced by `vg::pushState()` and `vg::popState()`.
  - Thanks to the support for command lists, you may want to render your UI in layers, where every layer is a command list.
    This way, you can still traverse the UI-tree widget by widget, but store draw commands onto the command lists per layer, which can greatly reduce state changes.
    For example you may have a layer for widget shapes and outlines, and a layer for text.
- - When implementing UI widget with perfectly rectanglar shape, you may consider omitting the anti-aliassing setting to generate less geometry.
- - When using a gradient fill that will be fully transparent at the edge of the shape, you may likely also want to not generate anti-aliassing geometry.
+ - When implementing UI widget with perfectly rectangular shape, you may consider omitting the anti-aliasing setting to generate less geometry.
+ - When using a gradient fill that will be fully transparent at the edge of the shape, you may likely also want to not generate anti-aliasing geometry.
  - vg-renderer uses `uint32_t` as colors, instead of a struct of 4 floats.
    When converting, you might want to consider to use `vg::color4ub` instead of `vg::color4f`.
    Also note that there are a few predefined colors available in `vg::Colors::`.
@@ -68,7 +68,7 @@ Custom gradients (indexed triangle lists w/ per-vertex colors)
 
 ### Using this in your project
 
-In your project, you can add these files as a new CMake target, using the following, assuming you have this project as a submodule in a folder `ext/`:
+In your project, you can add these files as a new CMake target, using the following, assuming you have this project as a submodule in a folder `ext/vg-renderer`:
 
 ```cmake
 add_library(vg-renderer STATIC
