@@ -30,6 +30,14 @@
 #include "shaders/vs_stencil.bin.h"
 #include "shaders/fs_stencil.bin.h"
 
+#define BX_ALLOC(allocator, size) bx::alloc(allocator, size)
+#define BX_FREE(allocator, ptr) bx::free(allocator, ptr)
+#define BX_ALIGNED_ALLOC(allocator, size, align) bx::alignedAlloc(allocator, size, align)
+#define BX_ALIGNED_FREE(allocator, ptr, align) bx::alignedFree(allocator, ptr, align)
+#define BX_REALLOC(allocator, ptr, size) bx::realloc(allocator, ptr, size)
+#define BX_ALIGNED_REALLOC(allocator, ptr, size, align) bx::alignedRealloc(allocator, ptr, size, align)
+#define BX_DELETE(allocator, obj) bx::deleteObject(allocator, obj)
+
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment within conditional expression
 
 #define VG_CONFIG_MIN_FONT_SCALE                 0.1f
@@ -1012,7 +1020,7 @@ void destroyContext(Context* ctx)
 	BX_DELETE(allocator, ctx->m_DataPoolMutex);
 #endif
 
-	BX_FREE(allocator, ctx);
+	BX_ALIGNED_FREE(allocator, ctx, 8);
 }
 
 void begin(Context* ctx, uint16_t viewID, uint16_t canvasWidth, uint16_t canvasHeight, float devicePixelRatio)

@@ -1,6 +1,14 @@
 #include <vg/path.h>
 #include <bx/allocator.h>
 
+#define BX_ALLOC(allocator, size) bx::alloc(allocator, size)
+#define BX_FREE(allocator, ptr) bx::free(allocator, ptr)
+#define BX_ALIGNED_ALLOC(allocator, size, align) bx::alignedAlloc(allocator, size, align)
+#define BX_ALIGNED_FREE(allocator, ptr, align) bx::alignedFree(allocator, ptr, align)
+#define BX_REALLOC(allocator, ptr, size) bx::realloc(allocator, ptr, size)
+#define BX_ALIGNED_REALLOC(allocator, ptr, size, align) bx::alignedRealloc(allocator, ptr, size, align)
+#define BX_DELETE(allocator, obj) bx::deleteObject(allocator, obj)
+
 namespace vg
 {
 struct Path

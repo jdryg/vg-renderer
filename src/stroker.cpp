@@ -5,6 +5,14 @@
 #include <bx/math.h>
 #include <string.h> // memcpy
 
+#define BX_ALLOC(allocator, size) bx::alloc(allocator, size)
+#define BX_FREE(allocator, ptr) bx::free(allocator, ptr)
+#define BX_ALIGNED_ALLOC(allocator, size, align) bx::alignedAlloc(allocator, size, align)
+#define BX_ALIGNED_FREE(allocator, ptr, align) bx::alignedFree(allocator, ptr, align)
+#define BX_REALLOC(allocator, ptr, size) bx::realloc(allocator, ptr, size)
+#define BX_ALIGNED_REALLOC(allocator, ptr, size, align) bx::alignedRealloc(allocator, ptr, size, align)
+#define BX_DELETE(allocator, obj) bx::deleteObject(allocator, obj)
+
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4127) // conditional expression is constant
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4456) // declaration of X hides previous local decleration
 BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wshadow")
@@ -214,7 +222,9 @@ void destroyStroker(Stroker* stroker)
 		tessDeleteTess(stroker->m_Tesselator);
 	}
 
-	BX_ALIGNED_FREE(allocator, stroker->m_libTessAllocator.m_Buffer, 16);
+	if (stroker->m_libTessAllocator.m_Buffer) {
+		BX_ALIGNED_FREE(allocator, stroker->m_libTessAllocator.m_Buffer, 16);
+	}
 
 	BX_FREE(allocator, stroker);
 }
