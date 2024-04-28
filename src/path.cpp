@@ -22,7 +22,7 @@ static void pathAddVertex(Path* path, float x, float y);
 
 Path* createPath(bx::AllocatorI* allocator)
 {
-	Path* path = (Path*)BX_ALLOC(allocator, sizeof(Path));
+	Path* path = (Path*)bx::alloc(allocator, sizeof(Path));
 	bx::memSet(path, 0, sizeof(Path));
 	path->m_Allocator = allocator;
 	path->m_Scale = 1.0f;
@@ -34,9 +34,9 @@ void destroyPath(Path* path)
 {
 	bx::AllocatorI* allocator = path->m_Allocator;
 
-	BX_ALIGNED_FREE(allocator, path->m_Vertices, 16);
-	BX_FREE(allocator, path->m_SubPaths);
-	BX_FREE(allocator, path);
+	bx::alignedFree(allocator, path->m_Vertices, 16);
+	bx::free(allocator, path->m_SubPaths);
+	bx::free(allocator, path);
 }
 
 void pathReset(Path* path, float scale, float tesselationTolerance)
@@ -46,7 +46,7 @@ void pathReset(Path* path, float scale, float tesselationTolerance)
 
 	if (path->m_SubPathCapacity == 0) {
 		path->m_SubPathCapacity = 16;
-		path->m_SubPaths = (SubPath*)BX_ALLOC(path->m_Allocator, sizeof(SubPath) * path->m_SubPathCapacity);
+		path->m_SubPaths = (SubPath*)bx::alloc(path->m_Allocator, sizeof(SubPath) * path->m_SubPathCapacity);
 	}
 
 	path->m_NumSubPaths = 0;
@@ -63,7 +63,7 @@ void pathMoveTo(Path* path, float x, float y)
 		// Move on to the next sub path.
 		if (path->m_NumSubPaths + 1 > path->m_SubPathCapacity) {
 			path->m_SubPathCapacity += 16;
-			path->m_SubPaths = (SubPath*)BX_REALLOC(path->m_Allocator, path->m_SubPaths, sizeof(SubPath) * path->m_SubPathCapacity);
+			path->m_SubPaths = (SubPath*)bx::realloc(path->m_Allocator, path->m_SubPaths, sizeof(SubPath) * path->m_SubPathCapacity);
 		}
 
 		path->m_CurSubPath = &path->m_SubPaths[path->m_NumSubPaths++];
@@ -740,7 +740,7 @@ static float* pathAllocVertices(Path* path, uint32_t n)
 {
 	if (path->m_NumVertices + n > path->m_VertexCapacity) {
 		path->m_VertexCapacity = bx::uint32_max(path->m_VertexCapacity + n, path->m_VertexCapacity != 0 ? (path->m_VertexCapacity * 3) >> 1 : 16);
-		path->m_Vertices = (float*)BX_ALIGNED_REALLOC(path->m_Allocator, path->m_Vertices, sizeof(float) * 2 * path->m_VertexCapacity, 16);
+		path->m_Vertices = (float*)bx::alignedRealloc(path->m_Allocator, path->m_Vertices, sizeof(float) * 2 * path->m_VertexCapacity, 16);
 	}
 
 	float* p = &path->m_Vertices[path->m_NumVertices << 1];
