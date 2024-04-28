@@ -2,6 +2,6 @@
 #include <bx/math.h> // bx::exp
 #include <limits.h>  // INT_MIN, INT_MAX
 #define FONTSTASH_IMPLEMENTATION
-#define FONS_GLYPH_KERN_ARRAY 0
-#define FONS_GLYPH_KERN_NONZERO_BITMAP 1
+#define FONS_GLYPH_KERN_ARRAY_ASCII 1
+#define FONS_GLYPH_KERN_NONZERO_CODEMAP 1
 #include "fontstash.h"

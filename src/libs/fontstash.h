@@ -55,33 +55,25 @@
 // JD: If 1 builds an array for mapping ASCII chars between 0x20 and 0x7E to
 // glyph indices for the current font to avoid calling stbtt_FindGlyphIndex()
 // for ASCII chars.
-#ifndef FONS_GLYPH_INDEX_ARRAY
-#	define FONS_GLYPH_INDEX_ARRAY 1
-#	define FONS_FIRST_GLYPH 0x20
-#	define FONS_LAST_GLYPH 0x7E
-#	define FONS_NUM_GLYPH_INDICES (FONS_LAST_GLYPH - FONS_FIRST_GLYPH + 1)
+#ifndef FONS_ASCII_TO_GLYPH_INDEX_ARRAY
+#	define FONS_ASCII_TO_GLYPH_INDEX_ARRAY 1
+#	define FONS_FIRST_ASCII_CODEPOINT 0x20
+#	define FONS_LAST_ASCII_CODEPOINT 0x7E
+#	define FONS_NUM_ASCII_TO_GLYPH_INDICES (FONS_LAST_ASCII_CODEPOINT - FONS_FIRST_ASCII_CODEPOINT + 1)
 #endif
 
 // JD:
-#ifndef FONS_GLYPH_KERN_ARRAY
-#if FONS_GLYPH_INDEX_ARRAY
-#	define FONS_GLYPH_KERN_ARRAY 1
+#ifndef FONS_GLYPH_KERN_ARRAY_ASCII
+#if FONS_ASCII_TO_GLYPH_INDEX_ARRAY
+#	define FONS_GLYPH_KERN_ARRAY_ASCII 1
 #else
-#	define FONS_GLYPH_KERN_ARRAY 0
+#	define FONS_GLYPH_KERN_ARRAY_ASCII 0
 #endif
 #endif
 
 // MC:
-#ifndef FONS_GLYPH_KERN_NONZERO_BITMAP
-#if FONS_GLYPH_INDEX_ARRAY
-#if FONS_GLYPH_KERN_ARRAY
-#	define FONS_GLYPH_KERN_NONZERO_BITMAP 0
-#else
-#	define FONS_GLYPH_KERN_NONZERO_BITMAP 1
-#endif
-#else
-#	define FONS_GLYPH_KERN_NONZERO_BITMAP 0
-#endif
+#ifndef FONS_GLYPH_KERN_NONZERO_CODEMAP
+#	define FONS_GLYPH_KERN_NONZERO_CODEMAP 1
 #endif
 
 #ifndef FONS_STDIO
@@ -396,24 +388,32 @@ static void fons__tmpfree(void* ptr, void* up);
 
 struct FONSttFontImpl {
 	stbtt_fontinfo font;
-#if FONS_GLYPH_INDEX_ARRAY
-	int glyphIndex[FONS_NUM_GLYPH_INDICES];
+	int minAsciiGlyphIndex;
+	int maxAsciiGlyphIndex;
+
+#if FONS_ASCII_TO_GLYPH_INDEX_ARRAY
+	int ascii_to_glyph_index[FONS_NUM_ASCII_TO_GLYPH_INDICES];
 #endif
-#if FONS_GLYPH_KERN_NONZERO_BITMAP
+#if FONS_GLYPH_KERN_NONZERO_CODEMAP
 	// MC: Here I do an attempt to mark for which combination of glyph indices
 	// there exists a non-zero kerning value. Every slot in this array is 2 bit:
 	//  00 - not looked up yet.
 	//  01 - known to be zero
 	//  10 - known to be non-zero
 	//  11 - [unused]
-	uint64_t *kern;
+	uint64_t *kern_codemap;
 
-	int minGlyphIndex;
-	int maxGlyphIndex;
-#elif FONS_GLYPH_KERN_ARRAY
-	int16_t *kern;
-	int minGlyphIndex;
-	int maxGlyphIndex;
+#endif
+#if FONS_GLYPH_KERN_ARRAY_ASCII
+	// MC: We will only store kerning information for the ASCII-ASCII
+	// glyph combinations, assuming they will make up 99% of all character
+	// sequences. However, we need to keep track of a table that can tell us
+	// which ASCII character belongs to a glyph index, to be able to compatcly
+	// store the lookup table, as glyphs for the ASCII characters can still
+	// have very high indices (so we want to bring them back to a known small
+	// range, which will determine the size of the lookup table).
+	int16_t *kern_ascii;
+	uint8_t *glyph_index_to_ascii; // Contains zero if the glyph is non-ASCII.
 #endif
 };
 typedef struct FONSttFontImpl FONSttFontImpl;
@@ -426,9 +426,9 @@ int fons__tt_init(FONScontext *context)
 
 int fons__tt_getGlyphIndex(FONSttFontImpl *font, int codepoint)
 {
-#if FONS_GLYPH_INDEX_ARRAY
-	if (codepoint >= FONS_FIRST_GLYPH && codepoint <= FONS_LAST_GLYPH) {
-		return font->glyphIndex[codepoint - FONS_FIRST_GLYPH];
+#if FONS_ASCII_TO_GLYPH_INDEX_ARRAY
+	if (codepoint >= FONS_FIRST_ASCII_CODEPOINT && codepoint <= FONS_LAST_ASCII_CODEPOINT) {
+		return font->ascii_to_glyph_index[codepoint - FONS_FIRST_ASCII_CODEPOINT];
 	}
 #endif
 
@@ -437,30 +437,38 @@ int fons__tt_getGlyphIndex(FONSttFontImpl *font, int codepoint)
 
 int fons__tt_getGlyphKernAdvance(FONSttFontImpl *font, int glyph1, int glyph2)
 {
-#if FONS_GLYPH_KERN_ARRAY || FONS_GLYPH_KERN_NONZERO_BITMAP
-	const int minID = font->minGlyphIndex;
-	const int maxID = font->maxGlyphIndex;
+#if FONS_GLYPH_KERN_ARRAY_ASCII || FONS_GLYPH_KERN_NONZERO_CODEMAP
+	const int minID = font->minAsciiGlyphIndex;
+	const int maxID = font->maxAsciiGlyphIndex;
 	if(glyph1 >= minID && glyph1 <= maxID && glyph2 >= minID && glyph2 <= maxID) {
 		const int g1 = glyph1 - minID;
 		const int g2 = glyph2 - minID;
-		//// MC: Implement Rosenberg-Strong's pairing function to look up
-		//// indices to compact memory usage for fonts with a lot of glyphs.
-		const int max = bx::max(g1, g2);
-		const int combo = max * max + max + g1 - g2;
-		// The original used a simple lattice index:
-		//const int combo = g1 + g2 * (maxID - minID + 1);
-#if FONS_GLYPH_KERN_ARRAY
-		int16_t kern = font->kern[combo];
-		if (kern == INT16_MIN) {
-			kern = stbtt_GetGlyphKernAdvance(&font->font, glyph1, glyph2);
-			font->kern[combo] = kern;
+
+#if FONS_GLYPH_KERN_ARRAY_ASCII
+		uint8_t ascii_codepoint_1 = font->glyph_index_to_ascii[g1];
+		uint8_t ascii_codepoint_2 = font->glyph_index_to_ascii[g2];
+		if (ascii_codepoint_1 != 0 && ascii_codepoint_2 != 0) {
+			int32_t i1 = ascii_codepoint_1 - FONS_FIRST_ASCII_CODEPOINT;
+			int32_t i2 = ascii_codepoint_2 - FONS_FIRST_ASCII_CODEPOINT;
+			//// MC: Implement Rosenberg-Strong's pairing function to look up
+			//// indices to compact memory usage for fonts with a lot of glyphs.
+			const int max = bx::max(i1, i2);
+			const int combo = max * max + max + i1 - i2;
+			int16_t kern = font->kern_ascii[combo];
+			if (kern == INT16_MIN) {
+				kern = stbtt_GetGlyphKernAdvance(&font->font, glyph1, glyph2);
+				font->kern_ascii[combo] = kern;
+			}
+			return kern;
 		}
-		return kern;
-#elif FONS_GLYPH_KERN_NONZERO_BITMAP
+#endif
+
+#if FONS_GLYPH_KERN_NONZERO_CODEMAP
+		const int combo = g1 + g2 * (maxID - minID + 1);
 		int32_t uint64_idx = (combo * 2) / (sizeof(uint64_t) * 8);
 		int32_t bit_idx = (combo * 2) % (sizeof(uint64_t) * 8);
 
-		uint64_t uint64_entry = font->kern[uint64_idx];
+		uint64_t uint64_entry = font->kern_codemap[uint64_idx];
 		int8_t status = (uint64_entry >> bit_idx) & 3;
 		if (status == 0) {
 			// Unknown
@@ -472,7 +480,7 @@ int fons__tt_getGlyphKernAdvance(FONSttFontImpl *font, int glyph1, int glyph2)
 				// Update to known-to-be-non-zero
 				uint64_entry |= 2 << bit_idx;
 			}
-			font->kern[uint64_idx] = uint64_entry;
+			font->kern_codemap[uint64_idx] = uint64_entry;
 			return kern;
 		} else if (status == 1) {
 			// Known to be zero
@@ -498,45 +506,63 @@ int fons__tt_loadFont(FONScontext *context, FONSttFontImpl *font, unsigned char 
 	stbError = stbtt_InitFont(&font->font, data, 0);
 
 	if (stbError) {
-#if FONS_GLYPH_INDEX_ARRAY
-		int minGlyphIndex = INT_MAX;
-		int maxGlyphIndex = INT_MIN;
-		for (int cp = FONS_FIRST_GLYPH; cp <= FONS_LAST_GLYPH; ++cp) {
+#if FONS_ASCII_TO_GLYPH_INDEX_ARRAY
+		int minAsciiGlyphIndex = INT_MAX;
+		int maxAsciiGlyphIndex = INT_MIN;
+		for (int cp = FONS_FIRST_ASCII_CODEPOINT; cp <= FONS_LAST_ASCII_CODEPOINT; ++cp) {
 			const int gi = stbtt_FindGlyphIndex(&font->font, cp);
-			font->glyphIndex[cp - FONS_FIRST_GLYPH] = gi;
+			font->ascii_to_glyph_index[cp - FONS_FIRST_ASCII_CODEPOINT] = gi;
 
-			if (gi < minGlyphIndex) {
-				minGlyphIndex = gi;
+			if (gi < minAsciiGlyphIndex) {
+				minAsciiGlyphIndex = gi;
 			}
-			if (gi > maxGlyphIndex) {
-				maxGlyphIndex = gi;
+			if (gi > maxAsciiGlyphIndex) {
+				maxAsciiGlyphIndex = gi;
 			}
 		}
+		font->minAsciiGlyphIndex = minAsciiGlyphIndex;
+		font->maxAsciiGlyphIndex = maxAsciiGlyphIndex;
 #endif
 
-#if FONS_GLYPH_KERN_ARRAY || FONS_GLYPH_KERN_NONZERO_BITMAP
-		font->minGlyphIndex = minGlyphIndex;
-		font->maxGlyphIndex = maxGlyphIndex;
+#if FONS_GLYPH_KERN_ARRAY_ASCII || FONS_GLYPH_KERN_NONZERO_CODEMAP
 
-		const int numGlyphs = maxGlyphIndex - minGlyphIndex + 1;
-		const int totalPairs = numGlyphs * numGlyphs;
-#if FONS_GLYPH_KERN_ARRAY
-		font->kern = (int16_t*)FONSmalloc(sizeof(int16_t) * totalPairs);
-#elif FONS_GLYPH_KERN_NONZERO_BITMAP
+		const int rangeGlyphIndicesAscii = maxAsciiGlyphIndex - minAsciiGlyphIndex + 1;
+#if FONS_GLYPH_KERN_ARRAY_ASCII
+		const int totalAsciiPairs = FONS_NUM_ASCII_TO_GLYPH_INDICES * FONS_NUM_ASCII_TO_GLYPH_INDICES;
+		font->kern_ascii = (int16_t*)FONSmalloc(sizeof(int16_t) * totalAsciiPairs);
+		font->glyph_index_to_ascii = (uint8_t*)FONSmalloc(sizeof(uint8_t) * rangeGlyphIndicesAscii);
+#endif
+#if FONS_GLYPH_KERN_NONZERO_CODEMAP
+		const int totalPairs = rangeGlyphIndicesAscii * rangeGlyphIndicesAscii;
 		const int totalBits = totalPairs * 2;
 		const int totalBytes = (totalBits + 7) / 8;
 		const int totalUint64s = (totalBytes + 7) / 8;
-		font->kern = (uint64_t*)FONSmalloc(totalUint64s * sizeof(uint64_t));
+		font->kern_codemap = (uint64_t*)FONSmalloc(totalUint64s * sizeof(uint64_t));
 #endif
-		if (font->kern) {
-#if FONS_GLYPH_KERN_ARRAY
+		if (true
+#if FONS_GLYPH_KERN_ARRAY_ASCII
+				&& (font->kern_ascii && font->glyph_index_to_ascii)
+#endif
+#if FONS_GLYPH_KERN_NONZERO_CODEMAP
+				&& (font->kern_codemap)
+#endif
+			 ) {
+#if FONS_GLYPH_KERN_ARRAY_ASCII
 			// MC: Clear the array the dummy value meaning the value is not cached yet.
-			for (int i = 0; i < totalPairs; ++i) {
-				font->kern[i] = INT16_MIN;
+			for (int i = 0; i < totalAsciiPairs; ++i) {
+				font->kern_ascii[i] = INT16_MIN;
 			}
-#elif FONS_GLYPH_KERN_NONZERO_BITMAP
+			for (int i = 0; i < rangeGlyphIndicesAscii; ++i) {
+				font->glyph_index_to_ascii[i] = 0;
+			}
+			for (int cp = FONS_FIRST_ASCII_CODEPOINT; cp <= FONS_LAST_ASCII_CODEPOINT; ++cp) {
+				int glyphIdx = fons__tt_getGlyphIndex(font, cp);
+				font->glyph_index_to_ascii[glyphIdx - font->minAsciiGlyphIndex] = cp;
+			}
+#endif
+#if FONS_GLYPH_KERN_NONZERO_CODEMAP
 			for (int i = 0; i < totalUint64s; ++i) {
-				font->kern[i] = 0;
+				font->kern_codemap[i] = 0;
 			}
 #endif
 
@@ -544,9 +570,10 @@ int fons__tt_loadFont(FONScontext *context, FONSttFontImpl *font, unsigned char 
 			int min_kern = INT_MAX;
 			int max_kern = INT_MIN;
 			int non_zero_kern = 0;
-			for (int second_cp = FONS_FIRST_GLYPH; second_cp <= FONS_LAST_GLYPH; ++second_cp) {
+			for (int second_cp = FONS_FIRST_ASCII_CODEPOINT; second_cp <= FONS_LAST_ASCII_CODEPOINT; ++second_cp) {
 				int second = fons__tt_getGlyphIndex(font, second_cp);
-				for (int first_cp = FONS_FIRST_GLYPH; first_cp <= FONS_LAST_GLYPH; ++first_cp) {
+				//bx::printf("Codepoint %x -> Glyph idx %d\n", second_cp, second);
+				for (int first_cp = FONS_FIRST_ASCII_CODEPOINT; first_cp <= FONS_LAST_ASCII_CODEPOINT; ++first_cp) {
 					int first = fons__tt_getGlyphIndex(font, first_cp);
 					// MC: Do a lookup, which will fetch and cache the result.
 					int value = fons__tt_getGlyphKernAdvance(font, first, second);
@@ -556,7 +583,9 @@ int fons__tt_loadFont(FONScontext *context, FONSttFontImpl *font, unsigned char 
 					non_zero_kern += (value != 0);
 				}
 			}
-			bx::printf("Kern range: %d -> %d, non-zero count: %d, num_glyphs: %d\n", min_kern, max_kern, non_zero_kern, numGlyphs);
+			assert(min_kern < INT16_MIN);
+			assert(max_kern > INT16_MAX);
+			//bx::printf("Kern range: %d -> %d, non-zero count: %d, num_glyphs: %d\n", min_kern, max_kern, non_zero_kern, rangeGlyphIndicesAscii);
 		}
 #endif
 	}
@@ -2195,7 +2224,7 @@ void fonsResetString(FONScontext* stash, FONSstring* str, const char* text, cons
 	str->m_LastBakeAtlasID = 0;
 }
 
-static FONSglyph* fons__bakeGlyph(FONScontext* stash, FONSfont* font, int glyphIndex, unsigned int codepoint, short isize, short iblur)
+static FONSglyph* fons__bakeGlyph(FONScontext* stash, FONSfont* font, int ascii_to_glyph_index, unsigned int codepoint, short isize, short iblur)
 {
 	FONSglyph* glyph = NULL;
 	FONSfont* renderFont = font;
@@ -2244,12 +2273,12 @@ static FONSglyph* fons__bakeGlyph(FONScontext* stash, FONSfont* font, int glyphI
 	// Could not find glyph, create it.
 //	g = fons__tt_getGlyphIndex(&font->font, codepoint);
 	// Try to find the glyph in fallback fonts.
-	if (glyphIndex == 0) {
+	if (ascii_to_glyph_index == 0) {
 		for (i = 0; i < font->nfallbacks; ++i) {
 			FONSfont* fallbackFont = stash->fonts[font->fallbacks[i]];
 			int fallbackIndex = fons__tt_getGlyphIndex(&fallbackFont->font, codepoint);
 			if (fallbackIndex != 0) {
-				glyphIndex = fallbackIndex;
+				ascii_to_glyph_index = fallbackIndex;
 				renderFont = fallbackFont;
 				break;
 			}
@@ -2261,7 +2290,7 @@ static FONSglyph* fons__bakeGlyph(FONScontext* stash, FONSfont* font, int glyphI
 	const float scale = fons__tt_getPixelHeightScale(&renderFont->font, size);
 
 	int advance, lsb, x0, y0, x1, y1, x, y;
-	fons__tt_buildGlyphBitmap(&renderFont->font, &font->font, glyphIndex, size, scale, &advance, &lsb, &x0, &y0, &x1, &y1);
+	fons__tt_buildGlyphBitmap(&renderFont->font, &font->font, ascii_to_glyph_index, size, scale, &advance, &lsb, &x0, &y0, &x1, &y1);
 
 	int gw = x1 - x0 + pad * 2;
 	int gh = y1 - y0 + pad * 2;
@@ -2295,7 +2324,7 @@ static FONSglyph* fons__bakeGlyph(FONScontext* stash, FONSfont* font, int glyphI
 		font->lut[h] = font->nglyphs - 1;
 	}
 
-	glyph->index = glyphIndex;
+	glyph->index = ascii_to_glyph_index;
 	glyph->x0 = (short)gx;
 	glyph->y0 = (short)gy;
 	glyph->x1 = (short)(glyph->x0 + gw);
@@ -2306,7 +2335,7 @@ static FONSglyph* fons__bakeGlyph(FONScontext* stash, FONSfont* font, int glyphI
 
 	// Rasterize
 	unsigned char* dst = &stash->texData[(glyph->x0 + pad) + (glyph->y0 + pad) * stash->params.width];
-	fons__tt_renderGlyphBitmap(&renderFont->font, dst, gw - pad * 2, gh - pad * 2, stash->params.width, scale, scale, glyphIndex);
+	fons__tt_renderGlyphBitmap(&renderFont->font, dst, gw - pad * 2, gh - pad * 2, stash->params.width, scale, scale, ascii_to_glyph_index);
 
 	// Make sure there is one pixel empty border.
 	dst = &stash->texData[glyph->x0 + glyph->y0 * stash->params.width];
