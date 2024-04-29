@@ -172,6 +172,7 @@ struct Image
 	uint16_t m_Height;
 	uint32_t m_Flags;
 	bgfx::TextureHandle m_bgfxHandle;
+	bool m_Owned;
 };
 
 struct FontData
@@ -2204,6 +2205,7 @@ ImageHandle createImage(Context* ctx, uint16_t w, uint16_t h, uint32_t flags, co
 	tex->m_Flags = bgfxFlags;
 
 	tex->m_bgfxHandle = bgfx::createTexture2D(tex->m_Width, tex->m_Height, false, 1, bgfx::TextureFormat::RGBA8, bgfxFlags);
+	tex->m_Owned = true;
 
 	if (bgfx::isValid(tex->m_bgfxHandle) && data) {
 		const uint32_t bytesPerPixel = 4;
@@ -2212,6 +2214,7 @@ ImageHandle createImage(Context* ctx, uint16_t w, uint16_t h, uint32_t flags, co
 
 		bgfx::updateTexture2D(tex->m_bgfxHandle, 0, 0, 0, 0, tex->m_Width, tex->m_Height, mem);
 	}
+	bx::printf("[VB] createImage() : img=%hu, texture=%hu\n", handle.idx, tex->m_bgfxHandle.idx);
 
 	return handle;
 }
@@ -2238,8 +2241,10 @@ ImageHandle createImage(Context* ctx, uint32_t flags, const bgfx::TextureHandle&
 		bgfxFlags |= BGFX_SAMPLER_MIP_POINT;
 	}
 	tex->m_Flags = bgfxFlags;
+	tex->m_Owned = false;
 
 	tex->m_bgfxHandle.idx = bgfxTextureHandle.idx;
+	bx::printf("[VB] createImage() : img=%hu, texture=%hu\n", handle.idx, tex->m_bgfxHandle.idx);
 
 	return handle;
 }
@@ -2271,8 +2276,10 @@ bool destroyImage(Context* ctx, ImageHandle img)
 	}
 
 	Image* tex = &ctx->m_Images[img.idx];
-	VG_CHECK(bgfx::isValid(tex->m_bgfxHandle), "Invalid texture handle");
-	bgfx::destroy(tex->m_bgfxHandle);
+	if (tex->m_Owned) {
+		VG_CHECK(bgfx::isValid(tex->m_bgfxHandle), "Invalid texture handle");
+		bgfx::destroy(tex->m_bgfxHandle);
+	}
 	resetImage(tex);
 
 	ctx->m_ImageHandleAlloc->free(img.idx);
@@ -5410,6 +5417,7 @@ static void resetImage(Image* img)
 	img->m_Width = 0;
 	img->m_Height = 0;
 	img->m_Flags = 0;
+	img->m_Owned = false;
 }
 
 static ImageHandle allocImage(Context* ctx)
@@ -5422,7 +5430,8 @@ static ImageHandle allocImage(Context* ctx)
 	if (handle.idx >= ctx->m_ImageCapacity) {
 		const uint32_t oldCapacity = ctx->m_ImageCapacity;
 
-		ctx->m_ImageCapacity = bx::uint32_max(ctx->m_ImageCapacity + 4, handle.idx + 1);
+		ctx->m_ImageCapacity = bx::uint32_min(bx::uint32_max(ctx->m_ImageCapacity + 4, handle.idx + 1),
+																				  ctx->m_Config.m_MaxImages);
 		ctx->m_Images = (Image*)BX_REALLOC(ctx->m_Allocator, ctx->m_Images, sizeof(Image) * ctx->m_ImageCapacity);
 		if (!ctx->m_Images) {
 			return VG_INVALID_HANDLE;

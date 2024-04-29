@@ -19,7 +19,7 @@
 #ifndef FONS_H
 #define FONS_H
 
-#include <bx/string.h>
+#include <assert.h>
 
 #define FONS_INVALID -1
 
@@ -572,7 +572,6 @@ int fons__tt_loadFont(FONScontext *context, FONSttFontImpl *font, unsigned char 
 			int non_zero_kern = 0;
 			for (int second_cp = FONS_FIRST_ASCII_CODEPOINT; second_cp <= FONS_LAST_ASCII_CODEPOINT; ++second_cp) {
 				int second = fons__tt_getGlyphIndex(font, second_cp);
-				//bx::printf("Codepoint %x -> Glyph idx %d\n", second_cp, second);
 				for (int first_cp = FONS_FIRST_ASCII_CODEPOINT; first_cp <= FONS_LAST_ASCII_CODEPOINT; ++first_cp) {
 					int first = fons__tt_getGlyphIndex(font, first_cp);
 					// MC: Do a lookup, which will fetch and cache the result.
@@ -583,9 +582,8 @@ int fons__tt_loadFont(FONScontext *context, FONSttFontImpl *font, unsigned char 
 					non_zero_kern += (value != 0);
 				}
 			}
-			assert(min_kern < INT16_MIN);
-			assert(max_kern > INT16_MAX);
-			//bx::printf("Kern range: %d -> %d, non-zero count: %d, num_glyphs: %d\n", min_kern, max_kern, non_zero_kern, rangeGlyphIndicesAscii);
+			assert(min_kern >= INT16_MIN);
+			assert(max_kern <= INT16_MAX);
 		}
 #endif
 	}
