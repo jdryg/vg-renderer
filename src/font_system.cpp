@@ -674,7 +674,7 @@ uint32_t fsTextBreakLines(FontSystem* fs, const vg::TextConfig& cfg, const char*
 		return 0;
 	}
 
-	const bool keepTrailingSpaces = (textBreakFlags & TextBreakFlags::KeepTrailingSpaces) != 0;
+	const bool keepTrailingSpaces = (textBreakFlags & TextBoxFlags::KeepTrailingSpaces) != 0;
 
 	const char* cursor = str;
 	const char* rowStart = str;
@@ -1613,8 +1613,8 @@ static void* fsBackendLoadFont(FontSystem* fs, uint8_t* data, uint32_t dataSize)
 		return nullptr;
 	}
 
-	int32_t minGlyphIndex = INT_MAX;
-	int32_t maxGlyphIndex = INT_MIN;
+	int32_t minGlyphIndex = INT32_MAX;
+	int32_t maxGlyphIndex = INT32_MIN;
 	for (uint32_t cp = FS_STBTT_FIRST_GLYPH; cp <= FS_STBTT_LAST_GLYPH; ++cp) {
 		const int32_t gi = stbtt_FindGlyphIndex(&font->m_Font, cp);
 		font->m_GlyphIndex[cp - FS_STBTT_FIRST_GLYPH] = gi;
