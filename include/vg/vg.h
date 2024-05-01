@@ -203,7 +203,7 @@ struct Winding
 	};
 };
 
-struct TextBreakFlags
+struct TextBoxFlags
 {
 	enum Enum : uint32_t
 	{
