@@ -5,14 +5,6 @@
 #include <bx/math.h>
 #include <string.h> // memcpy
 
-#define BX_ALLOC(allocator, size) bx::alloc(allocator, size)
-#define BX_FREE(allocator, ptr) bx::free(allocator, ptr)
-#define BX_ALIGNED_ALLOC(allocator, size, align) bx::alignedAlloc(allocator, size, align)
-#define BX_ALIGNED_FREE(allocator, ptr, align) bx::alignedFree(allocator, ptr, align)
-#define BX_REALLOC(allocator, ptr, size) bx::realloc(allocator, ptr, size)
-#define BX_ALIGNED_REALLOC(allocator, ptr, size, align) bx::alignedRealloc(allocator, ptr, size, align)
-#define BX_DELETE(allocator, obj) bx::deleteObject(allocator, obj)
-
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4127) // conditional expression is constant
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4456) // declaration of X hides previous local decleration
 BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wshadow")
@@ -201,7 +193,7 @@ static void addIndices(Stroker* stroker, const uint16_t* src);
 
 Stroker* createStroker(bx::AllocatorI* allocator)
 {
-	Stroker* stroker = (Stroker*)BX_ALLOC(allocator, sizeof(Stroker));
+	Stroker* stroker = (Stroker*)bx::alloc(allocator, sizeof(Stroker));
 	bx::memSet(stroker, 0, sizeof(Stroker));
 	stroker->m_Allocator = allocator;
 	stroker->m_FringeWidth = 1.0f;
@@ -214,19 +206,19 @@ void destroyStroker(Stroker* stroker)
 {
 	bx::AllocatorI* allocator = stroker->m_Allocator;
 
-	BX_ALIGNED_FREE(allocator, stroker->m_PosBuffer, 16);
-	BX_ALIGNED_FREE(allocator, stroker->m_ColorBuffer, 16);
-	BX_ALIGNED_FREE(allocator, stroker->m_IndexBuffer, 16);
+	bx::alignedFree(allocator, stroker->m_PosBuffer, 16);
+	bx::alignedFree(allocator, stroker->m_ColorBuffer, 16);
+	bx::alignedFree(allocator, stroker->m_IndexBuffer, 16);
 
 	if (stroker->m_Tesselator) {
 		tessDeleteTess(stroker->m_Tesselator);
 	}
 
 	if (stroker->m_libTessAllocator.m_Buffer) {
-		BX_ALIGNED_FREE(allocator, stroker->m_libTessAllocator.m_Buffer, 16);
+		bx::alignedFree(allocator, stroker->m_libTessAllocator.m_Buffer, 16);
 	}
 
-	BX_FREE(allocator, stroker);
+	bx::free(allocator, stroker);
 }
 
 void strokerReset(Stroker* stroker, float scale, float tesselationTolerance, float fringeWidth)
@@ -817,7 +809,7 @@ bool strokerConcaveFillBegin(Stroker* stroker)
 	// Initialize the allocator once
 	if (!stroker->m_libTessAllocator.m_Buffer) {
 		stroker->m_libTessAllocator.m_Capacity = VG_CONFIG_LIBTESS2_SCRATCH_BUFFER;
-		stroker->m_libTessAllocator.m_Buffer = (uint8_t*)BX_ALIGNED_ALLOC(stroker->m_Allocator, stroker->m_libTessAllocator.m_Capacity, 16);
+		stroker->m_libTessAllocator.m_Buffer = (uint8_t*)bx::alignedAlloc(stroker->m_Allocator, stroker->m_libTessAllocator.m_Capacity, 16);
 	}
 
 	// Reset the allocator.
@@ -2322,8 +2314,8 @@ inline static void resetGeometry(Stroker* stroker)
 static void reallocVB(Stroker* stroker, uint32_t n)
 {
 	stroker->m_VertexCapacity += n;
-	stroker->m_PosBuffer = (Vec2*)BX_ALIGNED_REALLOC(stroker->m_Allocator, stroker->m_PosBuffer, sizeof(Vec2) * stroker->m_VertexCapacity, 16);
-	stroker->m_ColorBuffer = (uint32_t*)BX_ALIGNED_REALLOC(stroker->m_Allocator, stroker->m_ColorBuffer, sizeof(uint32_t) * stroker->m_VertexCapacity, 16);
+	stroker->m_PosBuffer = (Vec2*)bx::alignedRealloc(stroker->m_Allocator, stroker->m_PosBuffer, sizeof(Vec2) * stroker->m_VertexCapacity, 16);
+	stroker->m_ColorBuffer = (uint32_t*)bx::alignedRealloc(stroker->m_Allocator, stroker->m_ColorBuffer, sizeof(uint32_t) * stroker->m_VertexCapacity, 16);
 }
 
 static BX_FORCE_INLINE void expandVB(Stroker* stroker, uint32_t n)
@@ -2336,7 +2328,7 @@ static BX_FORCE_INLINE void expandVB(Stroker* stroker, uint32_t n)
 static void reallocIB(Stroker* stroker, uint32_t n)
 {
 	stroker->m_IndexCapacity += n;
-	stroker->m_IndexBuffer = (uint16_t*)BX_ALIGNED_REALLOC(stroker->m_Allocator, stroker->m_IndexBuffer, sizeof(uint16_t) * stroker->m_IndexCapacity, 16);
+	stroker->m_IndexBuffer = (uint16_t*)bx::alignedRealloc(stroker->m_Allocator, stroker->m_IndexBuffer, sizeof(uint16_t) * stroker->m_IndexCapacity, 16);
 }
 
 static BX_FORCE_INLINE void expandIB(Stroker* stroker, uint32_t n)

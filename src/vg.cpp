@@ -30,14 +30,6 @@
 #include "shaders/vs_stencil.bin.h"
 #include "shaders/fs_stencil.bin.h"
 
-#define BX_ALLOC(allocator, size) bx::alloc(allocator, size)
-#define BX_FREE(allocator, ptr) bx::free(allocator, ptr)
-#define BX_ALIGNED_ALLOC(allocator, size, align) bx::alignedAlloc(allocator, size, align)
-#define BX_ALIGNED_FREE(allocator, ptr, align) bx::alignedFree(allocator, ptr, align)
-#define BX_REALLOC(allocator, ptr, size) bx::realloc(allocator, ptr, size)
-#define BX_ALIGNED_REALLOC(allocator, ptr, size, align) bx::alignedRealloc(allocator, ptr, size, align)
-#define BX_DELETE(allocator, obj) bx::deleteObject(allocator, obj)
-
 BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment within conditional expression
 
 #define VG_CONFIG_MIN_FONT_SCALE                 0.1f
@@ -743,7 +735,7 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 		+ alignSize(sizeof(FontData) * cfg->m_MaxFonts, alignment)
 		+ alignSize(sizeof(CommandList) * cfg->m_MaxCommandLists, alignment);
 
-	uint8_t* mem = (uint8_t*)BX_ALIGNED_ALLOC(allocator, totalMem, alignment);
+	uint8_t* mem = (uint8_t*)bx::alignedAlloc(allocator, totalMem, alignment);
 	bx::memSet(mem, 0, totalMem);
 
 	Context* ctx = (Context*)mem;              mem += alignSize(sizeof(Context), alignment);
@@ -895,8 +887,8 @@ void destroyContext(Context* ctx)
 			vb->m_ColorBufferHandle = BGFX_INVALID_HANDLE;
 		}
 	}
-	BX_FREE(allocator, ctx->m_GPUVertexBuffers);
-	BX_FREE(allocator, ctx->m_VertexBuffers);
+	bx::free(allocator, ctx->m_GPUVertexBuffers);
+	bx::free(allocator, ctx->m_VertexBuffers);
 	ctx->m_GPUVertexBuffers = nullptr;
 	ctx->m_VertexBuffers = nullptr;
 	ctx->m_VertexBufferCapacity = 0;
@@ -910,13 +902,13 @@ void destroyContext(Context* ctx)
 		}
 
 		IndexBuffer* ib = &ctx->m_IndexBuffers[i];
-		BX_ALIGNED_FREE(allocator, ib->m_Indices, 16);
+		bx::alignedFree(allocator, ib->m_Indices, 16);
 		ib->m_Indices = nullptr;
 		ib->m_Capacity = 0;
 		ib->m_Count = 0;
 	}
-	BX_FREE(allocator, ctx->m_GPUIndexBuffers);
-	BX_FREE(allocator, ctx->m_IndexBuffers);
+	bx::free(allocator, ctx->m_GPUIndexBuffers);
+	bx::free(allocator, ctx->m_IndexBuffers);
 	ctx->m_GPUIndexBuffers = nullptr;
 	ctx->m_IndexBuffers = nullptr;
 	ctx->m_ActiveIndexBufferID = UINT16_MAX;
@@ -929,10 +921,10 @@ void destroyContext(Context* ctx)
 
 		if ((uintptr_t)buffer & 1) {
 			buffer = (float*)((uintptr_t)buffer & ~1);
-			BX_ALIGNED_FREE(allocator, buffer, 16);
+			bx::alignedFree(allocator, buffer, 16);
 		}
 	}
-	BX_FREE(allocator, ctx->m_Vec2DataPool);
+	bx::free(allocator, ctx->m_Vec2DataPool);
 	ctx->m_Vec2DataPoolCapacity = 0;
 
 	for (uint32_t i = 0; i < ctx->m_Uint32DataPoolCapacity; ++i) {
@@ -943,10 +935,10 @@ void destroyContext(Context* ctx)
 
 		if ((uintptr_t)buffer & 1) {
 			buffer = (uint32_t*)((uintptr_t)buffer & ~1);
-			BX_ALIGNED_FREE(allocator, buffer, 16);
+			bx::alignedFree(allocator, buffer, 16);
 		}
 	}
-	BX_FREE(allocator, ctx->m_Uint32DataPool);
+	bx::free(allocator, ctx->m_Uint32DataPool);
 	ctx->m_Uint32DataPoolCapacity = 0;
 
 #if VG_CONFIG_UV_INT16
@@ -958,24 +950,24 @@ void destroyContext(Context* ctx)
 
 		if ((uintptr_t)buffer & 1) {
 			buffer = (int16_t*)((uintptr_t)buffer & ~1);
-			BX_ALIGNED_FREE(allocator, buffer, 16);
+			bx::alignedFree(allocator, buffer, 16);
 		}
 	}
-	BX_FREE(allocator, ctx->m_UVDataPool);
+	bx::free(allocator, ctx->m_UVDataPool);
 	ctx->m_UVDataPoolCapacity = 0;
 #endif
 
-	BX_FREE(allocator, ctx->m_DrawCommands);
+	bx::free(allocator, ctx->m_DrawCommands);
 	ctx->m_DrawCommands = nullptr;
 
-	BX_FREE(allocator, ctx->m_ClipCommands);
+	bx::free(allocator, ctx->m_ClipCommands);
 	ctx->m_ClipCommands = nullptr;
 
 	// Font data
 	for (int i = 0; i < cfg->m_MaxFonts; ++i) {
 		FontData* fd = &ctx->m_FontData[i];
 		if (fd->m_Data && fd->m_Owned) {
-			BX_FREE(allocator, fd->m_Data);
+			bx::free(allocator, fd->m_Data);
 			fd->m_Data = nullptr;
 			fd->m_Owned = false;
 		}
@@ -993,7 +985,7 @@ void destroyContext(Context* ctx)
 			bgfx::destroy(img->m_bgfxHandle);
 		}
 	}
-	BX_FREE(allocator, ctx->m_Images);
+	bx::free(allocator, ctx->m_Images);
 	ctx->m_Images = nullptr;
 
 	bx::destroyHandleAlloc(allocator, ctx->m_ImageHandleAlloc);
@@ -1008,20 +1000,20 @@ void destroyContext(Context* ctx)
 	destroyStroker(ctx->m_Stroker);
 	ctx->m_Stroker = nullptr;
 
-	BX_ALIGNED_FREE(allocator, ctx->m_TextQuads, 16);
+	bx::alignedFree(allocator, ctx->m_TextQuads, 16);
 	ctx->m_TextQuads = nullptr;
 
-	BX_ALIGNED_FREE(allocator, ctx->m_TextVertices, 16);
+	bx::alignedFree(allocator, ctx->m_TextVertices, 16);
 	ctx->m_TextVertices = nullptr;
 
-	BX_ALIGNED_FREE(allocator, ctx->m_TransformedVertices, 16);
+	bx::alignedFree(allocator, ctx->m_TransformedVertices, 16);
 	ctx->m_TransformedVertices = nullptr;
 
 #if BX_CONFIG_SUPPORTS_THREADING
-	BX_DELETE(allocator, ctx->m_DataPoolMutex);
+	bx::deleteObject(allocator, ctx->m_DataPoolMutex);
 #endif
 
-	BX_ALIGNED_FREE(allocator, ctx, 8);
+	bx::alignedFree(allocator, ctx, 8);
 }
 
 void begin(Context* ctx, uint16_t viewID, uint16_t canvasWidth, uint16_t canvasHeight, float devicePixelRatio)
@@ -1728,7 +1720,7 @@ FontHandle createFont(Context* ctx, const char* name, uint8_t* data, uint32_t si
 
 	uint8_t* fontData = nullptr;
 	if (copyData) {
-		fontData = (uint8_t*)BX_ALLOC(ctx->m_Allocator, size);
+		fontData = (uint8_t*)bx::alloc(ctx->m_Allocator, size);
 		bx::memCopy(fontData, data, size);
 	} else {
 		fontData = data;
@@ -1737,7 +1729,7 @@ FontHandle createFont(Context* ctx, const char* name, uint8_t* data, uint32_t si
 	int fonsHandle = fonsAddFontMem(ctx->m_FontStashContext, name, fontData, size, 0);
 	if (fonsHandle == FONS_INVALID) {
 		if (copyData) {
-			BX_FREE(ctx->m_Allocator, fontData);
+			bx::free(ctx->m_Allocator, fontData);
 		}
 		return VG_INVALID_HANDLE;
 	}
@@ -2328,8 +2320,8 @@ void destroyCommandList(Context* ctx, CommandListHandle handle)
 	ctx->m_Stats.m_CmdListMemoryTotal -= cl->m_CommandBufferCapacity;
 	ctx->m_Stats.m_CmdListMemoryUsed -= cl->m_CommandBufferPos;
 
-	BX_ALIGNED_FREE(allocator, cl->m_CommandBuffer, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
-	BX_FREE(allocator, cl->m_StringBuffer);
+	bx::alignedFree(allocator, cl->m_CommandBuffer, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
+	bx::free(allocator, cl->m_StringBuffer);
 	bx::memSet(cl, 0, sizeof(CommandList));
 
 	ctx->m_CmdListHandleAlloc->free(handle.idx);
@@ -4179,8 +4171,8 @@ static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const
 		bx::AllocatorI* allocator = ctx->m_Allocator;
 
 		ctx->m_TextQuadCapacity = (uint32_t)numBakedChars;
-		ctx->m_TextQuads = (FONSquad*)BX_ALIGNED_REALLOC(allocator, ctx->m_TextQuads, sizeof(FONSquad) * ctx->m_TextQuadCapacity, 16);
-		ctx->m_TextVertices = (float*)BX_ALIGNED_REALLOC(allocator, ctx->m_TextVertices, sizeof(float) * 2 * (ctx->m_TextQuadCapacity * 4), 16);
+		ctx->m_TextQuads = (FONSquad*)bx::alignedRealloc(allocator, ctx->m_TextQuads, sizeof(FONSquad) * ctx->m_TextQuadCapacity, 16);
+		ctx->m_TextVertices = (float*)bx::alignedRealloc(allocator, ctx->m_TextVertices, sizeof(float) * 2 * (ctx->m_TextQuadCapacity * 4), 16);
 	}
 
 	bx::memCopy(ctx->m_TextQuads, vgs->m_Quads, sizeof(FONSquad) * numBakedChars);
@@ -4900,7 +4892,7 @@ static float* allocTransformedVertices(Context* ctx, uint32_t numVertices)
 {
 	if (numVertices > ctx->m_TransformedVertexCapacity) {
 		bx::AllocatorI* allocator = ctx->m_Allocator;
-		ctx->m_TransformedVertices = (float*)BX_ALIGNED_REALLOC(allocator, ctx->m_TransformedVertices, sizeof(float) * 2 * numVertices, 16);
+		ctx->m_TransformedVertices = (float*)bx::alignedRealloc(allocator, ctx->m_TransformedVertices, sizeof(float) * 2 * numVertices, 16);
 		ctx->m_TransformedVertexCapacity = numVertices;
 	}
 
@@ -4931,8 +4923,8 @@ static VertexBuffer* allocVertexBuffer(Context* ctx)
 {
 	if (ctx->m_NumVertexBuffers + 1 > ctx->m_VertexBufferCapacity) {
 		ctx->m_VertexBufferCapacity++;
-		ctx->m_VertexBuffers = (VertexBuffer*)BX_REALLOC(ctx->m_Allocator, ctx->m_VertexBuffers, sizeof(VertexBuffer) * ctx->m_VertexBufferCapacity);
-		ctx->m_GPUVertexBuffers = (GPUVertexBuffer*)BX_REALLOC(ctx->m_Allocator, ctx->m_GPUVertexBuffers, sizeof(GPUVertexBuffer) * ctx->m_VertexBufferCapacity);
+		ctx->m_VertexBuffers = (VertexBuffer*)bx::realloc(ctx->m_Allocator, ctx->m_VertexBuffers, sizeof(VertexBuffer) * ctx->m_VertexBufferCapacity);
+		ctx->m_GPUVertexBuffers = (GPUVertexBuffer*)bx::realloc(ctx->m_Allocator, ctx->m_GPUVertexBuffers, sizeof(GPUVertexBuffer) * ctx->m_VertexBufferCapacity);
 
 		GPUVertexBuffer* gpuvb = &ctx->m_GPUVertexBuffers[ctx->m_VertexBufferCapacity - 1];
 
@@ -4971,8 +4963,8 @@ static uint16_t allocIndexBuffer(Context* ctx)
 
 	if (ibID == UINT16_MAX) {
 		ctx->m_NumIndexBuffers++;
-		ctx->m_IndexBuffers = (IndexBuffer*)BX_REALLOC(ctx->m_Allocator, ctx->m_IndexBuffers, sizeof(IndexBuffer) * ctx->m_NumIndexBuffers);
-		ctx->m_GPUIndexBuffers = (GPUIndexBuffer*)BX_REALLOC(ctx->m_Allocator, ctx->m_GPUIndexBuffers, sizeof(GPUIndexBuffer) * ctx->m_NumIndexBuffers);
+		ctx->m_IndexBuffers = (IndexBuffer*)bx::realloc(ctx->m_Allocator, ctx->m_IndexBuffers, sizeof(IndexBuffer) * ctx->m_NumIndexBuffers);
+		ctx->m_GPUIndexBuffers = (GPUIndexBuffer*)bx::realloc(ctx->m_Allocator, ctx->m_GPUIndexBuffers, sizeof(GPUIndexBuffer) * ctx->m_NumIndexBuffers);
 
 		ibID = (uint16_t)(ctx->m_NumIndexBuffers - 1);
 
@@ -5006,17 +4998,17 @@ static float* allocVertexBufferData_Vec2(Context* ctx)
 			ctx->m_Vec2DataPool[i] = data;
 			return data;
 		} else if (data == nullptr) {
-			data = (float*)BX_ALIGNED_ALLOC(allocator, sizeof(float) * 2 * ctx->m_Config.m_MaxVBVertices, 16);
+			data = (float*)bx::alignedAlloc(allocator, sizeof(float) * 2 * ctx->m_Config.m_MaxVBVertices, 16);
 			ctx->m_Vec2DataPool[i] = data;
 			return data;
 		}
 	}
 
 	ctx->m_Vec2DataPoolCapacity += 8;
-	ctx->m_Vec2DataPool = (float**)BX_REALLOC(allocator, ctx->m_Vec2DataPool, sizeof(float*) * ctx->m_Vec2DataPoolCapacity);
+	ctx->m_Vec2DataPool = (float**)bx::realloc(allocator, ctx->m_Vec2DataPool, sizeof(float*) * ctx->m_Vec2DataPoolCapacity);
 	bx::memSet(&ctx->m_Vec2DataPool[capacity], 0, sizeof(float*) * (ctx->m_Vec2DataPoolCapacity - capacity));
 
-	ctx->m_Vec2DataPool[capacity] = (float*)BX_ALIGNED_ALLOC(allocator, sizeof(float) * 2 * ctx->m_Config.m_MaxVBVertices, 16);
+	ctx->m_Vec2DataPool[capacity] = (float*)bx::alignedAlloc(allocator, sizeof(float) * 2 * ctx->m_Config.m_MaxVBVertices, 16);
 	return ctx->m_Vec2DataPool[capacity];
 }
 
@@ -5038,17 +5030,17 @@ static uint32_t* allocVertexBufferData_Uint32(Context* ctx)
 			ctx->m_Uint32DataPool[i] = data;
 			return data;
 		} else if (data == nullptr) {
-			data = (uint32_t*)BX_ALIGNED_ALLOC(allocator, sizeof(uint32_t) * ctx->m_Config.m_MaxVBVertices, 16);
+			data = (uint32_t*)bx::alignedAlloc(allocator, sizeof(uint32_t) * ctx->m_Config.m_MaxVBVertices, 16);
 			ctx->m_Uint32DataPool[i] = data;
 			return data;
 		}
 	}
 
 	ctx->m_Uint32DataPoolCapacity += 8;
-	ctx->m_Uint32DataPool = (uint32_t**)BX_REALLOC(allocator, ctx->m_Uint32DataPool, sizeof(uint32_t*) * ctx->m_Uint32DataPoolCapacity);
+	ctx->m_Uint32DataPool = (uint32_t**)bx::realloc(allocator, ctx->m_Uint32DataPool, sizeof(uint32_t*) * ctx->m_Uint32DataPoolCapacity);
 	bx::memSet(&ctx->m_Uint32DataPool[capacity], 0, sizeof(uint32_t*) * (ctx->m_Uint32DataPoolCapacity - capacity));
 
-	ctx->m_Uint32DataPool[capacity] = (uint32_t*)BX_ALIGNED_ALLOC(allocator, sizeof(uint32_t) * ctx->m_Config.m_MaxVBVertices, 16);
+	ctx->m_Uint32DataPool[capacity] = (uint32_t*)bx::alignedAlloc(allocator, sizeof(uint32_t) * ctx->m_Config.m_MaxVBVertices, 16);
 	return ctx->m_Uint32DataPool[capacity];
 }
 
@@ -5072,17 +5064,17 @@ static int16_t* allocVertexBufferData_UV(Context* ctx)
 			ctx->m_UVDataPool[i] = data;
 			return data;
 		} else if (data == nullptr) {
-			data = (int16_t*)BX_ALIGNED_ALLOC(allocator, sizeof(int16_t) * 2 * ctx->m_Config.m_MaxVBVertices, 16);
+			data = (int16_t*)bx::alignedAlloc(allocator, sizeof(int16_t) * 2 * ctx->m_Config.m_MaxVBVertices, 16);
 			ctx->m_UVDataPool[i] = data;
 			return data;
 		}
 	}
 
 	ctx->m_UVDataPoolCapacity += 8;
-	ctx->m_UVDataPool = (int16_t**)BX_REALLOC(allocator, ctx->m_UVDataPool, sizeof(int16_t*) * ctx->m_UVDataPoolCapacity);
+	ctx->m_UVDataPool = (int16_t**)bx::realloc(allocator, ctx->m_UVDataPool, sizeof(int16_t*) * ctx->m_UVDataPoolCapacity);
 	bx::memSet(&ctx->m_UVDataPool[capacity], 0, sizeof(int16_t*) * (ctx->m_UVDataPoolCapacity - capacity));
 
-	ctx->m_UVDataPool[capacity] = (int16_t*)BX_ALIGNED_ALLOC(allocator, sizeof(int16_t) * 2 * ctx->m_Config.m_MaxVBVertices, 16);
+	ctx->m_UVDataPool[capacity] = (int16_t*)bx::alignedAlloc(allocator, sizeof(int16_t) * 2 * ctx->m_Config.m_MaxVBVertices, 16);
 	return ctx->m_UVDataPool[capacity];
 }
 #endif
@@ -5301,7 +5293,7 @@ static uint32_t allocIndices(Context* ctx, uint32_t numIndices)
 		const uint32_t nextCapacity = ib->m_Capacity != 0 ? (ib->m_Capacity * 3) / 2 : 32;
 
 		ib->m_Capacity = bx::uint32_max(nextCapacity, ib->m_Count + numIndices);
-		ib->m_Indices = (uint16_t*)BX_ALIGNED_REALLOC(ctx->m_Allocator, ib->m_Indices, sizeof(uint16_t) * ib->m_Capacity, 16);
+		ib->m_Indices = (uint16_t*)bx::alignedRealloc(ctx->m_Allocator, ib->m_Indices, sizeof(uint16_t) * ib->m_Capacity, 16);
 	}
 
 	const uint32_t firstIndexID = ib->m_Count;
@@ -5335,7 +5327,7 @@ static DrawCommand* allocDrawCommand(Context* ctx, uint32_t numVertices, uint32_
 	// The new draw command cannot be combined with the previous one. Create a new one.
 	if (ctx->m_NumDrawCommands == ctx->m_DrawCommandCapacity) {
 		ctx->m_DrawCommandCapacity = ctx->m_DrawCommandCapacity + 32;
-		ctx->m_DrawCommands = (DrawCommand*)BX_REALLOC(ctx->m_Allocator, ctx->m_DrawCommands, sizeof(DrawCommand) * ctx->m_DrawCommandCapacity);
+		ctx->m_DrawCommands = (DrawCommand*)bx::realloc(ctx->m_Allocator, ctx->m_DrawCommands, sizeof(DrawCommand) * ctx->m_DrawCommandCapacity);
 	}
 
 	DrawCommand* cmd = &ctx->m_DrawCommands[ctx->m_NumDrawCommands];
@@ -5384,7 +5376,7 @@ static DrawCommand* allocClipCommand(Context* ctx, uint32_t numVertices, uint32_
 	// The new clip command cannot be combined with the previous one. Create a new one.
 	if (ctx->m_NumClipCommands == ctx->m_ClipCommandCapacity) {
 		ctx->m_ClipCommandCapacity = ctx->m_ClipCommandCapacity + 32;
-		ctx->m_ClipCommands = (DrawCommand*)BX_REALLOC(ctx->m_Allocator, ctx->m_ClipCommands, sizeof(DrawCommand) * ctx->m_ClipCommandCapacity);
+		ctx->m_ClipCommands = (DrawCommand*)bx::realloc(ctx->m_Allocator, ctx->m_ClipCommands, sizeof(DrawCommand) * ctx->m_ClipCommandCapacity);
 	}
 
 	DrawCommand* cmd = &ctx->m_ClipCommands[ctx->m_NumClipCommands];
@@ -5430,7 +5422,7 @@ static ImageHandle allocImage(Context* ctx)
 
 		ctx->m_ImageCapacity = bx::uint32_min(bx::uint32_max(ctx->m_ImageCapacity + 4, handle.idx + 1),
 																				  ctx->m_Config.m_MaxImages);
-		ctx->m_Images = (Image*)BX_REALLOC(ctx->m_Allocator, ctx->m_Images, sizeof(Image) * ctx->m_ImageCapacity);
+		ctx->m_Images = (Image*)bx::realloc(ctx->m_Allocator, ctx->m_Images, sizeof(Image) * ctx->m_ImageCapacity);
 		if (!ctx->m_Images) {
 			return VG_INVALID_HANDLE;
 		}
@@ -5593,7 +5585,7 @@ static void flushTextAtlas(Context* ctx)
 	VG_CHECK(iw > 0 && ih > 0, "Invalid font atlas dimensions");
 
 	// TODO: Convert only the dirty part of the texture (it's the only part that will be uploaded to the backend)
-	uint32_t* rgbaData = (uint32_t*)BX_ALLOC(ctx->m_Allocator, sizeof(uint32_t) * iw * ih);
+	uint32_t* rgbaData = (uint32_t*)bx::alloc(ctx->m_Allocator, sizeof(uint32_t) * iw * ih);
 	vgutil::convertA8_to_RGBA8(rgbaData, a8Data, (uint32_t)iw, (uint32_t)ih, 0x00FFFFFF);
 
 	int x = dirty[0];
@@ -5602,7 +5594,7 @@ static void flushTextAtlas(Context* ctx)
 	int h = dirty[3] - dirty[1];
 	updateImage(ctx, fontImage, (uint16_t)x, (uint16_t)y, (uint16_t)w, (uint16_t)h, (const uint8_t*)rgbaData);
 
-	BX_FREE(ctx->m_Allocator, rgbaData);
+	bx::free(ctx->m_Allocator, rgbaData);
 }
 
 static CommandListHandle allocCommandList(Context* ctx)
@@ -5629,7 +5621,7 @@ static CommandListCache* allocCommandListCache(Context* ctx)
 {
 	bx::AllocatorI* allocator = ctx->m_Allocator;
 
-	CommandListCache* cache = (CommandListCache*)BX_ALLOC(allocator, sizeof(CommandListCache));
+	CommandListCache* cache = (CommandListCache*)bx::alloc(allocator, sizeof(CommandListCache));
 	bx::memSet(cache, 0, sizeof(CommandListCache));
 
 	return cache;
@@ -5640,7 +5632,7 @@ static void freeCommandListCache(Context* ctx, CommandListCache* cache)
 	bx::AllocatorI* allocator = ctx->m_Allocator;
 
 	clCacheReset(ctx, cache);
-	BX_FREE(allocator, cache);
+	bx::free(allocator, cache);
 }
 #endif
 
@@ -5657,7 +5649,7 @@ static uint8_t* clAllocCommand(Context* ctx, CommandList* cl, CommandType::Enum 
 	if (pos + totalSize > cl->m_CommandBufferCapacity) {
 		const uint32_t capacityDelta = bx::max<uint32_t>(totalSize, 256);
 		cl->m_CommandBufferCapacity += capacityDelta;
-		cl->m_CommandBuffer = (uint8_t*)BX_ALIGNED_REALLOC(ctx->m_Allocator, cl->m_CommandBuffer, cl->m_CommandBufferCapacity, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
+		cl->m_CommandBuffer = (uint8_t*)bx::alignedRealloc(ctx->m_Allocator, cl->m_CommandBuffer, cl->m_CommandBufferCapacity, VG_CONFIG_COMMAND_LIST_ALIGNMENT);
 
 		ctx->m_Stats.m_CmdListMemoryTotal += capacityDelta;
 	}
@@ -5679,7 +5671,7 @@ static uint32_t clStoreString(Context* ctx, CommandList* cl, const char* str, ui
 {
 	if (cl->m_StringBufferPos + len > cl->m_StringBufferCapacity) {
 		cl->m_StringBufferCapacity += bx::max<uint32_t>(len, 128);
-		cl->m_StringBuffer = (char*)BX_REALLOC(ctx->m_Allocator, cl->m_StringBuffer, cl->m_StringBufferCapacity);
+		cl->m_StringBuffer = (char*)bx::realloc(ctx->m_Allocator, cl->m_StringBuffer, cl->m_StringBufferCapacity);
 	}
 
 	const uint32_t offset = cl->m_StringBufferPos;
@@ -5731,7 +5723,7 @@ static void beginCachedCommand(Context* ctx)
 	bx::AllocatorI* allocator = ctx->m_Allocator;
 
 	cache->m_NumCommands++;
-	cache->m_Commands = (CachedCommand*)BX_REALLOC(allocator, cache->m_Commands, sizeof(CachedCommand) * cache->m_NumCommands);
+	cache->m_Commands = (CachedCommand*)bx::realloc(allocator, cache->m_Commands, sizeof(CachedCommand) * cache->m_NumCommands);
 
 	CachedCommand* lastCmd = &cache->m_Commands[cache->m_NumCommands - 1];
 	lastCmd->m_FirstMeshID = (uint16_t)cache->m_NumMeshes;
@@ -5761,7 +5753,7 @@ static void addCachedCommand(Context* ctx, const float* pos, uint32_t numVertice
 	bx::AllocatorI* allocator = ctx->m_Allocator;
 
 	cache->m_NumMeshes++;
-	cache->m_Meshes = (CachedMesh*)BX_REALLOC(allocator, cache->m_Meshes, sizeof(CachedMesh) * cache->m_NumMeshes);
+	cache->m_Meshes = (CachedMesh*)bx::realloc(allocator, cache->m_Meshes, sizeof(CachedMesh) * cache->m_NumMeshes);
 
 	CachedMesh* mesh = &cache->m_Meshes[cache->m_NumMeshes - 1];
 
@@ -5770,7 +5762,7 @@ static void addCachedCommand(Context* ctx, const float* pos, uint32_t numVertice
 		+ ((numColors != 1) ? alignSize(sizeof(uint32_t) * numVertices, 16) : 0)
 		+ alignSize(sizeof(uint16_t) * numIndices, 16);
 
-	uint8_t* mem = (uint8_t*)BX_ALIGNED_ALLOC(allocator, totalMem, 16);
+	uint8_t* mem = (uint8_t*)bx::alignedAlloc(allocator, totalMem, 16);
 	mesh->m_Pos = (float*)mem;
 	mem += alignSize(sizeof(float) * 2 * numVertices, 16);
 	
@@ -6079,10 +6071,10 @@ static void clCacheReset(Context* ctx, CommandListCache* cache)
 	const uint32_t numMeshes = cache->m_NumMeshes;
 	for (uint32_t i = 0; i < numMeshes; ++i) {
 		CachedMesh* mesh = &cache->m_Meshes[i];
-		BX_ALIGNED_FREE(allocator, mesh->m_Pos, 16);
+		bx::alignedFree(allocator, mesh->m_Pos, 16);
 	}
-	BX_FREE(allocator, cache->m_Meshes);
-	BX_FREE(allocator, cache->m_Commands);
+	bx::free(allocator, cache->m_Meshes);
+	bx::free(allocator, cache->m_Commands);
 
 	bx::memSet(cache, 0, sizeof(CommandListCache));
 }
