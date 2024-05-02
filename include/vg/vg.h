@@ -5,7 +5,7 @@
 #include <bx/math.h>
 
 #ifndef VG_CONFIG_DEBUG
-#	define VG_CONFIG_DEBUG 1
+#	define VG_CONFIG_DEBUG 0
 #endif
 
 #ifndef VG_CONFIG_ENABLE_SHAPE_CACHING
