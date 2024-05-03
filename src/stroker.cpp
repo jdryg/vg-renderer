@@ -214,7 +214,9 @@ void destroyStroker(Stroker* stroker)
 		tessDeleteTess(stroker->m_Tesselator);
 	}
 
-	bx::alignedFree(allocator, stroker->m_libTessAllocator.m_Buffer, 16);
+	if (stroker->m_libTessAllocator.m_Buffer) {
+		bx::alignedFree(allocator, stroker->m_libTessAllocator.m_Buffer, 16);
+	}
 
 	bx::free(allocator, stroker);
 }
