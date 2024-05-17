@@ -1128,6 +1128,7 @@ void end(Context* ctx)
 	const uint16_t viewID = ctx->m_ViewID;
 	const uint16_t canvasWidth = ctx->m_CanvasWidth;
 	const uint16_t canvasHeight = ctx->m_CanvasHeight;
+	const float devicePixelRatio = ctx->m_DevicePixelRatio;
 
 	float viewMtx[16];
 	float projMtx[16];
@@ -1164,7 +1165,7 @@ void end(Context* ctx)
 						if (!bx::memCmp(cmdScissorRect, &prevScissorRect[0], sizeof(uint16_t) * 4)) {
 							bgfx::setScissor(prevScissorID);
 						} else {
-							prevScissorID = bgfx::setScissor(cmdScissorRect[0], cmdScissorRect[1], cmdScissorRect[2], cmdScissorRect[3]);
+							prevScissorID = bgfx::setScissor(cmdScissorRect[0] * devicePixelRatio, cmdScissorRect[1] * devicePixelRatio, cmdScissorRect[2] * devicePixelRatio, cmdScissorRect[3] * devicePixelRatio);
 							bx::memCopy(prevScissorRect, cmdScissorRect, sizeof(uint16_t) * 4);
 						}
 					}
@@ -1211,7 +1212,7 @@ void end(Context* ctx)
 			if (!bx::memCmp(cmdScissorRect, &prevScissorRect[0], sizeof(uint16_t) * 4)) {
 				bgfx::setScissor(prevScissorID);
 			} else {
-				prevScissorID = bgfx::setScissor(cmdScissorRect[0], cmdScissorRect[1], cmdScissorRect[2], cmdScissorRect[3]);
+				prevScissorID = bgfx::setScissor(cmdScissorRect[0] * devicePixelRatio, cmdScissorRect[1] * devicePixelRatio, cmdScissorRect[2] * devicePixelRatio, cmdScissorRect[3] * devicePixelRatio);
 				bx::memCopy(prevScissorRect, cmdScissorRect, sizeof(uint16_t) * 4);
 			}
 		}
