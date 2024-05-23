@@ -275,11 +275,14 @@ struct ImageFlags
 		Filter_NearestW  = 1 << 1,
 		Filter_LinearUV  = 1 << 2,
 		Filter_LinearW   = 1 << 3,
+		Clamp_U          =  1 << 10,
+		Clamp_V          =  1 << 11,
 
 		// Shortcuts
 		Filter_Nearest = Filter_NearestUV | Filter_NearestW,
 		Filter_Bilinear = Filter_LinearUV | Filter_NearestW,
-		Filter_Trilinear = Filter_LinearUV | Filter_LinearW
+		Filter_Trilinear = Filter_LinearUV | Filter_LinearW,
+		Clamp_UV = Clamp_U | Clamp_V
 	};
 };
 
