@@ -2204,6 +2204,12 @@ ImageHandle createImage(Context* ctx, uint16_t w, uint16_t h, uint32_t flags, co
 	if (flags & ImageFlags::Filter_NearestW) {
 		bgfxFlags |= BGFX_SAMPLER_MIP_POINT;
 	}
+	if (flags & ImageFlags::Clamp_U) {
+		bgfxFlags |= BGFX_SAMPLER_U_CLAMP;
+	}
+	if (flags & ImageFlags::Clamp_V) {
+		bgfxFlags |= BGFX_SAMPLER_V_CLAMP;
+	}
 	tex->m_Flags = bgfxFlags;
 
 	tex->m_bgfxHandle = bgfx::createTexture2D(tex->m_Width, tex->m_Height, false, 1, bgfx::TextureFormat::RGBA8, bgfxFlags);
@@ -2240,6 +2246,12 @@ ImageHandle createImage(Context* ctx, uint32_t flags, const bgfx::TextureHandle&
 	}
 	if (flags & ImageFlags::Filter_NearestW) {
 		bgfxFlags |= BGFX_SAMPLER_MIP_POINT;
+	}
+	if (flags & ImageFlags::Clamp_U) {
+		bgfxFlags |= BGFX_SAMPLER_U_CLAMP;
+	}
+	if (flags & ImageFlags::Clamp_V) {
+		bgfxFlags |= BGFX_SAMPLER_V_CLAMP;
 	}
 	tex->m_Flags = bgfxFlags;
 	tex->m_Owned = false;
