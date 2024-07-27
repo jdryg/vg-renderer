@@ -34,7 +34,9 @@ void destroyPath(Path* path)
 {
 	bx::AllocatorI* allocator = path->m_Allocator;
 
-	bx::alignedFree(allocator, path->m_Vertices, 16);
+    if (path->m_Vertices) {
+        bx::alignedFree(allocator, path->m_Vertices, 16);
+    }
 	bx::free(allocator, path->m_SubPaths);
 	bx::free(allocator, path);
 }
