@@ -908,8 +908,10 @@ void destroyContext(Context* ctx)
 		}
 
 		IndexBuffer* ib = &ctx->m_IndexBuffers[i];
-		bx::alignedFree(allocator, ib->m_Indices, 16);
-		ib->m_Indices = nullptr;
+        if (ib->m_Indices) {
+            bx::alignedFree(allocator, ib->m_Indices, 16);
+            ib->m_Indices = nullptr;
+        }
 		ib->m_Capacity = 0;
 		ib->m_Count = 0;
 	}
@@ -1006,14 +1008,20 @@ void destroyContext(Context* ctx)
 	destroyStroker(ctx->m_Stroker);
 	ctx->m_Stroker = nullptr;
 
-	bx::alignedFree(allocator, ctx->m_TextQuads, 16);
-	ctx->m_TextQuads = nullptr;
+    if (ctx->m_TextQuads) {
+        bx::alignedFree(allocator, ctx->m_TextQuads, 16);
+        ctx->m_TextQuads = nullptr;
+    }
 
-	bx::alignedFree(allocator, ctx->m_TextVertices, 16);
-	ctx->m_TextVertices = nullptr;
+    if (ctx->m_TextVertices) {
+        bx::alignedFree(allocator, ctx->m_TextVertices, 16);
+        ctx->m_TextVertices = nullptr;
+    }
 
-	bx::alignedFree(allocator, ctx->m_TransformedVertices, 16);
-	ctx->m_TransformedVertices = nullptr;
+    if (ctx->m_TransformedVertices) {
+        bx::alignedFree(allocator, ctx->m_TransformedVertices, 16);
+        ctx->m_TransformedVertices = nullptr;
+    }
 
 #if BX_CONFIG_SUPPORTS_THREADING
 	bx::deleteObject(allocator, ctx->m_DataPoolMutex);

@@ -206,9 +206,17 @@ void destroyStroker(Stroker* stroker)
 {
 	bx::AllocatorI* allocator = stroker->m_Allocator;
 
-	bx::alignedFree(allocator, stroker->m_PosBuffer, 16);
-	bx::alignedFree(allocator, stroker->m_ColorBuffer, 16);
-	bx::alignedFree(allocator, stroker->m_IndexBuffer, 16);
+    if (stroker->m_PosBuffer) {
+        bx::alignedFree(allocator, stroker->m_PosBuffer, 16);
+    }
+    
+    if (stroker->m_ColorBuffer) {
+        bx::alignedFree(allocator, stroker->m_ColorBuffer, 16);
+    }
+    
+    if (stroker->m_IndexBuffer) {
+        bx::alignedFree(allocator, stroker->m_IndexBuffer, 16);
+    }
 
 	if (stroker->m_Tesselator) {
 		tessDeleteTess(stroker->m_Tesselator);
