@@ -66,7 +66,7 @@ struct State
 	float m_GlobalAlpha;
 	float m_FontScale;
 	float m_AvgScale;
-    uint32_t m_DepthOrder;
+	uint32_t m_DepthOrder;
 };
 
 struct ClipState
@@ -129,7 +129,7 @@ struct DrawCommand
 	uint32_t m_NumVertices;
 	uint32_t m_NumIndices;
 	uint16_t m_ScissorRect[4];
-    uint32_t m_DepthOrder;
+	uint32_t m_DepthOrder;
 	uint16_t m_HandleID; // Type::Textured => ImageHandle, Type::ColorGradient => GradientHandle, Type::ImagePattern => ImagePatternHandle
 };
 
@@ -231,7 +231,7 @@ struct CommandType
 		TransformRotate,
 		TransformMult,
 		SetViewBox,
-        DepthOrder,
+		DepthOrder,
 		SetGlobalAlpha,
 
 		// Text
@@ -332,7 +332,7 @@ struct ContextVTable
 	void(*transformRotate)(Context* ctx, float ang_rad);
 	void(*transformMult)(Context* ctx, const float* mtx, TransformOrder::Enum order);
 	void(*setViewBox)(Context* ctx, float x, float y, float w, float h);
-    void(*depthOrder)(Context* ctx, uint32_t order);
+	void(*depthOrder)(Context* ctx, uint32_t order);
 	void(*setGlobalAlpha)(Context* ctx, float alpha);
 	void(*text)(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 	void(*textBox)(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, uint32_t textboxFlags);
@@ -641,7 +641,7 @@ const ContextVTable g_CtxVTable = {
 	ctxTransformRotate,
 	ctxTransformMult,
 	ctxSetViewBox,
-    ctxDepthOrder,
+	ctxDepthOrder,
 	ctxSetGlobalAlpha,
 	ctxText,
 	ctxTextBox,
@@ -688,7 +688,7 @@ const ContextVTable g_ActiveCmdListVTable = {
 	aclTransformRotate,
 	aclTransformMult,
 	aclSetViewBox,
-    aclDepthOrder,
+	aclDepthOrder,
 	aclSetGlobalAlpha,
 	aclText,
 	aclTextBox,
@@ -1206,7 +1206,7 @@ void end(Context* ctx)
 
 					// TODO: Check if it's better to use Type_TexturedVertexColor program here to avoid too many 
 					// state switches.
-					bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::Clip]);
+					bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::Clip], cmd->m_DepthOrder);
 				}
 
 				stencilState = 0
@@ -1252,7 +1252,7 @@ void end(Context* ctx)
 				| BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA, BGFX_STATE_BLEND_ONE, BGFX_STATE_BLEND_INV_SRC_ALPHA));
 			bgfx::setStencil(stencilState);
 
-            bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::Textured], cmd->m_DepthOrder);
+			bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::Textured], cmd->m_DepthOrder);
 		} else if (cmd->m_Type == DrawCommand::Type::ColorGradient) {
 			VG_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid gradient handle");
 			Gradient* grad = &ctx->m_Gradients[cmd->m_HandleID];
@@ -1268,7 +1268,7 @@ void end(Context* ctx)
 				| BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA, BGFX_STATE_BLEND_ONE, BGFX_STATE_BLEND_INV_SRC_ALPHA));
 			bgfx::setStencil(stencilState);
 
-            bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::ColorGradient], cmd->m_DepthOrder);
+			bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::ColorGradient], cmd->m_DepthOrder);
 		} else if(cmd->m_Type == DrawCommand::Type::ImagePattern) {
 			VG_CHECK(cmd->m_HandleID != UINT16_MAX, "Invalid image pattern handle");
 			ImagePattern* imgPattern = &ctx->m_ImagePatterns[cmd->m_HandleID];
@@ -1285,7 +1285,7 @@ void end(Context* ctx)
 				| BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA, BGFX_STATE_BLEND_ONE, BGFX_STATE_BLEND_INV_SRC_ALPHA));
 			bgfx::setStencil(stencilState);
 
-            bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::ImagePattern], cmd->m_DepthOrder);
+			bgfx::submit(viewID, ctx->m_ProgramHandle[DrawCommand::Type::ImagePattern], cmd->m_DepthOrder);
 		} else {
 			VG_CHECK(false, "Unknown draw command type");
 		}
@@ -1682,9 +1682,9 @@ void setViewBox(Context* ctx, float x, float y, float w, float h)
 void depthOrder(Context* ctx, uint32_t order)
 {
 #if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
-    ctx->m_VTable->depthOrder(ctx, order);
+	ctx->m_VTable->depthOrder(ctx, order);
 #else
-    ctxDepthOrder(ctx, order);
+	ctxDepthOrder(ctx, order);
 #endif
 }
 
@@ -2906,11 +2906,11 @@ void clTransformMult(Context* ctx, CommandListHandle handle, const float* mtx, T
 
 void clDepthOrder(Context* ctx, CommandListHandle handle, uint32_t order)
 {
-    VG_CHECK(isValid(handle), "Invalid command list handle");
-    CommandList* cl = &ctx->m_CmdLists[handle.idx];
+	VG_CHECK(isValid(handle), "Invalid command list handle");
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 
-    uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::DepthOrder, sizeof(uint32_t));
-    CMD_WRITE(ptr, uint32_t, order);
+	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::DepthOrder, sizeof(uint32_t));
+	CMD_WRITE(ptr, uint32_t, order);
 }
     
 void clSetViewBox(Context* ctx, CommandListHandle handle, float x, float y, float w, float h)
@@ -4145,8 +4145,8 @@ static void ctxSetViewBox(Context* ctx, float x, float y, float w, float h)
 
 static void ctxDepthOrder(Context* ctx, uint32_t order)
 {
-    State* state = getState(ctx);
-    state->m_DepthOrder = order;
+	State* state = getState(ctx);
+	state->m_DepthOrder = order;
 }
     
 static void ctxSetGlobalAlpha(Context* ctx, float alpha)
@@ -4892,8 +4892,8 @@ static void aclTransformMult(Context* ctx, const float* mtx, TransformOrder::Enu
 
 static void aclDepthOrder(Context* ctx, uint32_t order)
 {
-    VG_CHECK(isValid(ctx->m_ActiveCommandList), "Invalid Context state");
-    clDepthOrder(ctx, ctx->m_ActiveCommandList, order);
+	VG_CHECK(isValid(ctx->m_ActiveCommandList), "Invalid Context state");
+	clDepthOrder(ctx, ctx->m_ActiveCommandList, order);
 }
     
 static void aclSetViewBox(Context* ctx, float x, float y, float w, float h)
@@ -5434,7 +5434,7 @@ static DrawCommand* allocDrawCommand(Context* ctx, uint32_t numVertices, uint32_
 	cmd->m_ScissorRect[1] = (uint16_t)scissor[1];
 	cmd->m_ScissorRect[2] = (uint16_t)scissor[2];
 	cmd->m_ScissorRect[3] = (uint16_t)scissor[3];
-    cmd->m_DepthOrder = state->m_DepthOrder;
+	cmd->m_DepthOrder = state->m_DepthOrder;
 	bx::memCopy(&cmd->m_ClipState, &ctx->m_ClipState, sizeof(ClipState));
 
 	ctx->m_ForceNewDrawCommand = false;
@@ -5484,7 +5484,7 @@ static DrawCommand* allocClipCommand(Context* ctx, uint32_t numVertices, uint32_
 	cmd->m_ScissorRect[1] = (uint16_t)scissor[1];
 	cmd->m_ScissorRect[2] = (uint16_t)scissor[2];
 	cmd->m_ScissorRect[3] = (uint16_t)scissor[3];
-    cmd->m_DepthOrder = state->m_DepthOrder;
+	cmd->m_DepthOrder = state->m_DepthOrder;
 	cmd->m_ClipState.m_FirstCmdID = ~0u;
 	cmd->m_ClipState.m_NumCmds = 0;
 
