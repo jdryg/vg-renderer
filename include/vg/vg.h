@@ -402,7 +402,7 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* cfg = nul
 void destroyContext(Context* ctx);
 
 void begin(Context* ctx, uint16_t viewID, uint16_t canvasWidth, uint16_t canvasHeight, float devicePixelRatio);
-void end(Context* ctx);
+void end(Context* ctx, bool resetViewTransform = true);
 void frame(Context* ctx);
 const Stats* getStats(Context* ctx);
 

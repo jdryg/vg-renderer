@@ -1072,7 +1072,7 @@ void begin(Context* ctx, uint16_t viewID, uint16_t canvasWidth, uint16_t canvasH
 	ctx->m_NextImagePatternID = 0;
 }
 
-void end(Context* ctx)
+void end(Context* ctx, bool resetViewTransform)
 {
 	VG_CHECK(ctx->m_StateStackTop == 0, "pushState()/popState() mismatch");
 	VG_CHECK(!isValid(ctx->m_ActiveCommandList), "endCommandList() hasn't been called");
@@ -1144,11 +1144,13 @@ void end(Context* ctx)
 	const uint16_t canvasHeight = ctx->m_CanvasHeight;
 	const float devicePixelRatio = ctx->m_DevicePixelRatio;
 
-	float viewMtx[16];
-	float projMtx[16];
-	bx::mtxIdentity(viewMtx);
-	bx::mtxOrtho(projMtx, 0.0f, (float)canvasWidth, (float)canvasHeight, 0.0f, 0.0f, 1.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
-	bgfx::setViewTransform(viewID, viewMtx, projMtx);
+	if (resetViewTransform) {
+		float viewMtx[16];
+		float projMtx[16];
+		bx::mtxIdentity(viewMtx);
+		bx::mtxOrtho(projMtx, 0.0f, (float)canvasWidth, (float)canvasHeight, 0.0f, 0.0f, 1.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
+		bgfx::setViewTransform(viewID, viewMtx, projMtx);
+	}
 
 	uint16_t prevScissorRect[4] = { 0, 0, canvasWidth, canvasHeight};
 	uint16_t prevScissorID = UINT16_MAX;
