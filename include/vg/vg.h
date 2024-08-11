@@ -333,6 +333,7 @@ struct ContextConfig
 	uint32_t m_MaxVBVertices;       // default: 65536
 	uint32_t m_FontAtlasImageFlags; // default: ImageFlags::Filter_Bilinear
 	uint32_t m_MaxCommandListDepth; // default: 16
+	bool m_ResetViewTransformOnEnd; // default: true
 };
 
 struct Stats
