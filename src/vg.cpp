@@ -725,7 +725,8 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 		256,                         // m_MaxCommandLists
 		65536,                       // m_MaxVBVertices
 		ImageFlags::Filter_Bilinear, // m_FontAtlasImageFlags
-		16                           // m_MaxCommandListDepth
+		16,                          // m_MaxCommandListDepth
+		true                         // m_ResetViewTransformOnEnd
 	};
 
 	const ContextConfig* cfg = userCfg ? userCfg : &defaultConfig;
@@ -1144,11 +1145,13 @@ void end(Context* ctx)
 	const uint16_t canvasHeight = ctx->m_CanvasHeight;
 	const float devicePixelRatio = ctx->m_DevicePixelRatio;
 
-	float viewMtx[16];
-	float projMtx[16];
-	bx::mtxIdentity(viewMtx);
-	bx::mtxOrtho(projMtx, 0.0f, (float)canvasWidth, (float)canvasHeight, 0.0f, 0.0f, 1.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
-	bgfx::setViewTransform(viewID, viewMtx, projMtx);
+	if (ctx->m_Config.m_ResetViewTransformOnEnd) {
+		float viewMtx[16];
+		float projMtx[16];
+		bx::mtxIdentity(viewMtx);
+		bx::mtxOrtho(projMtx, 0.0f, (float)canvasWidth, (float)canvasHeight, 0.0f, 0.0f, 1.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
+		bgfx::setViewTransform(viewID, viewMtx, projMtx);
+	}
 
 	uint16_t prevScissorRect[4] = { 0, 0, canvasWidth, canvasHeight};
 	uint16_t prevScissorID = UINT16_MAX;
