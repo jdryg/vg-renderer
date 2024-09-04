@@ -448,6 +448,7 @@ void transformTranslate(Context* ctx, float x, float y);
 void transformRotate(Context* ctx, float ang_rad);
 void transformMult(Context* ctx, const float* mtx, TransformOrder::Enum order);
 void setViewBox(Context* ctx, float x, float y, float w, float h);
+void depthOrder(Context* ctx, uint32_t order);
 
 void getTransform(Context* ctx, float* mtx);
 void getScissor(Context* ctx, float* rect);
