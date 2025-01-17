@@ -8,11 +8,13 @@
 // - Allow strokes and fills with gradients and image patterns to be used as clip masks (might
 // be useful if the same command list is used both inside and outside a beginClip()/endClip() 
 // block)
-#include <vg/vg.h>
-#include <vg/path.h>
-#include <vg/stroker.h>
+//#include <vg/vg.h>
+//#include <vg/path.h>
+//#include <vg/stroker.h>
 #include "vg_util.h"
-#include "libs/fontstash.h"
+#if VG_USE_FONTSTASH
+	#include "libs/fontstash.h"
+#endif
 #include <bx/allocator.h>
 #include <bx/mutex.h>
 #include <bx/handlealloc.h>
@@ -421,17 +423,21 @@ struct Context
 	ImagePattern* m_ImagePatterns;
 	uint32_t m_NextImagePatternID;
 
+#if VG_USE_FONTSTASH
 	FONScontext* m_FontStashContext;
+#endif
 	ImageHandle m_FontImages[VG_CONFIG_MAX_FONT_IMAGES];
 	uint32_t m_FontImageID;
 	uv_t m_FontImageWhitePixelUV[2];
 
+#if VG_USE_FONTSTASH
 	float* m_TextVertices;
 	FONSquad* m_TextQuads;
 	uint32_t m_TextQuadCapacity;
 	FONSstring m_TextString;
 	FontData* m_FontData;
 	uint32_t m_NextFontID;
+#endif
 
 	bgfx::VertexLayout m_PosVertexDecl;
 	bgfx::VertexLayout m_UVVertexDecl;
@@ -749,9 +755,11 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 	ctx->m_Gradients = (Gradient*)mem;         mem += alignSize(sizeof(Gradient) * cfg->m_MaxGradients, alignment);
 	ctx->m_ImagePatterns = (ImagePattern*)mem; mem += alignSize(sizeof(ImagePattern) * cfg->m_MaxImagePatterns, alignment);
 	ctx->m_StateStack = (State*)mem;           mem += alignSize(sizeof(State) * cfg->m_MaxStateStackSize, alignment);
+#if VG_USE_FONTSTASH
 	ctx->m_FontData = (FontData*)mem;          mem += alignSize(sizeof(FontData) * cfg->m_MaxFonts, alignment);
+#endif
 	ctx->m_CmdLists = (CommandList*)mem;       mem += alignSize(sizeof(CommandList) * cfg->m_MaxCommandLists, alignment);
-
+	
 #if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable = &g_CtxVTable;
 	ctx->m_ActiveCommandList = VG_INVALID_HANDLE;
@@ -822,6 +830,7 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 	
 	// FontStash
 	// Init font stash
+#if VG_USE_FONTSTASH
 	const bgfx::Caps* caps = bgfx::getCaps();
 	FONSparams fontParams;
 	bx::memSet(&fontParams, 0, sizeof(fontParams));
@@ -843,19 +852,24 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 	fontParams.userPtr = nullptr;
 	ctx->m_FontStashContext = fonsCreateInternal(&fontParams);
 	VG_CHECK(ctx->m_FontStashContext != nullptr, "Failed to initialize FontStash");
+#endif // VG_USE_FONTSTASH
 
 	for (uint32_t i = 0; i < VG_CONFIG_MAX_FONT_IMAGES; ++i) {
 		ctx->m_FontImages[i] = VG_INVALID_HANDLE;
 	}
 
+#if VG_USE_FONTSTASH
 	ctx->m_FontImages[0] = createImage(ctx, (uint16_t)fontParams.width, (uint16_t)fontParams.height, cfg->m_FontAtlasImageFlags, nullptr);
 	VG_CHECK(isValid(ctx->m_FontImages[0]), "Failed to initialize font texture");
-	
+
 	ctx->m_FontImageID = 0;
 	updateWhitePixelUV(ctx);
 
 	fonsInitString(&ctx->m_TextString);
-
+#else
+	ctx->m_FontImages[0] = createImage(ctx, 1, 1, cfg->m_FontAtlasImageFlags, nullptr);
+	VG_CHECK(isValid(ctx->m_FontImages[0]), "Failed to initialize dummy font texture");
+#endif // VG_USE_FONTSTASH
 	return ctx;
 }
 
@@ -863,8 +877,10 @@ void destroyContext(Context* ctx)
 {
 	bx::AllocatorI* allocator = ctx->m_Allocator;
 	const ContextConfig* cfg = &ctx->m_Config;
-
+	
+#if VG_USE_FONTSTASH
 	fonsDestroyString(&ctx->m_TextString);
+#endif
 
 	for (uint32_t i = 0; i < DrawCommand::Type::NumTypes; ++i) {
 		if (bgfx::isValid(ctx->m_ProgramHandle[i])) {
@@ -971,7 +987,8 @@ void destroyContext(Context* ctx)
 
 	bx::free(allocator, ctx->m_ClipCommands);
 	ctx->m_ClipCommands = nullptr;
-
+	
+#if VG_USE_FONTSTASH
 	// Font data
 	for (int i = 0; i < cfg->m_MaxFonts; ++i) {
 		FontData* fd = &ctx->m_FontData[i];
@@ -983,6 +1000,7 @@ void destroyContext(Context* ctx)
 	}
 
 	fonsDeleteInternal(ctx->m_FontStashContext);
+#endif
 
 	for (uint32_t i = 0; i < VG_CONFIG_MAX_FONT_IMAGES; ++i) {
 		destroyImage(ctx, ctx->m_FontImages[i]);
@@ -1009,6 +1027,7 @@ void destroyContext(Context* ctx)
 	destroyStroker(ctx->m_Stroker);
 	ctx->m_Stroker = nullptr;
 
+#if VG_USE_FONTSTASH
     if (ctx->m_TextQuads) {
         bx::alignedFree(allocator, ctx->m_TextQuads, 16);
         ctx->m_TextQuads = nullptr;
@@ -1018,6 +1037,7 @@ void destroyContext(Context* ctx)
         bx::alignedFree(allocator, ctx->m_TextVertices, 16);
         ctx->m_TextVertices = nullptr;
     }
+#endif
 
     if (ctx->m_TransformedVertices) {
         bx::alignedFree(allocator, ctx->m_TransformedVertices, 16);
@@ -1291,6 +1311,7 @@ void frame(Context* ctx)
 {
 	ctx->m_NumVertexBuffers = 0;
 
+#if VG_USE_FONTSTASH
 	if (ctx->m_FontImageID != 0) {
 		ImageHandle fontImage = ctx->m_FontImages[ctx->m_FontImageID];
 
@@ -1325,6 +1346,7 @@ void frame(Context* ctx)
 			}
 		}
 	}
+#endif // VG_USE_FONTSTASH
 }
 
 const Stats* getStats(Context* ctx)
@@ -1733,6 +1755,7 @@ void getScissor(Context* ctx, float* rect)
 
 FontHandle createFont(Context* ctx, const char* name, uint8_t* data, uint32_t size, uint32_t flags)
 {
+#if VG_USE_FONTSTASH
 	if (ctx->m_NextFontID == ctx->m_Config.m_MaxFonts) {
 		return VG_INVALID_HANDLE;
 	}
@@ -1761,24 +1784,36 @@ FontHandle createFont(Context* ctx, const char* name, uint8_t* data, uint32_t si
 	fd->m_Owned = copyData;
 
 	return { (uint16_t)fonsHandle };
+#else
+	return { (uint16_t)0 };
+#endif // VG_USE_FONTSTASH
 }
 
 FontHandle getFontByName(Context* ctx, const char* name)
 {
+#if VG_USE_FONTSTASH
 	const int fonsHandle = fonsGetFontByName(ctx->m_FontStashContext, name);
 	return { (uint16_t)fonsHandle };
+#else
+	return { (uint16_t)0 };
+#endif // VG_USE_FONTSTASH
 }
 
 bool setFallbackFont(Context* ctx, FontHandle base, FontHandle fallback)
 {
+#if VG_USE_FONTSTASH
 	VG_CHECK(isValid(base) && isValid(fallback), "Invalid font handle");
 
 	FONScontext* fons = ctx->m_FontStashContext;
 	return fonsAddFallbackFont(fons, base.idx, fallback.idx) == 1;
+#else
+	return false;
+#endif // VG_USE_FONTSTASH
 }
 
 float measureText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end, float* bounds)
 {
+#if VG_USE_FONTSTASH
 	// nvgTextBounds()
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
@@ -1800,10 +1835,14 @@ float measureText(Context* ctx, const TextConfig& cfg, float x, float y, const c
 	}
 
 	return width * invscale;
+#else
+	return 0.f;
+#endif // VG_USE_FONTSTASH
 }
 
 void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, float* bounds, uint32_t flags)
 {
+#if VG_USE_FONTSTASH
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
@@ -1871,10 +1910,12 @@ void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float
 		bounds[2] = maxx;
 		bounds[3] = maxy;
 	}
+#endif // VG_USE_FONTSTASH
 }
 
 float getTextLineHeight(Context* ctx, const TextConfig& cfg)
 {
+#if VG_USE_FONTSTASH
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
@@ -1889,10 +1930,14 @@ float getTextLineHeight(Context* ctx, const TextConfig& cfg)
 	lineh *= invscale;
 
 	return lineh;
+#else
+	return 0.f;
+#endif // VG_USE_FONTSTASH
 }
 
 int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const char* end, float breakRowWidth, TextRow* rows, int maxRows, uint32_t flags)
 {
+#if VG_USE_FONTSTASH
 	// nvgTextBreakLines()
 #define CP_SPACE  0
 #define CP_NEW_LINE  1
@@ -2120,10 +2165,14 @@ int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const c
 #undef CP_SPACE
 #undef CP_NEW_LINE
 #undef CP_CHAR
+#else
+return 0;
+#endif // VG_USE_FONTSTASH
 }
 
 int textGlyphPositions(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end, GlyphPosition* positions, int maxPositions)
 {
+#if VG_USE_FONTSTASH
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
@@ -2166,6 +2215,9 @@ int textGlyphPositions(Context* ctx, const TextConfig& cfg, float x, float y, co
 	}
 
 	return npos;
+#else
+	return 0;
+#endif // VG_USE_FONTSTASH
 }
 
 bool getImageSize(Context* ctx, ImageHandle handle, uint16_t* w, uint16_t* h)
@@ -4176,6 +4228,7 @@ static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, ui
 
 static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end)
 {
+#if VG_USE_FONTSTASH
 	VG_CHECK(isValid(cfg.m_FontHandle), "Invalid font handle");
 
 	const State* state = getState(ctx);
@@ -4229,10 +4282,12 @@ static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const
 	ctxTransformTranslate(ctx, x + dx / scale, y + dy / scale);
 	renderTextQuads(ctx, numBakedChars, cfg.m_Color);
 	ctxPopState(ctx);
+#endif // VG_USE_FONTSTASH
 }
 
 static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags)
 {
+#if VG_USE_FONTSTASH 
 	VG_CHECK(isValid(cfg.m_FontHandle), "Invalid font handle");
 
 	const State* state = getState(ctx);
@@ -4268,6 +4323,7 @@ static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, fl
 
 		str = rows[nrows - 1].next;
 	}
+#endif // VG_USE_FONTSTASH
 }
 
 static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
@@ -5499,6 +5555,7 @@ static ImageHandle allocImage(Context* ctx)
 
 static bool allocTextAtlas(Context* ctx)
 {
+#if VG_USE_FONTSTASH
 	flushTextAtlas(ctx);
 
 	if (ctx->m_FontImageID + 1 >= VG_CONFIG_MAX_FONT_IMAGES) {
@@ -5536,10 +5593,14 @@ static bool allocTextAtlas(Context* ctx)
 	fonsResetAtlas(ctx->m_FontStashContext, iw, ih);
 
 	return true;
+#else
+	return false;
+#endif // VG_USE_FONTSTASH
 }
 
 static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color)
 {
+#if VG_USE_FONTSTASH
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
@@ -5618,10 +5679,12 @@ static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color)
 
 	cmd->m_NumVertices += numDrawVertices;
 	cmd->m_NumIndices += numDrawIndices;
+#endif // VG_USE_FONTSTASH
 }
 
 static void flushTextAtlas(Context* ctx)
 {
+#if VG_USE_FONTSTASH
 	FONScontext* fons = ctx->m_FontStashContext;
 
 	int dirty[4];
@@ -5650,6 +5713,7 @@ static void flushTextAtlas(Context* ctx)
 	updateImage(ctx, fontImage, (uint16_t)x, (uint16_t)y, (uint16_t)w, (uint16_t)h, (const uint8_t*)rgbaData);
 
 	bx::free(ctx->m_Allocator, rgbaData);
+#endif // VG_USE_FONTSTASH
 }
 
 static CommandListHandle allocCommandList(Context* ctx)
