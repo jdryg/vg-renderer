@@ -8,9 +8,9 @@
 // - Allow strokes and fills with gradients and image patterns to be used as clip masks (might
 // be useful if the same command list is used both inside and outside a beginClip()/endClip() 
 // block)
-//#include <vg/vg.h>
-//#include <vg/path.h>
-//#include <vg/stroker.h>
+#include <vg/vg.h>
+#include <vg/path.h>
+#include <vg/stroker.h>
 #include "vg_util.h"
 #if VG_USE_FONTSTASH
 	#include "libs/fontstash.h"
