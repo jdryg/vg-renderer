@@ -8,6 +8,10 @@
 #	define VG_CONFIG_DEBUG 0
 #endif
 
+#ifndef VG_USE_FONTSTASH
+#	define VG_USE_FONTSTASH 1
+#endif
+
 #ifndef VG_CONFIG_ENABLE_SHAPE_CACHING
 #	define VG_CONFIG_ENABLE_SHAPE_CACHING 1
 #endif
