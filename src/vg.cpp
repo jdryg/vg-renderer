@@ -867,7 +867,9 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 
 	fonsInitString(&ctx->m_TextString);
 #else
-	ctx->m_FontImages[0] = createImage(ctx, 1, 1, cfg->m_FontAtlasImageFlags, nullptr);
+	uint8_t whiteImg[4];
+	memset(&whiteImg[0], 0xff, 4);
+	ctx->m_FontImages[0] = createImage(ctx, 1, 1, cfg->m_FontAtlasImageFlags, &whiteImg[0]);
 	VG_CHECK(isValid(ctx->m_FontImages[0]), "Failed to initialize dummy font texture");
 #endif // VG_USE_FONTSTASH
 	return ctx;
