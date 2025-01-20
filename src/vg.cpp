@@ -47,6 +47,8 @@ BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment within conditional express
 
 namespace vg
 {
+CustomCallbackFn gCustomCallback = 0;
+
 static const bgfx::EmbeddedShader s_EmbeddedShaders[] =
 {
 	BGFX_EMBEDDED_SHADER(vs_textured),
@@ -111,14 +113,21 @@ struct DrawCommand
 		// The idea is that when using multiple image patterns, a new draw call will always be created
 		// for each image, so there's little harm in changing shader program as well (?!?). In other words,
 		// 2 paths with different image patterns wouldn't have been batched together either way.
+		//
+		// Re: CustomCallback comamnds
+		// this will call a custom function "CustomCallback" with argument m_VertexBufferId. It is your job
+		// to implement this function if you intend to use it
+		// Becuase it is not a "real" DrawCommand type it is listed after NumTypes
 		enum Enum : uint32_t
 		{
 			Textured = 0,
 			ColorGradient,
 			ImagePattern,
 			Clip,
-
-			NumTypes
+			
+			NumTypes,
+			
+			CustomCallback
 		};
 	};
 
@@ -239,6 +248,9 @@ struct CommandType
 
 		// Command lists
 		SubmitCommandList,
+		
+		// Custom Callback
+		CustomCallback,
 	};
 };
 
@@ -335,6 +347,7 @@ struct ContextVTable
 	void(*text)(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 	void(*textBox)(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, uint32_t textboxFlags);
 	void(*indexedTriList)(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* color, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
+	void(*customCallback)(Context* ctx, const uint32_t arg1, const uint32_t arg2);
 	void(*submitCommandList)(Context* ctx, CommandListHandle handle);
 };
 #endif // VG_CONFIG_COMMAND_LIST_BEGIN_END_API
@@ -486,8 +499,10 @@ static void createDrawCommand_Clip(Context* ctx, const float* vtx, uint32_t numV
 static ImageHandle allocImage(Context* ctx);
 static void resetImage(Image* img);
 
+#if VG_USE_FONTSTASH
 static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color);
 static bool allocTextAtlas(Context* ctx);
+#endif
 static void flushTextAtlas(Context* ctx);
 
 static CommandListHandle allocCommandList(Context* ctx);
@@ -554,6 +569,7 @@ static void ctxSetGlobalAlpha(Context* ctx, float alpha);
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
+static void ctxCustomCallback(Context* ctx, const uint32_t arg1, const uint32_t arg2);
 static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle);
 
 // Active command list wrappers
@@ -600,6 +616,7 @@ static void aclSetGlobalAlpha(Context* ctx, float alpha);
 static void aclIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 static void aclText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void aclTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
+static void aclCustomCallback(Context* ctx, const uint32_t arg1, const uint32_t arg2);
 static void aclSubmitCommandList(Context* ctx, CommandListHandle handle);
 
 const ContextVTable g_CtxVTable = {
@@ -645,6 +662,7 @@ const ContextVTable g_CtxVTable = {
 	ctxText,
 	ctxTextBox,
 	ctxIndexedTriList,
+	ctxCustomCallback,
 	ctxSubmitCommandList
 };
 
@@ -691,6 +709,7 @@ const ContextVTable g_ActiveCmdListVTable = {
 	aclText,
 	aclTextBox,
 	aclIndexedTriList,
+	aclCustomCallback,
 	aclSubmitCommandList
 };
 #endif
@@ -878,9 +897,9 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 void destroyContext(Context* ctx)
 {
 	bx::AllocatorI* allocator = ctx->m_Allocator;
-	const ContextConfig* cfg = &ctx->m_Config;
 	
 #if VG_USE_FONTSTASH
+	const ContextConfig* cfg = &ctx->m_Config;
 	fonsDestroyString(&ctx->m_TextString);
 #endif
 
@@ -1184,6 +1203,11 @@ void end(Context* ctx)
 	for (uint32_t iCmd = 0; iCmd < numDrawCommands; ++iCmd) {
 		DrawCommand* cmd = &ctx->m_DrawCommands[iCmd];
 
+		if (cmd->m_Type == DrawCommand::Type::CustomCallback) {
+			gCustomCallback(ctx, cmd->m_VertexBufferID, cmd->m_FirstVertexID);
+			continue;
+			}
+			
 		const ClipState* cmdClipState = &cmd->m_ClipState;
 		if (cmdClipState->m_FirstCmdID != prevClipCmdID) {
 			prevClipCmdID = cmdClipState->m_FirstCmdID;
@@ -1706,7 +1730,7 @@ void indexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t num
 	ctxIndexedTriList(ctx, pos, uv, numVertices, colors, numColors, indices, numIndices, img);
 #endif
 }
-
+			
 void text(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end)
 {
 #if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
@@ -1722,6 +1746,15 @@ void textBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakW
 	ctx->m_VTable->textBox(ctx, cfg, x, y, breakWidth, str, end, textboxFlags);
 #else
 	ctxTextBox(ctx, cfg, x, y, breakWidth, str, end, textboxFlags);
+#endif
+}
+
+void customCallback(Context* ctx, const uint32_t arg1, const uint32_t arg2)
+{
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
+	ctx->m_VTable->customCallback(ctx, arg1, arg2);
+#else
+	ctxCustomCallback(ctx, arg1, arg2);
 #endif
 }
 
@@ -3010,6 +3043,16 @@ void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, fl
 	CMD_WRITE(ptr, uint32_t, textboxFlags);
 }
 
+void clCustomCallback(Context* ctx, CommandListHandle handle, const uint32_t arg1, const uint32_t arg2)
+{
+	VG_CHECK(isValid(handle), "Invalid command list handle");
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
+	
+	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::CustomCallback, sizeof(float));
+	CMD_WRITE(ptr, uint32_t, arg1);
+	CMD_WRITE(ptr, uint32_t, arg2);
+}
+
 void clSubmitCommandList(Context* ctx, CommandListHandle parent, CommandListHandle child)
 {
 	VG_CHECK(isValid(parent), "Invalid command list handle");
@@ -4180,6 +4223,12 @@ static void ctxSetGlobalAlpha(Context* ctx, float alpha)
 	state->m_GlobalAlpha = alpha;
 }
 
+static void ctxCustomCallback(Context* ctx, const uint32_t arg1, const uint32_t arg2) {
+	DrawCommand* cmd = allocDrawCommand(ctx, 0, 0, DrawCommand::Type::CustomCallback, 0);
+	cmd->m_VertexBufferID = arg1;
+	cmd->m_FirstVertexID = arg2;
+}
+
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
 {
 	if (!isValid(img)) {
@@ -4666,6 +4715,11 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 		case CommandType::ResetClip: {
 			ctxResetClip(ctx);
 		} break;
+		case CommandType::CustomCallback: {
+			const uint32_t arg1 = CMD_READ(cmd, uint32_t);
+			const uint32_t arg2 = CMD_READ(cmd, uint32_t);
+			ctxCustomCallback(ctx, arg1, arg2);
+		} break;
 		case CommandType::SubmitCommandList: {
 			const uint16_t cmdListID = CMD_READ(cmd, uint16_t);
 			const CommandListHandle cmdListHandle = { cmdListID };
@@ -4947,6 +5001,12 @@ static void aclTextBox(Context* ctx, const TextConfig& cfg, float x, float y, fl
 {
 	VG_CHECK(isValid(ctx->m_ActiveCommandList), "Invalid Context state");
 	clTextBox(ctx, ctx->m_ActiveCommandList, cfg, x, y, breakWidth, str, end, textboxFlags);
+}
+
+static void aclCustomCallback(Context* ctx, const uint32_t arg1, const uint32_t arg2)
+{
+	VG_CHECK(isValid(ctx->m_ActiveCommandList), "Invalid Context state");
+	clCustomCallback(ctx, ctx->m_ActiveCommandList, arg1, arg2);
 }
 
 static void aclSubmitCommandList(Context* ctx, CommandListHandle handle)
