@@ -347,7 +347,7 @@ struct ContextVTable
 	void(*text)(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 	void(*textBox)(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, uint32_t textboxFlags);
 	void(*indexedTriList)(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* color, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
-	void(*customCallback)(Context* ctx, const uint32_t arg1, const uint32_t arg2);
+	void(*customCallback)(Context* ctx, void* usrPtr, const uint32_t arg1, const uint32_t arg2);
 	void(*submitCommandList)(Context* ctx, CommandListHandle handle);
 };
 #endif // VG_CONFIG_COMMAND_LIST_BEGIN_END_API
@@ -569,7 +569,7 @@ static void ctxSetGlobalAlpha(Context* ctx, float alpha);
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
-static void ctxCustomCallback(Context* ctx, const uint32_t arg1, const uint32_t arg2);
+static void ctxCustomCallback(Context* ctx, void* usrPtr, const uint32_t arg1, const uint32_t arg2);
 static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle);
 
 // Active command list wrappers
@@ -616,7 +616,7 @@ static void aclSetGlobalAlpha(Context* ctx, float alpha);
 static void aclIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 static void aclText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void aclTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
-static void aclCustomCallback(Context* ctx, const uint32_t arg1, const uint32_t arg2);
+static void aclCustomCallback(Context* ctx, void* usrPtr, const uint32_t arg1, const uint32_t arg2);
 static void aclSubmitCommandList(Context* ctx, CommandListHandle handle);
 
 const ContextVTable g_CtxVTable = {
@@ -1204,7 +1204,9 @@ void end(Context* ctx)
 		DrawCommand* cmd = &ctx->m_DrawCommands[iCmd];
 
 		if (cmd->m_Type == DrawCommand::Type::CustomCallback) {
-			gCustomCallback(ctx, cmd->m_VertexBufferID, cmd->m_FirstVertexID);
+			void* ptr = &cmd->m_FirstIndexID;
+			void* usrPtr = CMD_READ(ptr, void*);
+			gCustomCallback(ctx, usrPtr, cmd->m_VertexBufferID, cmd->m_FirstVertexID);
 			continue;
 			}
 			
@@ -1749,12 +1751,12 @@ void textBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakW
 #endif
 }
 
-void customCallback(Context* ctx, const uint32_t arg1, const uint32_t arg2)
+void customCallback(Context* ctx, void* usrPtr, const uint32_t arg1, const uint32_t arg2)
 {
 #if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
-	ctx->m_VTable->customCallback(ctx, arg1, arg2);
+	ctx->m_VTable->customCallback(ctx, usrPtr, arg1, arg2);
 #else
-	ctxCustomCallback(ctx, arg1, arg2);
+	ctxCustomCallback(ctx, usrPtr, arg1, arg2);
 #endif
 }
 
@@ -3043,12 +3045,13 @@ void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, fl
 	CMD_WRITE(ptr, uint32_t, textboxFlags);
 }
 
-void clCustomCallback(Context* ctx, CommandListHandle handle, const uint32_t arg1, const uint32_t arg2)
+void clCustomCallback(Context* ctx, CommandListHandle handle, void* usrPtr, const uint32_t arg1, const uint32_t arg2)
 {
 	VG_CHECK(isValid(handle), "Invalid command list handle");
 	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 	
-	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::CustomCallback, sizeof(float));
+	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::CustomCallback, sizeof(void*) + sizeof(uint32_t)*2);
+	CMD_WRITE(ptr, void*, usrPtr);
 	CMD_WRITE(ptr, uint32_t, arg1);
 	CMD_WRITE(ptr, uint32_t, arg2);
 }
@@ -4223,10 +4226,13 @@ static void ctxSetGlobalAlpha(Context* ctx, float alpha)
 	state->m_GlobalAlpha = alpha;
 }
 
-static void ctxCustomCallback(Context* ctx, const uint32_t arg1, const uint32_t arg2) {
+static void ctxCustomCallback(Context* ctx, void* usrPtr, const uint32_t arg1, const uint32_t arg2) {
 	DrawCommand* cmd = allocDrawCommand(ctx, 0, 0, DrawCommand::Type::CustomCallback, 0);
 	cmd->m_VertexBufferID = arg1;
 	cmd->m_FirstVertexID = arg2;
+	
+	void* ptr = &cmd->m_FirstIndexID;
+	CMD_WRITE(ptr, void*, usrPtr);
 }
 
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
@@ -4716,9 +4722,10 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 			ctxResetClip(ctx);
 		} break;
 		case CommandType::CustomCallback: {
+			void* usrPtr = CMD_READ(cmd, void*);
 			const uint32_t arg1 = CMD_READ(cmd, uint32_t);
 			const uint32_t arg2 = CMD_READ(cmd, uint32_t);
-			ctxCustomCallback(ctx, arg1, arg2);
+			ctxCustomCallback(ctx, usrPtr, arg1, arg2);
 		} break;
 		case CommandType::SubmitCommandList: {
 			const uint16_t cmdListID = CMD_READ(cmd, uint16_t);
@@ -5003,10 +5010,10 @@ static void aclTextBox(Context* ctx, const TextConfig& cfg, float x, float y, fl
 	clTextBox(ctx, ctx->m_ActiveCommandList, cfg, x, y, breakWidth, str, end, textboxFlags);
 }
 
-static void aclCustomCallback(Context* ctx, const uint32_t arg1, const uint32_t arg2)
+static void aclCustomCallback(Context* ctx, void* usrPtr, const uint32_t arg1, const uint32_t arg2)
 {
 	VG_CHECK(isValid(ctx->m_ActiveCommandList), "Invalid Context state");
-	clCustomCallback(ctx, ctx->m_ActiveCommandList, arg1, arg2);
+	clCustomCallback(ctx, ctx->m_ActiveCommandList, usrPtr, arg1, arg2);
 }
 
 static void aclSubmitCommandList(Context* ctx, CommandListHandle handle)
