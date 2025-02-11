@@ -4227,6 +4227,7 @@ static void ctxSetGlobalAlpha(Context* ctx, float alpha)
 }
 
 static void ctxCustomCallback(Context* ctx, void* usrPtr, const uint32_t arg1, const uint32_t arg2) {
+	ctx->m_ForceNewDrawCommand = true;
 	DrawCommand* cmd = allocDrawCommand(ctx, 0, 0, DrawCommand::Type::CustomCallback, 0);
 	cmd->m_VertexBufferID = arg1;
 	cmd->m_FirstVertexID = arg2;
