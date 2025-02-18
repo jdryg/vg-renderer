@@ -215,7 +215,7 @@ void pathArcTo(Path* path, float x1, float y1, float x2, float y2, float r)
 //	if (nvg__ptEquals(x0, y0, x1, y1, ctx->distTol) ||
 //		nvg__ptEquals(x1, y1, x2, y2, ctx->distTol) ||
 //		nvg__distPtSeg(x1, y1, x0, y0, x2, y2) < ctx->distTol * ctx->distTol ||
-//		radius < ctx->distTol) 
+//		radius < ctx->distTol)
 //	{
 //		nvgLineTo(ctx, x1,y1);
 //		return;
@@ -294,12 +294,12 @@ void pathRoundedRect(Path* path, float x, float y, float w, float h, float r)
 
 	float max_r = bx::min<float>(w, h) * 0.5f;
 
-	if (w == h && r >= max_r - 0.25f) {
+	if (w == h && r >= max_r - VG_EPSILON) {
 		pathCircle(path, x + max_r, y + max_r, max_r);
 		return;
 	}
 
-	r = bx::min<float>(r, max_r - 0.25f);
+	r = bx::min<float>(r, max_r);
 
 	const float rx = r * bx::sign(w);
 	const float ry = r * bx::sign(h);
