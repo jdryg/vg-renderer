@@ -292,10 +292,17 @@ void pathRoundedRect(Path* path, float x, float y, float w, float h, float r)
 		return;
 	}
 
-	const float rx = bx::min<float>(r, bx::abs(w) * 0.5f) * bx::sign(w);
-	const float ry = bx::min<float>(r, bx::abs(h) * 0.5f) * bx::sign(h);
+	float max_r = bx::min<float>(w, h) * 0.5f;
 
-	r = bx::min<float>(rx, ry);
+	if (w == h && r >= max_r - 0.25f) {
+		pathCircle(path, x + max_r, y + max_r, max_r);
+		return;
+	}
+
+	r = bx::min<float>(r, max_r - 0.25f);
+
+	const float rx = r * bx::sign(w);
+	const float ry = r * bx::sign(h);
 
 	const float da = bx::acos((path->m_Scale * r) / ((path->m_Scale * r) + path->m_TesselationTolerance)) * 2.0f;
 	const uint32_t numPointsHalfCircle = bx::uint32_max(2, (uint32_t)bx::ceil(bx::kPi / da));
