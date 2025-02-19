@@ -18,7 +18,7 @@ inline Color color4ub(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 	return VG_COLOR32(r, g, b, a);
 }
 
-inline Color colorHSB(float hue, float sat, float brightness)
+inline Color colorHSB(float hue, float sat, float brightness, float alpha)
 {
 	const float d = 1.0f / 6.0f;
 
@@ -52,8 +52,9 @@ inline Color colorHSB(float hue, float sat, float brightness)
 	uint32_t r = (uint32_t)bx::floor((fred + m) * 255.0f);
 	uint32_t g = (uint32_t)bx::floor((fgreen + m) * 255.0f);
 	uint32_t b = (uint32_t)bx::floor((fblue + m) * 255.0f);
+	uint32_t a = (uint32_t)bx::floor(alpha * 255.0f);
 
-	return 0xFF000000 | (b << 16) | (g << 8) | (r);
+	return (a << 24) | (b << 16) | (g << 8) | (r);
 }
 
 inline float _hue_helper(float h, float m1, float m2)
