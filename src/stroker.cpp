@@ -14,126 +14,6 @@ BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wshadow")
 
 namespace vg
 {
-struct Vec2;
-struct Vec2Stored;
-
-struct Vec2Stored {
-	float x, y;
-
-	Vec2Stored &operator=(const Vec2 &v);
-};
-
-struct Vec2
-{
-#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
-	Vec2(float x, float y) : xy(_mm_setr_ps(x, y, 0, 0)) {}
-	Vec2(__m128 xy) : xy(xy) {}
-	Vec2(const Vec2&o) : xy(o.xy) {}
-	Vec2() {}
-	Vec2(const Vec2Stored &o) : Vec2(o.x, o.y) {}
-	__m128 xy;
-#else
-	float x, y;
-#endif
-};
-
-Vec2Stored& Vec2Stored::operator=(const Vec2 &v)
-{
-#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
-	_mm_storel_pi((__m64*)&x, v.xy);
-#else
-	x = v.x;
-	y = v.y;
-#endif
-	return *this;
-}
-
-#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
-inline float vec2x(const Vec2& a) { return _mm_cvtss_f32(a.xy); }
-inline float vec2y(const Vec2& a) { return _mm_cvtss_f32(_mm_shuffle_ps(a.xy, a.xy, _MM_SHUFFLE(1, 1, 1, 1))); }
-inline Vec2 vec2Add(const Vec2& a, const Vec2& b)                { return {_mm_add_ps(a.xy, b.xy)}; }
-inline Vec2 vec2Fma(const Vec2& a, float s, const Vec2& b)       { return {_mm_fmadd_ps(a.xy, _mm_set1_ps(s), b.xy)}; }
-inline Vec2 vec2Fma(const Vec2& a, const Vec2 &s, const Vec2& b) { return {_mm_fmadd_ps(a.xy, s.xy, b.xy)}; }
-inline Vec2 vec2Sub(const Vec2& a, const Vec2& b)                { return {_mm_sub_ps(a.xy, b.xy) }; }
-inline Vec2 vec2Scale(const Vec2& a, float s)                    { return {_mm_mul_ps(a.xy, _mm_set1_ps(s)) }; }
-inline Vec2 vec2PerpCCW(const Vec2& a)                           { return {-vec2y(a), vec2x(a) }; }
-inline Vec2 vec2PerpCW(const Vec2& a)                            { return {vec2y(a), -vec2x(a) }; }
-inline float vec2Cross(const Vec2& a, const Vec2& b) {
-	const __m128 byx = _mm_shuffle_ps(b.xy, b.xy, _MM_SHUFFLE(0, 0, 0, 1));
-	const __m128 p = _mm_mul_ps(byx, a.xy);
-	return _mm_cvtss_f32(_mm_hsub_ps(p, p));
-}
-//inline float vec2Cross(const Vec2& a, const Vec2& b) {
-//    __m128 mul = _mm_mul_ps(a.xy, _mm_shuffle_ps(b.xy, b.xy, _MM_SHUFFLE(3, 2, 0, 1))); // { b.y, b.x, 0, 0 }
-//    __m128 sub = _mm_sub_ss(mul, _mm_shuffle_ps(mul, mul, _MM_SHUFFLE(1, 1, 1, 1))); // x * b.y - y * b.x
-//    return _mm_cvtss_f32(sub);
-//}
-inline float vec2Dot(const Vec2& a, const Vec2& b) {
-	const __m128 sq = _mm_mul_ps(a.xy, b.xy);
-	return _mm_cvtss_f32(_mm_hadd_ps(sq, sq));
-}
-#else
-inline float vec2x(const Vec2& a) { return a.x; }
-inline float vec2y(const Vec2& a) { return a.y; }
-inline Vec2 vec2Add(const Vec2& a, const Vec2& b)                { return{ a.x + b.x, a.y + b.y }; }
-inline Vec2 vec2Fma(const Vec2& a, float s, const Vec2& b)       { return{ a.x * s + b.x, a.y * s + b.y }; }
-inline Vec2 vec2Sub(const Vec2& a, const Vec2& b)                { return{ a.x - b.x, a.y - b.y }; }
-inline Vec2 vec2Scale(const Vec2& a, float s)                    { return{ a.x * s, a.y * s }; }
-inline Vec2 vec2PerpCCW(const Vec2& a)                           { return{ -a.y, a.x }; }
-inline Vec2 vec2PerpCW(const Vec2& a)                            { return{ a.y, -a.x }; }
-inline float vec2Cross(const Vec2& a, const Vec2& b)             { return a.x * b.y - b.x * a.y; }
-inline float vec2Dot(const Vec2& a, const Vec2& b)               { return a.x * b.x + a.y * b.y; }
-#endif
-
-// Direction from a to b
-inline Vec2 vec2Dir(const Vec2& a, const Vec2& b)
-{
-#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
-#if 1 // This version is almost twice as fast on AMD Zen+.
-	//const __m128 va = _mm_set_ps(0, 0, a.y, a.x);
-	//const __m128 vb = _mm_set_ps(0, 0, b.y, b.x);
-	const __m128 va = a.xy;
-	const __m128 vb = b.xy;
-	const __m128 dxy = _mm_sub_ps(vb, va); // { dx, dy, 0, 0 }
-#else
-	const __m128 vab = _mm_setr_ps(b.x, a.x, b.y, a.y);
-	const __m128 dxy = _mm_hsub_ps(vab, vab);
-#endif
-	const __m128 dxySqr = _mm_mul_ps(dxy, dxy); // { dx * dx, dy * dy, 0, 0 }
-	const __m128 dySqr = _mm_shuffle_ps(dxySqr, dxySqr, _MM_SHUFFLE(1, 1, 1, 1)); // { dy * dy, dy * dy, dy * dy, dy * dy }
-	const __m128 lenSqr = _mm_add_ss(dxySqr, dySqr);
-	__m128 dir = _mm_setzero_ps();
-	if (_mm_comigt_ss(lenSqr, _mm_set_ss(VG_EPSILON))) {
-		const __m128 invLen = _mm_rsqrt_ss(lenSqr);
-		dir = _mm_mul_ps(dxy, _mm_broadcastss_ps(invLen));
-	}
-	Vec2 result = dir;
-	//result.x = _mm_cvtss_f32(dir);  // Extract lowest float (dx)
-	//result.y = _mm_cvtss_f32(_mm_shuffle_ps(dir, dir, _MM_SHUFFLE(1, 1, 1, 1)));  // Extract second-lowest float (dy)
-	return result;
-#else
-	const float dx = b.x - a.x;
-	const float dy = b.y - a.y;
-	const float lenSqr = dx * dx + dy * dy;
-	const float invLen = lenSqr < VG_EPSILON ? 0.0f : bx::rsqrt(lenSqr);
-	return{ dx * invLen, dy * invLen };
-#endif
-}
-
-inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
-{
-	// v is the vector from the path point to the outline point, assuming a stroke width of 1.0.
-	// Equation obtained by solving the intersection of the 2 line segments. d01 and d12 are
-	// assumed to be normalized.
-	static const float kMaxExtrusionScale = 1.0f / 100.0f;
-	Vec2 v = vec2PerpCCW(d01);
-	const float cross = vec2Cross(d12, d01);
-	if (bx::abs(cross) > kMaxExtrusionScale) {
-		v = vec2Scale(vec2Sub(d01, d12), (1.0f / cross));
-	}
-
-	return v;
-}
 
 #if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
 static const __m128 vec2_perpCCW_xorMask = _mm_castsi128_ps(_mm_set_epi32(0, 0, 0, 0x80000000));
@@ -158,12 +38,12 @@ static inline __m128 xmm_vec2_dir(const __m128 a, const __m128 b)
 {
 	const __m128 dxy = _mm_sub_ps(b, a); // { dx, dy, DC, DC }
 	const __m128 dxySqr = _mm_mul_ps(dxy, dxy); // { dx * dx, dy * dy, DC, DC }
-	const __m128 dySqr = _mm_shuffle_ps(dxySqr, dxySqr, _MM_SHUFFLE(1, 1, 1, 1)); // { dy * dy, dy * dy, dy * dy, dy * dy }
-	const float lenSqr = _mm_cvtss_f32(_mm_add_ss(dxySqr, dySqr));
+	const __m128 dySqr = _mm_shuffle_ps(dxySqr, dxySqr, _MM_SHUFFLE(0, 0, 0, 1)); // { dy * dy, DC, DC, DC}
+	const __m128 lenSqr = _mm_add_ss(dxySqr, dySqr);
 	__m128 dir = _mm_setzero_ps();
-	if (lenSqr >= VG_EPSILON) {
-		const __m128 invLen = _mm_set_ps1(bx::rsqrt(lenSqr));
-		dir = _mm_mul_ps(dxy, invLen);
+	if (_mm_comigt_ss(lenSqr, _mm_set_ss(VG_EPSILON))) {
+		const __m128 invLen = _mm_rsqrt_ss(lenSqr);
+		dir = _mm_mul_ps(dxy, _mm_broadcastss_ps(invLen));
 	}
 	return dir;
 }
@@ -210,6 +90,101 @@ static inline __m128 xmm_rcp(__m128 a)
 	return inv_a;
 }
 #endif
+
+
+
+struct Vec2;
+struct Vec2Stored;
+
+struct Vec2Stored {
+	float x, y;
+	Vec2Stored &operator=(const Vec2 &v);
+};
+
+struct Vec2
+{
+	Vec2() {}
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+	Vec2(float x, float y) : xy(_mm_set_ps(0, 0, y, x)) {}
+	Vec2(__m128 xy) : xy(xy) {}
+	Vec2(const Vec2&o) : xy(o.xy) {}
+	__m128 xy;
+#else
+	Vec2(float x, float y) : x(x), y(y) {}
+	Vec2(const Vec2&o) : x(o.x), y(o.y) {}
+	float x, y;
+#endif
+
+	Vec2(const Vec2Stored &o) : Vec2(o.x, o.y) {}
+};
+
+Vec2Stored& Vec2Stored::operator=(const Vec2 &v)
+{
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+	_mm_storel_pi((__m64*)&x, v.xy);
+#else
+	x = v.x;
+	y = v.y;
+#endif
+	return *this;
+}
+
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+inline float vec2x(const Vec2& a) { return _mm_cvtss_f32(a.xy); }
+inline float vec2y(const Vec2& a) { return _mm_cvtss_f32(_mm_shuffle_ps(a.xy, a.xy, _MM_SHUFFLE(0, 0, 0, 1))); }
+inline Vec2 vec2Add(const Vec2& a, const Vec2& b)                { return {_mm_add_ps(a.xy, b.xy)}; }
+inline Vec2 vec2Fma(const Vec2& a, float s, const Vec2& b)       { return {_mm_fmadd_ps(a.xy, _mm_set1_ps(s), b.xy)}; }
+inline Vec2 vec2Sub(const Vec2& a, const Vec2& b)                { return {_mm_sub_ps(a.xy, b.xy) }; }
+inline Vec2 vec2Scale(const Vec2& a, float s)                    { return {_mm_mul_ps(a.xy, _mm_set1_ps(s)) }; }
+inline Vec2 vec2PerpCCW(const Vec2& a)                           { return {xmm_vec2_rotCCW90(a.xy)}; }
+inline Vec2 vec2PerpCW(const Vec2& a)                            { return {vec2y(a), -vec2x(a) }; }
+inline float vec2Cross(const Vec2& a, const Vec2& b)             { return xmm_vec2_cross(a.xy, b.xy); }
+inline float vec2Dot(const Vec2& a, const Vec2& b) {
+	const __m128 sq = _mm_mul_ps(a.xy, b.xy);
+	const __m128 sw = _mm_shuffle_ps(sq, sq, _MM_SHUFFLE(0, 0, 0, 1));
+	return _mm_cvtss_f32(_mm_add_ps(sq, sw));
+}
+#else
+inline float vec2x(const Vec2& a) { return a.x; }
+inline float vec2y(const Vec2& a) { return a.y; }
+inline Vec2 vec2Add(const Vec2& a, const Vec2& b)                { return{ a.x + b.x, a.y + b.y }; }
+inline Vec2 vec2Fma(const Vec2& a, float s, const Vec2& b)       { return{ a.x * s + b.x, a.y * s + b.y }; }
+inline Vec2 vec2Sub(const Vec2& a, const Vec2& b)                { return{ a.x - b.x, a.y - b.y }; }
+inline Vec2 vec2Scale(const Vec2& a, float s)                    { return{ a.x * s, a.y * s }; }
+inline Vec2 vec2PerpCCW(const Vec2& a)                           { return{ -a.y, a.x }; }
+inline Vec2 vec2PerpCW(const Vec2& a)                            { return{ a.y, -a.x }; }
+inline float vec2Cross(const Vec2& a, const Vec2& b)             { return a.x * b.y - b.x * a.y; }
+inline float vec2Dot(const Vec2& a, const Vec2& b)               { return a.x * b.x + a.y * b.y; }
+#endif
+
+// Direction from a to b
+inline Vec2 vec2Dir(const Vec2& a, const Vec2& b)
+{
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+	return {xmm_vec2_dir(a.xy, b.xy)};
+#else
+	const float dx = b.x - a.x;
+	const float dy = b.y - a.y;
+	const float lenSqr = dx * dx + dy * dy;
+	const float invLen = lenSqr < VG_EPSILON ? 0.0f : bx::rsqrt(lenSqr);
+	return{ dx * invLen, dy * invLen };
+#endif
+}
+
+inline Vec2 calcExtrusionVector(const Vec2& d01, const Vec2& d12)
+{
+	// v is the vector from the path point to the outline point, assuming a stroke width of 1.0.
+	// Equation obtained by solving the intersection of the 2 line segments. d01 and d12 are
+	// assumed to be normalized.
+	static const float kMaxExtrusionScale = 1.0f / 100.0f;
+	Vec2 v = vec2PerpCCW(d01);
+	const float cross = vec2Cross(d12, d01);
+	if (bx::abs(cross) > kMaxExtrusionScale) {
+		v = vec2Scale(vec2Sub(d01, d12), (1.0f / cross));
+	}
+
+	return v;
+}
 
 struct libtess2Allocator
 {
@@ -289,17 +264,17 @@ void destroyStroker(Stroker* stroker)
 {
 	bx::AllocatorI* allocator = stroker->m_Allocator;
 
-    if (stroker->m_PosBuffer) {
-        bx::alignedFree(allocator, stroker->m_PosBuffer, 16);
-    }
+	if (stroker->m_PosBuffer) {
+		bx::alignedFree(allocator, stroker->m_PosBuffer, 16);
+	}
 
-    if (stroker->m_ColorBuffer) {
-        bx::alignedFree(allocator, stroker->m_ColorBuffer, 16);
-    }
+	if (stroker->m_ColorBuffer) {
+		bx::alignedFree(allocator, stroker->m_ColorBuffer, 16);
+	}
 
-    if (stroker->m_IndexBuffer) {
-        bx::alignedFree(allocator, stroker->m_IndexBuffer, 16);
-    }
+	if (stroker->m_IndexBuffer) {
+		bx::alignedFree(allocator, stroker->m_IndexBuffer, 16);
+	}
 
 	if (stroker->m_Tesselator) {
 		tessDeleteTess(stroker->m_Tesselator);
@@ -799,7 +774,7 @@ void strokerConvexFillAA(Stroker* stroker, Mesh* mesh, const float* vertexList, 
 	// WARNING: Might not work in all cases.
 	VG_CHECK(numVertices >= 3, "Invalid number of vertices");
 
-	const Vec2* vtx = (const Vec2*)vertexList;
+	const Vec2Stored* vtx = (const Vec2Stored*)vertexList;
 
 	const float cross = vec2Cross(vec2Sub(vtx[1], vtx[0]), vec2Sub(vtx[2], vtx[0]));
 
@@ -974,7 +949,7 @@ bool strokerConcaveFillEndAA(Stroker* stroker, Mesh* mesh, uint32_t color, FillR
 		// Vertices
 		expandVB(stroker, numContourVertices * 2);
 		{
-			Vec2* vtx = (Vec2*)&contourVerts[firstContourVertexID * 2];
+			Vec2Stored* vtx = (Vec2Stored*)&contourVerts[firstContourVertexID * 2];
 			Vec2 d01 = vec2Dir(vtx[numContourVertices - 1], vtx[0]);
 			const float crossSign = bx::sign(vec2Cross(d01, vec2Dir(vtx[0], vtx[1])));
 			const float aa = stroker->m_FringeWidth * 0.5f * crossSign;
@@ -1064,7 +1039,7 @@ bool strokerConcaveFillEndAA(Stroker* stroker, Mesh* mesh, uint32_t color, FillR
 	expandVB(stroker, numTessVertices);
 	{
 		const float* tessVertices = tessGetVertices(stroker->m_Tesselator);
-		bx::memCopy(&stroker->m_PosBuffer[nextVertexID], tessVertices, sizeof(Vec2) * numTessVertices);
+		bx::memCopy(&stroker->m_PosBuffer[nextVertexID], tessVertices, sizeof(Vec2Stored) * numTessVertices);
 		vgutil::memset32(&stroker->m_ColorBuffer[nextVertexID], numTessVertices, &color);
 		stroker->m_NumVertices += numTessVertices;
 	}
