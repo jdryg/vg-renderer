@@ -8,6 +8,10 @@
 #	define VG_CONFIG_DEBUG 0
 #endif
 
+#ifndef VG_USE_FONTSTASH
+#	define VG_USE_FONTSTASH 1
+#endif
+
 #ifndef VG_CONFIG_ENABLE_SHAPE_CACHING
 #	define VG_CONFIG_ENABLE_SHAPE_CACHING 1
 #endif
@@ -43,6 +47,7 @@
 #ifndef VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 #	define VG_CONFIG_COMMAND_LIST_BEGIN_END_API 1
 #endif
+
 
 #if VG_CONFIG_DEBUG
 #include <bx/debug.h>
@@ -96,6 +101,7 @@ namespace bgfx
 {
 struct TextureHandle;
 }
+
 
 namespace vg
 {
@@ -462,6 +468,7 @@ void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float
 float getTextLineHeight(Context* ctx, const TextConfig& cfg);
 int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const char* end, float breakRowWidth, TextRow* rows, int maxRows, uint32_t flags);
 int textGlyphPositions(Context* ctx, const TextConfig& cfg, float x, float y, const char* text, const char* end, GlyphPosition* positions, int maxPositions);
+void customCallback(Context* ctx, void* usrPtr, const uint32_t arg1, const uint32_t arg2);
 
 /*
  * pos: A list of 2D vertices (successive x,y pairs)
@@ -537,6 +544,7 @@ void clSetGlobalAlpha(Context* ctx, CommandListHandle handle, float alpha);
 
 void clText(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
+void clCustomCallback(Context* ctx, CommandListHandle handle, void* usrPtr, const uint32_t arg1, const uint32_t arg2);
 
 void clSubmitCommandList(Context* ctx, CommandListHandle parent, CommandListHandle child);
 
@@ -552,6 +560,10 @@ void measureTextBox(Context* ctx, FontHandle fontHandle, float fontSize, uint32_
 float getTextLineHeight(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment);
 int textBreakLines(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, const char* str, const char* end, float breakRowWidth, TextRow* rows, int maxRows, uint32_t flags);
 int textGlyphPositions(Context* ctx, FontHandle fontHandle, float fontSize, uint32_t alignment, float x, float y, const char* str, const char* end, GlyphPosition* positions, int maxPositions);
+
+// Call backs added
+typedef void (*CustomCallbackFn) (Context* ctx, void* usrPtr, const uint32_t arg1, const uint32_t arg2);
+extern CustomCallbackFn gCustomCallback;
 
 // Helper struct and functions to avoid moving around both a Context and a CommandListHandle.
 struct CommandListRef
@@ -604,6 +616,7 @@ void clSetGlobalAlpha(CommandListRef &ref, float alpha);
 
 void clText(CommandListRef& ref, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 void clTextBox(CommandListRef& ref, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
+void clCustomCallback(CommandListRef&ref, void* usrPtr, const uint32_t arg1, const uint32_t arg2);
 void clSubmitCommandList(CommandListRef& ref, CommandListHandle child);
 }
 
