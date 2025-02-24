@@ -8,9 +8,9 @@
 // - Allow strokes and fills with gradients and image patterns to be used as clip masks (might
 // be useful if the same command list is used both inside and outside a beginClip()/endClip() 
 // block)
-#include <vg/vg.h>
-#include <vg/path.h>
-#include <vg/stroker.h>
+//#include <vg/vg.h>
+//#include <vg/path.h>
+//#include <vg/stroker.h>
 #include "vg_util.h"
 #if VG_USE_FONTSTASH
 	#include "libs/fontstash.h"
@@ -466,7 +466,9 @@ struct Context
 static State* getState(Context* ctx);
 static void updateState(State* state);
 static const uv_t* getWhitePixelUV(Context* ctx);
+#if VG_USE_FONTSTASH
 static void updateWhitePixelUV(Context* ctx);
+#endif
 
 static float* allocTransformedVertices(Context* ctx, uint32_t numVertices);
 static const float* transformPath(Context* ctx);
@@ -1204,8 +1206,8 @@ void end(Context* ctx)
 		DrawCommand* cmd = &ctx->m_DrawCommands[iCmd];
 
 		if (cmd->m_Type == DrawCommand::Type::CustomCallback) {
-			void* ptr = &cmd->m_FirstIndexID;
-			void* usrPtr = CMD_READ(ptr, void*);
+			uint8_t* ptr = (uint8_t*) &cmd->m_FirstIndexID;
+			void* usrPtr = (void*) CMD_READ(ptr, uintptr_t);
 			gCustomCallback(ctx, usrPtr, cmd->m_VertexBufferID, cmd->m_FirstVertexID);
 			continue;
 			}
@@ -3051,7 +3053,8 @@ void clCustomCallback(Context* ctx, CommandListHandle handle, void* usrPtr, cons
 	CommandList* cl = &ctx->m_CmdLists[handle.idx];
 	
 	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::CustomCallback, sizeof(void*) + sizeof(uint32_t)*2);
-	CMD_WRITE(ptr, void*, usrPtr);
+	uintptr_t uintUsrPtr = (uintptr_t) usrPtr;
+	CMD_WRITE(ptr, uintptr_t, uintUsrPtr);
 	CMD_WRITE(ptr, uint32_t, arg1);
 	CMD_WRITE(ptr, uint32_t, arg2);
 }
@@ -4232,8 +4235,9 @@ static void ctxCustomCallback(Context* ctx, void* usrPtr, const uint32_t arg1, c
 	cmd->m_VertexBufferID = arg1;
 	cmd->m_FirstVertexID = arg2;
 	
-	void* ptr = &cmd->m_FirstIndexID;
-	CMD_WRITE(ptr, void*, usrPtr);
+	uint8_t* ptr = (uint8_t*) &cmd->m_FirstIndexID;
+	uintptr_t uintUsrPtr = uintptr_t(usrPtr);
+	CMD_WRITE(ptr, uintptr_t, uintUsrPtr);
 }
 
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
@@ -4723,7 +4727,7 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 			ctxResetClip(ctx);
 		} break;
 		case CommandType::CustomCallback: {
-			void* usrPtr = CMD_READ(cmd, void*);
+			void* usrPtr = (void*) CMD_READ(cmd, uintptr_t);
 			const uint32_t arg1 = CMD_READ(cmd, uint32_t);
 			const uint32_t arg2 = CMD_READ(cmd, uint32_t);
 			ctxCustomCallback(ctx, usrPtr, arg1, arg2);
@@ -5030,6 +5034,7 @@ static inline const uv_t* getWhitePixelUV(Context* ctx)
 	return ctx->m_FontImageWhitePixelUV;
 }
 
+#if VG_USE_FONTSTASH
 static void updateWhitePixelUV(Context* ctx)
 {
 	uint16_t w, h;
@@ -5043,6 +5048,7 @@ static void updateWhitePixelUV(Context* ctx)
 	ctx->m_FontImageWhitePixelUV[1] = 0.5f / (float)h;
 #endif
 }
+#endif
 
 static State* getState(Context* ctx)
 {
@@ -5623,9 +5629,9 @@ static ImageHandle allocImage(Context* ctx)
 	return handle;
 }
 
+#if VG_USE_FONTSTASH
 static bool allocTextAtlas(Context* ctx)
 {
-#if VG_USE_FONTSTASH
 	flushTextAtlas(ctx);
 
 	if (ctx->m_FontImageID + 1 >= VG_CONFIG_MAX_FONT_IMAGES) {
@@ -5663,14 +5669,12 @@ static bool allocTextAtlas(Context* ctx)
 	fonsResetAtlas(ctx->m_FontStashContext, iw, ih);
 
 	return true;
-#else
-	return false;
-#endif // VG_USE_FONTSTASH
 }
+#endif // VG_USE_FONTSTASH
 
+#if VG_USE_FONTSTASH
 static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color)
 {
-#if VG_USE_FONTSTASH
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
@@ -5749,8 +5753,8 @@ static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color)
 
 	cmd->m_NumVertices += numDrawVertices;
 	cmd->m_NumIndices += numDrawIndices;
-#endif // VG_USE_FONTSTASH
 }
+#endif // VG_USE_FONTSTASH
 
 static void flushTextAtlas(Context* ctx)
 {
