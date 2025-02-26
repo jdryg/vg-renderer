@@ -12,6 +12,11 @@ BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wshadow")
 #define RSQRT_ALGORITHM 1
 #define RCP_ALGORITHM 1
 
+#if VG_CONFIG_ENABLE_SIMD && BX_CPU_X86
+#include <xmmintrin.h>
+#include <immintrin.h>
+#endif
+
 namespace vg
 {
 
@@ -43,7 +48,7 @@ static inline __m128 xmm_vec2_dir(const __m128 a, const __m128 b)
 	__m128 dir = _mm_setzero_ps();
 	if (_mm_comigt_ss(lenSqr, _mm_set_ss(VG_EPSILON))) {
 		const __m128 invLen = _mm_rsqrt_ss(lenSqr);
-		dir = _mm_mul_ps(dxy, _mm_broadcastss_ps(invLen));
+		dir = _mm_mul_ps(dxy, _mm_set1_ps(_mm_cvtss_f32(invLen)));
 	}
 	return dir;
 }
@@ -133,7 +138,11 @@ Vec2Stored& Vec2Stored::operator=(const Vec2 &v)
 inline float vec2x(const Vec2& a) { return _mm_cvtss_f32(a.xy); }
 inline float vec2y(const Vec2& a) { return _mm_cvtss_f32(_mm_shuffle_ps(a.xy, a.xy, _MM_SHUFFLE(0, 0, 0, 1))); }
 inline Vec2 vec2Add(const Vec2& a, const Vec2& b)                { return {_mm_add_ps(a.xy, b.xy)}; }
+#if VG_CONFIG_ENABLE_FMA
 inline Vec2 vec2Fma(const Vec2& a, float s, const Vec2& b)       { return {_mm_fmadd_ps(a.xy, _mm_set1_ps(s), b.xy)}; }
+#else
+inline Vec2 vec2Fma(const Vec2& a, float s, const Vec2& b)       { return {_mm_add_ps(_mm_mul_ps(a.xy, _mm_set1_ps(s)), b.xy)}; }
+#endif
 inline Vec2 vec2Sub(const Vec2& a, const Vec2& b)                { return {_mm_sub_ps(a.xy, b.xy) }; }
 inline Vec2 vec2Scale(const Vec2& a, float s)                    { return {_mm_mul_ps(a.xy, _mm_set1_ps(s)) }; }
 inline Vec2 vec2PerpCCW(const Vec2& a)                           { return {xmm_vec2_rotCCW90(a.xy)}; }

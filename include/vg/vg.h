@@ -12,8 +12,18 @@
 #	define VG_CONFIG_ENABLE_SHAPE_CACHING 1
 #endif
 
+// For x86, this uses only SSE4.1.
 #ifndef VG_CONFIG_ENABLE_SIMD
 #	define VG_CONFIG_ENABLE_SIMD 1
+#endif
+
+// For x86 only. Only processors since roughly 2014 support this.
+#ifndef VG_CONFIG_ENABLE_FMA
+#if defined(__FMA__) || defined(__AVX2__)
+#	define VG_CONFIG_ENABLE_FMA 1
+#else
+#	define VG_CONFIG_ENABLE_FMA 0
+#endif
 #endif
 
 #ifndef VG_CONFIG_FORCE_AA_OFF
@@ -36,10 +46,10 @@
 #endif
 
 // NOTE: beginCommandList()/endCommandList() blocks require an indirect jump for each function/path command,
-// because they change the Context' vtable. If this is set to 0, all functions call their implementation 
+// because they change the Context' vtable. If this is set to 0, all functions call their implementation
 // directly (i.e. there will probably still be a jump there but it'll be unconditional/direct).
 // If you care about perf so much that an indirect unconditional jump is a problem for you, or if you aren't
-// planning on using command lists at all, set this to 0 and use only clXXX functions to build command lists. 
+// planning on using command lists at all, set this to 0 and use only clXXX functions to build command lists.
 #ifndef VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 #	define VG_CONFIG_COMMAND_LIST_BEGIN_END_API 1
 #endif
