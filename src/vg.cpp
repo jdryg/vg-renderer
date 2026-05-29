@@ -12,7 +12,9 @@
 #include <vg/path.h>
 #include <vg/stroker.h>
 #include "vg_util.h"
-#include "libs/fontstash.h"
+#if VG_USE_FONTSTASH
+	#include "libs/fontstash.h"
+#endif
 #include <bx/allocator.h>
 #include <bx/mutex.h>
 #include <bx/handlealloc.h>
@@ -45,6 +47,8 @@ BX_PRAGMA_DIAGNOSTIC_IGNORED_MSVC(4706) // assignment within conditional express
 
 namespace vg
 {
+CustomCallbackFn gCustomCallback = 0;
+
 static const bgfx::EmbeddedShader s_EmbeddedShaders[] =
 {
 	BGFX_EMBEDDED_SHADER(vs_textured),
@@ -109,14 +113,21 @@ struct DrawCommand
 		// The idea is that when using multiple image patterns, a new draw call will always be created
 		// for each image, so there's little harm in changing shader program as well (?!?). In other words,
 		// 2 paths with different image patterns wouldn't have been batched together either way.
+		//
+		// Re: CustomCallback comamnds
+		// this will call a custom function "CustomCallback" with argument m_VertexBufferId. It is your job
+		// to implement this function if you intend to use it
+		// Becuase it is not a "real" DrawCommand type it is listed after NumTypes
 		enum Enum : uint32_t
 		{
 			Textured = 0,
 			ColorGradient,
 			ImagePattern,
 			Clip,
-
-			NumTypes
+			
+			NumTypes,
+			
+			CustomCallback
 		};
 	};
 
@@ -237,6 +248,9 @@ struct CommandType
 
 		// Command lists
 		SubmitCommandList,
+		
+		// Custom Callback
+		CustomCallback,
 	};
 };
 
@@ -333,6 +347,7 @@ struct ContextVTable
 	void(*text)(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 	void(*textBox)(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, uint32_t textboxFlags);
 	void(*indexedTriList)(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* color, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
+	void(*customCallback)(Context* ctx, void* usrPtr, const uint32_t arg1, const uint32_t arg2);
 	void(*submitCommandList)(Context* ctx, CommandListHandle handle);
 };
 #endif // VG_CONFIG_COMMAND_LIST_BEGIN_END_API
@@ -421,17 +436,21 @@ struct Context
 	ImagePattern* m_ImagePatterns;
 	uint32_t m_NextImagePatternID;
 
+#if VG_USE_FONTSTASH
 	FONScontext* m_FontStashContext;
+#endif
 	ImageHandle m_FontImages[VG_CONFIG_MAX_FONT_IMAGES];
 	uint32_t m_FontImageID;
 	uv_t m_FontImageWhitePixelUV[2];
 
+#if VG_USE_FONTSTASH
 	float* m_TextVertices;
 	FONSquad* m_TextQuads;
 	uint32_t m_TextQuadCapacity;
 	FONSstring m_TextString;
 	FontData* m_FontData;
 	uint32_t m_NextFontID;
+#endif
 
 	bgfx::VertexLayout m_PosVertexDecl;
 	bgfx::VertexLayout m_UVVertexDecl;
@@ -447,7 +466,9 @@ struct Context
 static State* getState(Context* ctx);
 static void updateState(State* state);
 static const uv_t* getWhitePixelUV(Context* ctx);
+#if VG_USE_FONTSTASH
 static void updateWhitePixelUV(Context* ctx);
+#endif
 
 static float* allocTransformedVertices(Context* ctx, uint32_t numVertices);
 static const float* transformPath(Context* ctx);
@@ -480,8 +501,10 @@ static void createDrawCommand_Clip(Context* ctx, const float* vtx, uint32_t numV
 static ImageHandle allocImage(Context* ctx);
 static void resetImage(Image* img);
 
+#if VG_USE_FONTSTASH
 static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color);
 static bool allocTextAtlas(Context* ctx);
+#endif
 static void flushTextAtlas(Context* ctx);
 
 static CommandListHandle allocCommandList(Context* ctx);
@@ -548,6 +571,7 @@ static void ctxSetGlobalAlpha(Context* ctx, float alpha);
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
+static void ctxCustomCallback(Context* ctx, void* usrPtr, const uint32_t arg1, const uint32_t arg2);
 static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle);
 
 // Active command list wrappers
@@ -594,6 +618,7 @@ static void aclSetGlobalAlpha(Context* ctx, float alpha);
 static void aclIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img);
 static void aclText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end);
 static void aclTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags);
+static void aclCustomCallback(Context* ctx, void* usrPtr, const uint32_t arg1, const uint32_t arg2);
 static void aclSubmitCommandList(Context* ctx, CommandListHandle handle);
 
 const ContextVTable g_CtxVTable = {
@@ -639,6 +664,7 @@ const ContextVTable g_CtxVTable = {
 	ctxText,
 	ctxTextBox,
 	ctxIndexedTriList,
+	ctxCustomCallback,
 	ctxSubmitCommandList
 };
 
@@ -685,6 +711,7 @@ const ContextVTable g_ActiveCmdListVTable = {
 	aclText,
 	aclTextBox,
 	aclIndexedTriList,
+	aclCustomCallback,
 	aclSubmitCommandList
 };
 #endif
@@ -749,9 +776,11 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 	ctx->m_Gradients = (Gradient*)mem;         mem += alignSize(sizeof(Gradient) * cfg->m_MaxGradients, alignment);
 	ctx->m_ImagePatterns = (ImagePattern*)mem; mem += alignSize(sizeof(ImagePattern) * cfg->m_MaxImagePatterns, alignment);
 	ctx->m_StateStack = (State*)mem;           mem += alignSize(sizeof(State) * cfg->m_MaxStateStackSize, alignment);
+#if VG_USE_FONTSTASH
 	ctx->m_FontData = (FontData*)mem;          mem += alignSize(sizeof(FontData) * cfg->m_MaxFonts, alignment);
+#endif
 	ctx->m_CmdLists = (CommandList*)mem;       mem += alignSize(sizeof(CommandList) * cfg->m_MaxCommandLists, alignment);
-
+	
 #if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
 	ctx->m_VTable = &g_CtxVTable;
 	ctx->m_ActiveCommandList = VG_INVALID_HANDLE;
@@ -822,6 +851,7 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 
 	// FontStash
 	// Init font stash
+#if VG_USE_FONTSTASH
 	const bgfx::Caps* caps = bgfx::getCaps();
 	FONSparams fontParams;
 	bx::memSet(&fontParams, 0, sizeof(fontParams));
@@ -843,11 +873,13 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 	fontParams.userPtr = nullptr;
 	ctx->m_FontStashContext = fonsCreateInternal(&fontParams);
 	VG_CHECK(ctx->m_FontStashContext != nullptr, "Failed to initialize FontStash");
+#endif // VG_USE_FONTSTASH
 
 	for (uint32_t i = 0; i < VG_CONFIG_MAX_FONT_IMAGES; ++i) {
 		ctx->m_FontImages[i] = VG_INVALID_HANDLE;
 	}
 
+#if VG_USE_FONTSTASH
 	ctx->m_FontImages[0] = createImage(ctx, (uint16_t)fontParams.width, (uint16_t)fontParams.height, cfg->m_FontAtlasImageFlags, nullptr);
 	VG_CHECK(isValid(ctx->m_FontImages[0]), "Failed to initialize font texture");
 
@@ -855,16 +887,23 @@ Context* createContext(bx::AllocatorI* allocator, const ContextConfig* userCfg)
 	updateWhitePixelUV(ctx);
 
 	fonsInitString(&ctx->m_TextString);
-
+#else
+	uint8_t whiteImg[4];
+	memset(&whiteImg[0], 0xff, 4);
+	ctx->m_FontImages[0] = createImage(ctx, 1, 1, cfg->m_FontAtlasImageFlags, &whiteImg[0]);
+	VG_CHECK(isValid(ctx->m_FontImages[0]), "Failed to initialize dummy font texture");
+#endif // VG_USE_FONTSTASH
 	return ctx;
 }
 
 void destroyContext(Context* ctx)
 {
 	bx::AllocatorI* allocator = ctx->m_Allocator;
+	
+#if VG_USE_FONTSTASH
 	const ContextConfig* cfg = &ctx->m_Config;
-
 	fonsDestroyString(&ctx->m_TextString);
+#endif
 
 	for (uint32_t i = 0; i < DrawCommand::Type::NumTypes; ++i) {
 		if (bgfx::isValid(ctx->m_ProgramHandle[i])) {
@@ -971,7 +1010,8 @@ void destroyContext(Context* ctx)
 
 	bx::free(allocator, ctx->m_ClipCommands);
 	ctx->m_ClipCommands = nullptr;
-
+	
+#if VG_USE_FONTSTASH
 	// Font data
 	for (int i = 0; i < cfg->m_MaxFonts; ++i) {
 		FontData* fd = &ctx->m_FontData[i];
@@ -983,6 +1023,7 @@ void destroyContext(Context* ctx)
 	}
 
 	fonsDeleteInternal(ctx->m_FontStashContext);
+#endif
 
 	for (uint32_t i = 0; i < VG_CONFIG_MAX_FONT_IMAGES; ++i) {
 		destroyImage(ctx, ctx->m_FontImages[i]);
@@ -1009,6 +1050,7 @@ void destroyContext(Context* ctx)
 	destroyStroker(ctx->m_Stroker);
 	ctx->m_Stroker = nullptr;
 
+#if VG_USE_FONTSTASH
     if (ctx->m_TextQuads) {
         bx::alignedFree(allocator, ctx->m_TextQuads, 16);
         ctx->m_TextQuads = nullptr;
@@ -1018,6 +1060,7 @@ void destroyContext(Context* ctx)
         bx::alignedFree(allocator, ctx->m_TextVertices, 16);
         ctx->m_TextVertices = nullptr;
     }
+#endif
 
     if (ctx->m_TransformedVertices) {
         bx::alignedFree(allocator, ctx->m_TransformedVertices, 16);
@@ -1100,6 +1143,22 @@ void end(Context* ctx)
 	const uint32_t numVertexBuffers = ctx->m_NumVertexBuffers;
 	for (uint32_t iVB = ctx->m_FirstVertexBufferID; iVB < numVertexBuffers; ++iVB) {
 		VertexBuffer* vb = &ctx->m_VertexBuffers[iVB];
+		
+		if (!vb->m_Count) {
+			releaseVertexBufferData_Vec2(ctx, vb->m_Pos);
+			releaseVertexBufferData_Uint32(ctx, vb->m_Color);
+
+	#if VG_CONFIG_UV_INT16
+			releaseVertexBufferData_UV(ctx, vb->m_UV);
+	#else
+			releaseVertexBufferData_Vec2(ctx, vb->m_UV);
+	#endif
+			vb->m_Pos = nullptr;
+			vb->m_UV = nullptr;
+			vb->m_Color = nullptr;
+			continue;
+			}
+		
 		GPUVertexBuffer* gpuvb = &ctx->m_GPUVertexBuffers[iVB];
 
 		const uint32_t maxVBVertices = ctx->m_Config.m_MaxVBVertices;
@@ -1133,11 +1192,16 @@ void end(Context* ctx)
 	// Update bgfx index buffer...
 	IndexBuffer* ib = &ctx->m_IndexBuffers[ctx->m_ActiveIndexBufferID];
 	GPUIndexBuffer* gpuib = &ctx->m_GPUIndexBuffers[ctx->m_ActiveIndexBufferID];
-	const bgfx::Memory* indexMem = bgfx::makeRef(&ib->m_Indices[0], sizeof(uint16_t) * ib->m_Count, releaseIndexBufferCallback, ctx);
-	if (!bgfx::isValid(gpuib->m_bgfxHandle)) {
-		gpuib->m_bgfxHandle = bgfx::createDynamicIndexBuffer(indexMem, BGFX_BUFFER_ALLOW_RESIZE);
-	} else {
-		bgfx::update(gpuib->m_bgfxHandle, 0, indexMem);
+	if (!ib->m_Count) {
+		releaseIndexBuffer(ctx, (uint16_t*) ib);
+		}
+	else {
+		const bgfx::Memory* indexMem = bgfx::makeRef(&ib->m_Indices[0], sizeof(uint16_t) * ib->m_Count, releaseIndexBufferCallback, ctx);
+		if (!bgfx::isValid(gpuib->m_bgfxHandle)) {
+			gpuib->m_bgfxHandle = bgfx::createDynamicIndexBuffer(indexMem, BGFX_BUFFER_ALLOW_RESIZE);
+		} else {
+			bgfx::update(gpuib->m_bgfxHandle, 0, indexMem);
+		}
 	}
 
 	const uint16_t viewID = ctx->m_ViewID;
@@ -1162,6 +1226,13 @@ void end(Context* ctx)
 	for (uint32_t iCmd = 0; iCmd < numDrawCommands; ++iCmd) {
 		DrawCommand* cmd = &ctx->m_DrawCommands[iCmd];
 
+		if (cmd->m_Type == DrawCommand::Type::CustomCallback) {
+			uint8_t* ptr = (uint8_t*) &cmd->m_FirstIndexID;
+			void* usrPtr = (void*) CMD_READ(ptr, uintptr_t);
+			gCustomCallback(ctx, usrPtr, cmd->m_VertexBufferID, cmd->m_FirstVertexID);
+			continue;
+			}
+			
 		const ClipState* cmdClipState = &cmd->m_ClipState;
 		if (cmdClipState->m_FirstCmdID != prevClipCmdID) {
 			prevClipCmdID = cmdClipState->m_FirstCmdID;
@@ -1291,6 +1362,7 @@ void frame(Context* ctx)
 {
 	ctx->m_NumVertexBuffers = 0;
 
+#if VG_USE_FONTSTASH
 	if (ctx->m_FontImageID != 0) {
 		ImageHandle fontImage = ctx->m_FontImages[ctx->m_FontImageID];
 
@@ -1325,6 +1397,7 @@ void frame(Context* ctx)
 			}
 		}
 	}
+#endif // VG_USE_FONTSTASH
 }
 
 const Stats* getStats(Context* ctx)
@@ -1682,7 +1755,7 @@ void indexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t num
 	ctxIndexedTriList(ctx, pos, uv, numVertices, colors, numColors, indices, numIndices, img);
 #endif
 }
-
+			
 void text(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end)
 {
 #if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
@@ -1698,6 +1771,15 @@ void textBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakW
 	ctx->m_VTable->textBox(ctx, cfg, x, y, breakWidth, str, end, textboxFlags);
 #else
 	ctxTextBox(ctx, cfg, x, y, breakWidth, str, end, textboxFlags);
+#endif
+}
+
+void customCallback(Context* ctx, void* usrPtr, const uint32_t arg1, const uint32_t arg2)
+{
+#if VG_CONFIG_COMMAND_LIST_BEGIN_END_API
+	ctx->m_VTable->customCallback(ctx, usrPtr, arg1, arg2);
+#else
+	ctxCustomCallback(ctx, usrPtr, arg1, arg2);
 #endif
 }
 
@@ -1733,6 +1815,7 @@ void getScissor(Context* ctx, float* rect)
 
 FontHandle createFont(Context* ctx, const char* name, uint8_t* data, uint32_t size, uint32_t flags)
 {
+#if VG_USE_FONTSTASH
 	if (ctx->m_NextFontID == ctx->m_Config.m_MaxFonts) {
 		return VG_INVALID_HANDLE;
 	}
@@ -1761,24 +1844,36 @@ FontHandle createFont(Context* ctx, const char* name, uint8_t* data, uint32_t si
 	fd->m_Owned = copyData;
 
 	return { (uint16_t)fonsHandle };
+#else
+	return { (uint16_t)0 };
+#endif // VG_USE_FONTSTASH
 }
 
 FontHandle getFontByName(Context* ctx, const char* name)
 {
+#if VG_USE_FONTSTASH
 	const int fonsHandle = fonsGetFontByName(ctx->m_FontStashContext, name);
 	return { (uint16_t)fonsHandle };
+#else
+	return { (uint16_t)0 };
+#endif // VG_USE_FONTSTASH
 }
 
 bool setFallbackFont(Context* ctx, FontHandle base, FontHandle fallback)
 {
+#if VG_USE_FONTSTASH
 	VG_CHECK(isValid(base) && isValid(fallback), "Invalid font handle");
 
 	FONScontext* fons = ctx->m_FontStashContext;
 	return fonsAddFallbackFont(fons, base.idx, fallback.idx) == 1;
+#else
+	return false;
+#endif // VG_USE_FONTSTASH
 }
 
 float measureText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end, float* bounds)
 {
+#if VG_USE_FONTSTASH
 	// nvgTextBounds()
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
@@ -1800,10 +1895,14 @@ float measureText(Context* ctx, const TextConfig& cfg, float x, float y, const c
 	}
 
 	return width * invscale;
+#else
+	return 0.f;
+#endif // VG_USE_FONTSTASH
 }
 
 void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* text, const char* end, float* bounds, uint32_t flags)
 {
+#if VG_USE_FONTSTASH
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
@@ -1871,10 +1970,12 @@ void measureTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float
 		bounds[2] = maxx;
 		bounds[3] = maxy;
 	}
+#endif // VG_USE_FONTSTASH
 }
 
 float getTextLineHeight(Context* ctx, const TextConfig& cfg)
 {
+#if VG_USE_FONTSTASH
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
@@ -1889,10 +1990,14 @@ float getTextLineHeight(Context* ctx, const TextConfig& cfg)
 	lineh *= invscale;
 
 	return lineh;
+#else
+	return 0.f;
+#endif // VG_USE_FONTSTASH
 }
 
 int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const char* end, float breakRowWidth, TextRow* rows, int maxRows, uint32_t flags)
 {
+#if VG_USE_FONTSTASH
 	// nvgTextBreakLines()
 #define CP_SPACE  0
 #define CP_NEW_LINE  1
@@ -2120,10 +2225,14 @@ int textBreakLines(Context* ctx, const TextConfig& cfg, const char* str, const c
 #undef CP_SPACE
 #undef CP_NEW_LINE
 #undef CP_CHAR
+#else
+return 0;
+#endif // VG_USE_FONTSTASH
 }
 
 int textGlyphPositions(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end, GlyphPosition* positions, int maxPositions)
 {
+#if VG_USE_FONTSTASH
 	const State* state = getState(ctx);
 	const float scale = state->m_FontScale * ctx->m_DevicePixelRatio;
 	const float invscale = 1.0f / scale;
@@ -2166,6 +2275,9 @@ int textGlyphPositions(Context* ctx, const TextConfig& cfg, float x, float y, co
 	}
 
 	return npos;
+#else
+	return 0;
+#endif // VG_USE_FONTSTASH
 }
 
 bool getImageSize(Context* ctx, ImageHandle handle, uint16_t* w, uint16_t* h)
@@ -2954,6 +3066,18 @@ void clTextBox(Context* ctx, CommandListHandle handle, const TextConfig& cfg, fl
 	CMD_WRITE(ptr, uint32_t, offset);
 	CMD_WRITE(ptr, uint32_t, len);
 	CMD_WRITE(ptr, uint32_t, textboxFlags);
+}
+
+void clCustomCallback(Context* ctx, CommandListHandle handle, void* usrPtr, const uint32_t arg1, const uint32_t arg2)
+{
+	VG_CHECK(isValid(handle), "Invalid command list handle");
+	CommandList* cl = &ctx->m_CmdLists[handle.idx];
+	
+	uint8_t* ptr = clAllocCommand(ctx, cl, CommandType::CustomCallback, sizeof(void*) + sizeof(uint32_t)*2);
+	uintptr_t uintUsrPtr = (uintptr_t) usrPtr;
+	CMD_WRITE(ptr, uintptr_t, uintUsrPtr);
+	CMD_WRITE(ptr, uint32_t, arg1);
+	CMD_WRITE(ptr, uint32_t, arg2);
 }
 
 void clSubmitCommandList(Context* ctx, CommandListHandle parent, CommandListHandle child)
@@ -4126,6 +4250,17 @@ static void ctxSetGlobalAlpha(Context* ctx, float alpha)
 	state->m_GlobalAlpha = alpha;
 }
 
+static void ctxCustomCallback(Context* ctx, void* usrPtr, const uint32_t arg1, const uint32_t arg2) {
+	ctx->m_ForceNewDrawCommand = true;
+	DrawCommand* cmd = allocDrawCommand(ctx, 0, 0, DrawCommand::Type::CustomCallback, 0);
+	cmd->m_VertexBufferID = arg1;
+	cmd->m_FirstVertexID = arg2;
+	
+	uint8_t* ptr = (uint8_t*) &cmd->m_FirstIndexID;
+	uintptr_t uintUsrPtr = uintptr_t(usrPtr);
+	CMD_WRITE(ptr, uintptr_t, uintUsrPtr);
+}
+
 static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, uint32_t numVertices, const Color* colors, uint32_t numColors, const uint16_t* indices, uint32_t numIndices, ImageHandle img)
 {
 	if (!isValid(img)) {
@@ -4176,6 +4311,7 @@ static void ctxIndexedTriList(Context* ctx, const float* pos, const uv_t* uv, ui
 
 static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const char* str, const char* end)
 {
+#if VG_USE_FONTSTASH
 	VG_CHECK(isValid(cfg.m_FontHandle), "Invalid font handle");
 
 	const State* state = getState(ctx);
@@ -4229,10 +4365,12 @@ static void ctxText(Context* ctx, const TextConfig& cfg, float x, float y, const
 	ctxTransformTranslate(ctx, x + dx / scale, y + dy / scale);
 	renderTextQuads(ctx, numBakedChars, cfg.m_Color);
 	ctxPopState(ctx);
+#endif // VG_USE_FONTSTASH
 }
 
 static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, float breakWidth, const char* str, const char* end, uint32_t textboxFlags)
 {
+#if VG_USE_FONTSTASH 
 	VG_CHECK(isValid(cfg.m_FontHandle), "Invalid font handle");
 
 	const State* state = getState(ctx);
@@ -4268,6 +4406,7 @@ static void ctxTextBox(Context* ctx, const TextConfig& cfg, float x, float y, fl
 
 		str = rows[nrows - 1].next;
 	}
+#endif // VG_USE_FONTSTASH
 }
 
 static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
@@ -4608,6 +4747,12 @@ static void ctxSubmitCommandList(Context* ctx, CommandListHandle handle)
 		case CommandType::ResetClip: {
 			ctxResetClip(ctx);
 		} break;
+		case CommandType::CustomCallback: {
+			void* usrPtr = (void*) CMD_READ(cmd, uintptr_t);
+			const uint32_t arg1 = CMD_READ(cmd, uint32_t);
+			const uint32_t arg2 = CMD_READ(cmd, uint32_t);
+			ctxCustomCallback(ctx, usrPtr, arg1, arg2);
+		} break;
 		case CommandType::SubmitCommandList: {
 			const uint16_t cmdListID = CMD_READ(cmd, uint16_t);
 			const CommandListHandle cmdListHandle = { cmdListID };
@@ -4891,6 +5036,12 @@ static void aclTextBox(Context* ctx, const TextConfig& cfg, float x, float y, fl
 	clTextBox(ctx, ctx->m_ActiveCommandList, cfg, x, y, breakWidth, str, end, textboxFlags);
 }
 
+static void aclCustomCallback(Context* ctx, void* usrPtr, const uint32_t arg1, const uint32_t arg2)
+{
+	VG_CHECK(isValid(ctx->m_ActiveCommandList), "Invalid Context state");
+	clCustomCallback(ctx, ctx->m_ActiveCommandList, usrPtr, arg1, arg2);
+}
+
 static void aclSubmitCommandList(Context* ctx, CommandListHandle handle)
 {
 	VG_CHECK(isValid(ctx->m_ActiveCommandList), "Invalid Context state");
@@ -4904,6 +5055,7 @@ static inline const uv_t* getWhitePixelUV(Context* ctx)
 	return ctx->m_FontImageWhitePixelUV;
 }
 
+#if VG_USE_FONTSTASH
 static void updateWhitePixelUV(Context* ctx)
 {
 	uint16_t w, h;
@@ -4917,6 +5069,7 @@ static void updateWhitePixelUV(Context* ctx)
 	ctx->m_FontImageWhitePixelUV[1] = 0.5f / (float)h;
 #endif
 }
+#endif
 
 static State* getState(Context* ctx)
 {
@@ -5497,6 +5650,7 @@ static ImageHandle allocImage(Context* ctx)
 	return handle;
 }
 
+#if VG_USE_FONTSTASH
 static bool allocTextAtlas(Context* ctx)
 {
 	flushTextAtlas(ctx);
@@ -5537,7 +5691,9 @@ static bool allocTextAtlas(Context* ctx)
 
 	return true;
 }
+#endif // VG_USE_FONTSTASH
 
+#if VG_USE_FONTSTASH
 static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color)
 {
 	const State* state = getState(ctx);
@@ -5619,9 +5775,11 @@ static void renderTextQuads(Context* ctx, uint32_t numQuads, Color color)
 	cmd->m_NumVertices += numDrawVertices;
 	cmd->m_NumIndices += numDrawIndices;
 }
+#endif // VG_USE_FONTSTASH
 
 static void flushTextAtlas(Context* ctx)
 {
+#if VG_USE_FONTSTASH
 	FONScontext* fons = ctx->m_FontStashContext;
 
 	int dirty[4];
@@ -5650,6 +5808,7 @@ static void flushTextAtlas(Context* ctx)
 	updateImage(ctx, fontImage, (uint16_t)x, (uint16_t)y, (uint16_t)w, (uint16_t)h, (const uint8_t*)rgbaData);
 
 	bx::free(ctx->m_Allocator, rgbaData);
+#endif // VG_USE_FONTSTASH
 }
 
 static CommandListHandle allocCommandList(Context* ctx)
